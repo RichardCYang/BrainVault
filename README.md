@@ -11,11 +11,11 @@ BrainVault is a self-hosted block-based notes app built with Node.js, Express, T
 - Block editor with nested content, drag-and-drop ordering, slash commands, tables, databases, Kanban boards, Gantt timelines, lists, toggles, and tree views
 - Rich text, Markdown, syntax-highlighted code, callouts, bookmarks, videos, attachments, AI chat blocks, formulas, and Mermaid diagrams
 - Pages open in read mode and switch to editing with an explicit **Edit** button, so a stray click or keystroke cannot change a note; an autosave indicator, `Ctrl/Cmd + S`, and browser Back/Forward navigation are supported
-- Page collections, nested pages, custom icons and covers, archiving with an undo action and an archive view for restoring pages, version history, PDF export, and ZIP backup/restore
+- Page collections, nested pages, custom icons and covers, one-click archiving with an undo action and an archive view for restoring pages, permanent deletion that states how many nested pages it removes, version history, PDF export, and ZIP backup/restore
 - Light, dark, and match-system themes
-- Page sharing and collection sharing with Yjs-based live collaboration
-- Crash-recovery support for browser drafts and collaborative edits
-- Search across page titles and block content
+- Page sharing and collection sharing with Yjs-based live collaboration, plus page comments that load new replies automatically while the comment panel is open
+- Crash-recovery support for browser drafts and collaborative edits, with a **Keep my version** action for resolving a recovered draft before you continue typing
+- Search across page titles and block content, with results that update as you type and stay on screen while the next query loads
 - JWT authentication, TOTP MFA with an optional per-IP attempt limit (24-hour block), WebAuthn/FIDO2 passkeys, login controls, and profile settings
 - Sign-up that shows the ID and password rules up front and activates new accounts only after administrator approval
 - Seven UI languages: English, Japanese, Korean, French, German, Spanish, and Portuguese

@@ -6148,6 +6148,160 @@ for (const [language, addition] of Object.entries(plainLanguageTranslationAdditi
   }
 }
 
+// Strings for the UX anti-pattern cleanup: deletion messages that name what
+// goes, Undo for table edits, background comment refresh, and resolving a
+// recovered-draft conflict before typing.
+const uxFrictionTranslationAdditions = {
+  en: {
+    confirm: {
+      deleteSinglePage: "Permanently delete “{title}”? This cannot be undone. To keep a restorable copy, archive it instead.",
+      deletePageWithSubpages: "Permanently delete “{title}” and the {count} pages nested inside it? This cannot be undone. To keep a restorable copy, archive it instead.",
+      deleteEmptyCollection: "Permanently delete the “{title}” collection? This cannot be undone.",
+      deleteCollectionWithPages: "Permanently delete the “{title}” collection and the {count} pages inside it? This cannot be undone."
+    },
+    status: {
+      tableRowDeleted: "Row deleted.",
+      tableColumnDeleted: "Column deleted.",
+      keepLocalDraft: "Keep my version",
+      localDraftKept: "Your recovered version is being saved over the server copy."
+    },
+    dialog: { keepLocalDraftTitle: "Keep your recovered version?", overwrite: "Overwrite" },
+    comments: {
+      newAvailable: "New comments are available. Select Refresh to load them.",
+      limitNear: "{remaining} characters left.",
+      limitReached: "Character limit reached."
+    }
+  },
+  ko: {
+    confirm: {
+      deleteSinglePage: "“{title}” 페이지를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다. 나중에 복원하려면 대신 보관하세요.",
+      deletePageWithSubpages: "“{title}” 페이지와 하위 페이지 {count}개를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다. 나중에 복원하려면 대신 보관하세요.",
+      deleteEmptyCollection: "“{title}” 컬렉션을 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다.",
+      deleteCollectionWithPages: "“{title}” 컬렉션과 그 안의 페이지 {count}개를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다."
+    },
+    status: {
+      tableRowDeleted: "행을 삭제했습니다.",
+      tableColumnDeleted: "열을 삭제했습니다.",
+      keepLocalDraft: "내 버전 유지",
+      localDraftKept: "복구한 내 버전으로 서버 사본을 덮어쓰는 중입니다."
+    },
+    dialog: { keepLocalDraftTitle: "복구한 내 버전을 유지할까요?", overwrite: "덮어쓰기" },
+    comments: {
+      newAvailable: "새 댓글이 있습니다. 새로고침을 눌러 불러오세요.",
+      limitNear: "{remaining}자 남았습니다.",
+      limitReached: "글자 수 제한에 도달했습니다."
+    }
+  },
+  ja: {
+    confirm: {
+      deleteSinglePage: "「{title}」を完全に削除しますか？この操作は取り消せません。後で復元できるようにするには、代わりにアーカイブしてください。",
+      deletePageWithSubpages: "「{title}」と配下の {count} ページを完全に削除しますか？この操作は取り消せません。後で復元できるようにするには、代わりにアーカイブしてください。",
+      deleteEmptyCollection: "コレクション「{title}」を完全に削除しますか？この操作は取り消せません。",
+      deleteCollectionWithPages: "コレクション「{title}」と中の {count} ページを完全に削除しますか？この操作は取り消せません。"
+    },
+    status: {
+      tableRowDeleted: "行を削除しました。",
+      tableColumnDeleted: "列を削除しました。",
+      keepLocalDraft: "自分の版を残す",
+      localDraftKept: "復元した版でサーバーのコピーを上書きしています。"
+    },
+    dialog: { keepLocalDraftTitle: "復元した版を残しますか？", overwrite: "上書き" },
+    comments: {
+      newAvailable: "新しいコメントがあります。「更新」を押して読み込んでください。",
+      limitNear: "残り {remaining} 文字です。",
+      limitReached: "文字数の上限に達しました。"
+    }
+  },
+  fr: {
+    confirm: {
+      deleteSinglePage: "Supprimer définitivement « {title} » ? Cette action est irréversible. Pour garder une copie restaurable, archivez-la plutôt.",
+      deletePageWithSubpages: "Supprimer définitivement « {title} » et les {count} pages imbriquées ? Cette action est irréversible. Pour garder une copie restaurable, archivez-la plutôt.",
+      deleteEmptyCollection: "Supprimer définitivement la collection « {title} » ? Cette action est irréversible.",
+      deleteCollectionWithPages: "Supprimer définitivement la collection « {title} » et ses {count} pages ? Cette action est irréversible."
+    },
+    status: {
+      tableRowDeleted: "Ligne supprimée.",
+      tableColumnDeleted: "Colonne supprimée.",
+      keepLocalDraft: "Garder ma version",
+      localDraftKept: "Votre version récupérée remplace la copie du serveur."
+    },
+    dialog: { keepLocalDraftTitle: "Garder votre version récupérée ?", overwrite: "Remplacer" },
+    comments: {
+      newAvailable: "De nouveaux commentaires sont disponibles. Sélectionnez Actualiser pour les charger.",
+      limitNear: "Il reste {remaining} caractères.",
+      limitReached: "Limite de caractères atteinte."
+    }
+  },
+  de: {
+    confirm: {
+      deleteSinglePage: "„{title}“ endgültig löschen? Das kann nicht rückgängig gemacht werden. Um eine wiederherstellbare Kopie zu behalten, archiviere die Seite stattdessen.",
+      deletePageWithSubpages: "„{title}“ und die {count} darin verschachtelten Seiten endgültig löschen? Das kann nicht rückgängig gemacht werden. Um eine wiederherstellbare Kopie zu behalten, archiviere die Seite stattdessen.",
+      deleteEmptyCollection: "Die Sammlung „{title}“ endgültig löschen? Das kann nicht rückgängig gemacht werden.",
+      deleteCollectionWithPages: "Die Sammlung „{title}“ und ihre {count} Seiten endgültig löschen? Das kann nicht rückgängig gemacht werden."
+    },
+    status: {
+      tableRowDeleted: "Zeile gelöscht.",
+      tableColumnDeleted: "Spalte gelöscht.",
+      keepLocalDraft: "Meine Version behalten",
+      localDraftKept: "Deine wiederhergestellte Version überschreibt die Serverkopie."
+    },
+    dialog: { keepLocalDraftTitle: "Wiederhergestellte Version behalten?", overwrite: "Überschreiben" },
+    comments: {
+      newAvailable: "Es gibt neue Kommentare. Wähle Aktualisieren, um sie zu laden.",
+      limitNear: "Noch {remaining} Zeichen.",
+      limitReached: "Zeichenlimit erreicht."
+    }
+  },
+  es: {
+    confirm: {
+      deleteSinglePage: "¿Eliminar definitivamente «{title}»? No se puede deshacer. Para conservar una copia restaurable, archívala en su lugar.",
+      deletePageWithSubpages: "¿Eliminar definitivamente «{title}» y las {count} páginas anidadas? No se puede deshacer. Para conservar una copia restaurable, archívala en su lugar.",
+      deleteEmptyCollection: "¿Eliminar definitivamente la colección «{title}»? No se puede deshacer.",
+      deleteCollectionWithPages: "¿Eliminar definitivamente la colección «{title}» y sus {count} páginas? No se puede deshacer."
+    },
+    status: {
+      tableRowDeleted: "Fila eliminada.",
+      tableColumnDeleted: "Columna eliminada.",
+      keepLocalDraft: "Conservar mi versión",
+      localDraftKept: "Tu versión recuperada está reemplazando la copia del servidor."
+    },
+    dialog: { keepLocalDraftTitle: "¿Conservar tu versión recuperada?", overwrite: "Sobrescribir" },
+    comments: {
+      newAvailable: "Hay comentarios nuevos. Selecciona Actualizar para cargarlos.",
+      limitNear: "Quedan {remaining} caracteres.",
+      limitReached: "Se alcanzó el límite de caracteres."
+    }
+  },
+  pt: {
+    confirm: {
+      deleteSinglePage: "Excluir permanentemente “{title}”? Isso não pode ser desfeito. Para manter uma cópia restaurável, arquive a página.",
+      deletePageWithSubpages: "Excluir permanentemente “{title}” e as {count} páginas aninhadas? Isso não pode ser desfeito. Para manter uma cópia restaurável, arquive a página.",
+      deleteEmptyCollection: "Excluir permanentemente a coleção “{title}”? Isso não pode ser desfeito.",
+      deleteCollectionWithPages: "Excluir permanentemente a coleção “{title}” e suas {count} páginas? Isso não pode ser desfeito."
+    },
+    status: {
+      tableRowDeleted: "Linha excluída.",
+      tableColumnDeleted: "Coluna excluída.",
+      keepLocalDraft: "Manter minha versão",
+      localDraftKept: "Sua versão recuperada está substituindo a cópia do servidor."
+    },
+    dialog: { keepLocalDraftTitle: "Manter sua versão recuperada?", overwrite: "Substituir" },
+    comments: {
+      newAvailable: "Há novos comentários. Selecione Atualizar para carregá-los.",
+      limitNear: "Restam {remaining} caracteres.",
+      limitReached: "Limite de caracteres atingido."
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(uxFrictionTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

@@ -3686,6 +3686,25 @@ body.is-kanban-column-dragging {
   color: var(--danger);
 }
 
+.navigation-context-menu .menu-item-text {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+/* Says why an item is unavailable; disabled items get no reliable tooltip. */
+.navigation-context-menu .menu-item-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.navigation-context-menu .menu-item-hint.hidden {
+  display: none;
+}
+
 .page-actions-menu .danger-menu-item:hover,
 .page-actions-menu .danger-menu-item:focus-visible,
 .navigation-context-menu .danger-menu-item:hover,
@@ -9163,6 +9182,26 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
 .search-results {
   display: grid;
   gap: 0.35rem;
+  transition: opacity 120ms ease;
+}
+
+/* The dialog has its own clear button; hide the browser's duplicate one. */
+.search-dialog-input-wrap input[type="search"]::-webkit-search-cancel-button,
+.search-dialog-input-wrap input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+/* Previous results stay put while a newer query is pending. */
+.search-results.is-refreshing {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-results {
+    transition: none;
+  }
 }
 
 .search-result-entry {
@@ -17720,6 +17759,15 @@ body.is-navigation-dragging {
 @media (hover: none), (pointer: coarse) {
   .app-mode .navigation-more-button {
     opacity: 0.72;
+  }
+
+  .app-mode .sidebar-add-button {
+    opacity: 0.72;
+  }
+
+  /* Enter / Shift+Enter / Backspace hints mean nothing on a touch keyboard. */
+  .block-editor-help {
+    display: none;
   }
 }
 

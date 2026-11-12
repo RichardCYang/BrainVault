@@ -330,6 +330,8 @@ const state = {
   searchResults: [],
   searchLoading: false,
   searchSubmittedQuery: "",
+  // Query the rendered results belong to; kept while a newer query is pending.
+  searchResultsQuery: "",
   searchRequestId: 0,
   authMode: window.location.hash === "#signup" ? "register" : "login",
   authOperationBusy: false,
@@ -1753,6 +1755,12 @@ function syncAuthOperationControls() {
   const busy = state.authOperationBusy;
   const webAuthnSupported = isWebAuthnSupported();
   elements.authSubmit.disabled = busy;
+  // Progress lives on the button that started it rather than in a toast.
+  const isRegister = state.authMode === "register";
+  elements.authSubmit.setAttribute("aria-busy", String(busy));
+  elements.authSubmit.textContent = busy
+    ? t(isRegister ? "status.registering" : "status.loggingIn")
+    : t(isRegister ? "auth.register" : "auth.login");
   // Keep WebAuthn trigger buttons focusable while an authentication operation
   // is pending. Disabling the element that initiated a passkey flow immediately
   // drops its DOM focus before the native WebAuthn UI is requested. The click
@@ -3457,6 +3465,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   state.searchResults = [];
   state.searchLoading = false;
   state.searchSubmittedQuery = "";
+  state.searchResultsQuery = "";
   state.searchRequestId += 1;
   state.collapsedNavigationPageIds = new Set();
   state.navigationPageOrder = new Map();
@@ -4682,20 +4691,29 @@ function renderSearchDialog() {
   elements.searchResultCount.textContent = "";
   syncSearchClearButton();
 
-  if (state.searchLoading) {
-    setSearchDialogMessage(t("search.loading"));
+  const query = elements.searchInput.value.trim();
+  const hasRenderedResults = Boolean(state.searchResultsQuery);
+  // Earlier results stay on screen, dimmed, until the newer query answers,
+  // so the list does not flash empty on every keystroke.
+  elements.searchResults.classList.toggle(
+    "is-refreshing",
+    Boolean(query) && hasRenderedResults && (state.searchLoading || state.searchResultsQuery !== query)
+  );
+
+  if (!query) {
+    setSearchDialogMessage(t("search.start"));
     return;
   }
 
-  const query = elements.searchInput.value.trim();
-  if (!query || state.searchSubmittedQuery !== query) {
-    setSearchDialogMessage(t("search.start"));
+  if (!hasRenderedResults) {
+    setSearchDialogMessage(t(state.searchLoading ? "search.loading" : "search.start"));
     return;
   }
 
   elements.searchResultCount.textContent = t("search.resultCount", { count: formatNumber(state.searchResults.length) });
   if (!state.searchResults.length) {
-    setSearchDialogMessage(t("search.empty"));
+    const refreshing = state.searchLoading || state.searchResultsQuery !== query;
+    setSearchDialogMessage(t(refreshing ? "search.loading" : "search.empty"));
     return;
   }
 
@@ -4710,6 +4728,7 @@ function resetSearchDialogState({ clearInput = true } = {}) {
   state.searchLoading = false;
   state.searchResults = [];
   state.searchSubmittedQuery = "";
+  state.searchResultsQuery = "";
   if (clearInput) elements.searchInput.value = "";
   renderSearchDialog();
 }
@@ -4743,6 +4762,7 @@ function closeSearchDialog({ restoreFocus = true } = {}) {
   if (state.searchLoading) {
     state.searchResults = [];
     state.searchSubmittedQuery = "";
+    state.searchResultsQuery = "";
   }
   state.searchLoading = false;
   elements.searchLayer.classList.add("hidden");
@@ -4865,7 +4885,6 @@ async function performWorkspaceSearch({ live = false } = {}) {
   const requestId = ++state.searchRequestId;
   state.searchSubmittedQuery = query;
   state.searchLoading = true;
-  state.searchResults = [];
   renderSearchDialog();
 
   try {
@@ -4873,12 +4892,15 @@ async function performWorkspaceSearch({ live = false } = {}) {
     const data = await api(`/api/search?${params.toString()}`);
     if (requestId !== state.searchRequestId || !state.searchDialogOpen) return;
     state.searchResults = Array.isArray(data?.results) ? data.results : [];
+    state.searchResultsQuery = query;
     state.searchLoading = false;
     renderSearchDialog();
   } catch (error) {
     if (requestId !== state.searchRequestId || !state.searchDialogOpen) return;
     state.searchLoading = false;
     state.searchResults = [];
+    state.searchResultsQuery = "";
+    elements.searchResults.classList.remove("is-refreshing");
     elements.searchResults.replaceChildren();
     elements.searchResults.setAttribute("aria-busy", "false");
     elements.searchResultCount.textContent = "";
@@ -8178,11 +8200,73 @@ function persistBlockDraft(row, payload = null) {
   return saved;
 }
 
+// Set only while resolveDraftConflictsWithLocalVersion() applies a choice the
+// user already made in the themed dialog.
+let recoveredDraftOverwriteApproved = false;
+
 function confirmRecoveredDraftOverwrite() {
-  // Deliberately the native, synchronous confirm: this runs inside input and
-  // beforeinput handlers that must decide before the edit is applied. If the
+  if (recoveredDraftOverwriteApproved) return true;
+  // Fallback only: the conflict notice offers "Keep my version" up front so
+  // users can decide before typing. This runs inside input and beforeinput
+  // handlers that must decide synchronously, hence the native confirm. If the
   // browser suppresses dialogs it returns false, which keeps the server copy.
   return window.confirm(t("confirm.overwriteRecoveredDraft"));
+}
+
+function getResolvableDraftConflictRows() {
+  return [...elements.blockList.querySelectorAll(".editor-block-row[data-block-id]")].filter((row) => {
+    if (row.dataset.draftConflict === "true") return true;
+    const origin = blockDraftConflictOrigins.get(row.dataset.blockId);
+    return Boolean(origin && origin.resolved !== true);
+  });
+}
+
+function hasResolvableDraftConflicts() {
+  return pageTitleDraftConflict || getResolvableDraftConflictRows().length > 0;
+}
+
+function getDraftConflictStatusOptions() {
+  if (!hasResolvableDraftConflicts()) return {};
+  return {
+    action: {
+      label: t("status.keepLocalDraft"),
+      onSelect: () => {
+        void resolveDraftConflictsWithLocalVersion().catch((error) => setStatus(error.message, true));
+      }
+    }
+  };
+}
+
+// Lets the user settle every recovered-draft conflict on the page from one
+// themed dialog, instead of meeting a native confirm in the middle of typing.
+async function resolveDraftConflictsWithLocalVersion() {
+  const pageId = state.selectedPage?.id;
+  if (!pageId || !hasResolvableDraftConflicts()) return;
+  const ok = await showConfirmDialog({
+    title: t("dialog.keepLocalDraftTitle"),
+    message: t("confirm.overwriteRecoveredDraft"),
+    confirmLabel: t("dialog.overwrite"),
+    danger: true
+  });
+  if (!ok || state.selectedPage?.id !== pageId || !requireWritablePage()) return;
+
+  const saves = [];
+  recoveredDraftOverwriteApproved = true;
+  try {
+    if (pageTitleDraftConflict && promotePageTitleDraftConflict()) {
+      saves.push(savePageTitleNow({ quiet: true }));
+    }
+    for (const row of getResolvableDraftConflictRows()) {
+      if (promoteBlockDraftConflict(row)) saves.push(saveBlockRow(row, { quiet: true }));
+    }
+  } finally {
+    recoveredDraftOverwriteApproved = false;
+  }
+  await Promise.all(saves);
+  syncBeforeUnloadProtection();
+  if (state.selectedPage?.id === pageId && !hasResolvableDraftConflicts()) {
+    setStatus(t("status.localDraftKept"));
+  }
 }
 
 function promotePageTitleDraftConflict() {
@@ -8253,7 +8337,7 @@ function hasUnresolvedDraftConflicts() {
 }
 
 function reportUnresolvedDraftConflict() {
-  setStatus(t("status.resolveRecoveredDraftConflict"), true);
+  setStatus(t("status.resolveRecoveredDraftConflict"), true, getDraftConflictStatusOptions());
 }
 
 function disableBeforeUnloadProtection() {
@@ -9408,7 +9492,14 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
   if (deleteButton) {
     const ownerRequired = kind === "collection" && !isPageOwner(getPageSummaryById(id));
     deleteButton.disabled = ownerRequired;
-    deleteButton.title = ownerRequired ? t("ownership.deleteCollectionOwnerOnly") : "";
+    deleteButton.title = "";
+    // A disabled item shows no tooltip on touch or to many browsers, so the
+    // reason is printed inside the item itself.
+    const deleteHint = $("#navigation-delete-hint");
+    if (deleteHint) {
+      deleteHint.textContent = ownerRequired ? t("ownership.deleteCollectionOwnerOnly") : "";
+      deleteHint.classList.toggle("hidden", !ownerRequired);
+    }
   }
   positionNavigationContextMenu(trigger);
 
@@ -10099,9 +10190,14 @@ async function deleteNavigationTarget() {
       task = getPageDeleteTask(authenticationScope, target.id, deletionSnapshot.snapshot, serverPageIds);
     }
 
+    // Name exactly what goes: the snapshot's page ids include the target itself.
+    const nestedPageCount = Math.max(0, serverPageIds.length - 1);
+    const deleteMessageKey = isCollection
+      ? (nestedPageCount > 0 ? "confirm.deleteCollectionWithPages" : "confirm.deleteEmptyCollection")
+      : (nestedPageCount > 0 ? "confirm.deletePageWithSubpages" : "confirm.deleteSinglePage");
     const ok = await showConfirmDialog({
       title: t("dialog.deleteTitle"),
-      message: t(isCollection ? "confirm.deleteCollection" : "confirm.deletePage", { title: target.title }),
+      message: t(deleteMessageKey, { title: target.title, count: formatNumber(nestedPageCount) }),
       confirmLabel: t("dialog.delete"),
       danger: true
     }) && isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -11648,6 +11744,97 @@ function renderPageComments() {
   elements.pageCommentsSubmit.disabled = busy || pageUnavailable || !elements.pageCommentsInput.value.trim();
   elements.pageCommentsSubmit.textContent = commentState?.submitting ? t("comments.submitting") : t("comments.submit");
 }
+
+// Comments are not part of the live collaboration document, so an open
+// comment panel re-checks the server in the background. It never shows a
+// loading state, never touches the composer, and skips while the viewer is
+// editing a comment or the tab is hidden.
+const pageCommentsBackgroundRefreshMs = 20_000;
+let pageCommentsBackgroundRefreshInFlight = false;
+
+function canRefreshPageCommentsInBackground() {
+  const comments = state.pageComments;
+  return Boolean(
+    comments.pageId
+      && comments.initialized
+      && comments.expanded
+      && !comments.loading
+      && !comments.submitting
+      && !comments.busyCommentId
+      && !comments.editingId
+      && state.workspaceView === "page"
+      && state.selectedPage?.id === comments.pageId
+      && document.visibilityState === "visible"
+      // Re-rendering would drop keyboard focus from a comment's actions.
+      && !elements.pageCommentsList?.contains(document.activeElement)
+      && !pageCommentsBackgroundRefreshInFlight
+  );
+}
+
+async function refreshPageCommentsInBackground() {
+  if (!canRefreshPageCommentsInBackground()) return;
+  const pageId = state.pageComments.pageId;
+  const navigationGeneration = workspaceNavigationGeneration;
+  if (!isCurrentPageCommentsContext(pageId, navigationGeneration)) return;
+  const requestId = state.pageComments.requestId;
+  pageCommentsBackgroundRefreshInFlight = true;
+  try {
+    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/comments`);
+    // Any foreground load, mutation, or edit that started meanwhile wins.
+    if (
+      requestId !== state.pageComments.requestId
+      || !isCurrentPageCommentsContext(pageId, navigationGeneration)
+      || state.pageComments.loading
+      || state.pageComments.submitting
+      || state.pageComments.busyCommentId
+      || state.pageComments.editingId
+    ) return;
+    const incoming = Array.isArray(data?.comments) ? data.comments : [];
+    const count = Number.isSafeInteger(data?.count) && data.count >= 0 ? data.count : incoming.length;
+    const nextCursor = typeof data?.nextCursor === "string" ? data.nextCursor : null;
+    const serialize = (entries) => JSON.stringify(entries.map((entry) => [entry.id, entry.version, entry.body]));
+
+    if (nextCursor === null) {
+      // The whole thread fits in one page: replace it, which also picks up
+      // edits and deletions made by other people.
+      if (count === state.pageComments.totalCount && serialize(incoming) === serialize(state.pageComments.entries)) return;
+      state.pageComments.entries = incoming;
+      state.pageComments.totalCount = count;
+      state.pageComments.nextCursor = null;
+    } else {
+      // Long thread: keep what the viewer paged in, merge updates to the
+      // first page, and say when newer comments are waiting.
+      const byId = new Map(state.pageComments.entries.map((entry) => [entry.id, entry]));
+      let changed = false;
+      for (const entry of incoming) {
+        if (byId.has(entry.id) && serialize([byId.get(entry.id)]) !== serialize([entry])) {
+          byId.set(entry.id, entry);
+          changed = true;
+        }
+      }
+      if (changed) state.pageComments.entries = [...byId.values()];
+      if (count !== state.pageComments.totalCount) {
+        if (count > state.pageComments.totalCount) {
+          state.pageComments.message = t("comments.newAvailable");
+          state.pageComments.messageIsError = false;
+        }
+        state.pageComments.totalCount = count;
+        changed = true;
+      }
+      if (!changed) return;
+    }
+    renderPageComments();
+  } catch {
+    // Background refresh is best effort; the Refresh button reports errors.
+  } finally {
+    pageCommentsBackgroundRefreshInFlight = false;
+  }
+}
+
+window.setInterval(() => void refreshPageCommentsInBackground(), pageCommentsBackgroundRefreshMs);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void refreshPageCommentsInBackground();
+});
 
 async function loadPageComments(
   pageId,
@@ -13559,17 +13746,31 @@ function handleKanbanAction(row, button) {
 
   if (action === "kanban-delete-card") {
     const cardId = button.dataset.cardId;
-    void showConfirmDialog({
-      message: t("confirm.deleteKanbanCard"),
-      confirmLabel: t("dialog.delete"),
-      danger: true
-    }).then((confirmed) => {
-      if (!confirmed || !row.isConnected) return;
+    const removeCard = () => {
+      if (!row.isConnected) return;
       const latest = extractKanbanData(row);
       const latestCard = findKanbanCard(latest, cardId);
       if (!latestCard) return;
       latestCard.column.cards.splice(latestCard.cardIndex, 1);
       replaceKanbanData(row, latest);
+    };
+    // Same rule as block deletion: asking before removing a blank card is
+    // friction without protection. Cards with any content still ask first.
+    const { card } = found;
+    const isBlankCard = !String(card.title ?? "").trim()
+      && !String(card.description ?? "").trim()
+      && !card.icon
+      && (!Array.isArray(card.tags) || card.tags.length === 0);
+    if (isBlankCard) {
+      removeCard();
+      return;
+    }
+    void showConfirmDialog({
+      message: t("confirm.deleteKanbanCard"),
+      confirmLabel: t("dialog.delete"),
+      danger: true
+    }).then((confirmed) => {
+      if (confirmed) removeCard();
     });
     return;
   }
@@ -15696,6 +15897,9 @@ function handleTableAction(row, action) {
   const activeColumn = Math.max(0, Math.min(Number(row.dataset.tableActiveColumn) || 0, columnCount - 1));
   let focusRow = activeRow;
   let focusColumn = activeColumn;
+  // Deleting a row or column that holds text offers Undo instead of a prompt.
+  let undoStatusKey = null;
+  const dataBeforeAction = JSON.parse(JSON.stringify(data));
 
   if (action === "table-add-row" && rowCount < tableLimits.rows) {
     data.rows.push(Array.from({ length: columnCount }, () => ""));
@@ -15704,10 +15908,12 @@ function handleTableAction(row, action) {
     for (const cells of data.rows) cells.push("");
     focusColumn = columnCount;
   } else if (action === "table-delete-row" && rowCount > 1) {
-    data.rows.splice(activeRow, 1);
+    const [removedCells] = data.rows.splice(activeRow, 1);
+    if (removedCells.some((cell) => String(cell ?? "").trim())) undoStatusKey = "status.tableRowDeleted";
     focusRow = Math.min(activeRow, data.rows.length - 1);
   } else if (action === "table-delete-column" && columnCount > 1) {
-    for (const cells of data.rows) cells.splice(activeColumn, 1);
+    const removedCells = data.rows.map((cells) => cells.splice(activeColumn, 1)[0]);
+    if (removedCells.some((cell) => String(cell ?? "").trim())) undoStatusKey = "status.tableColumnDeleted";
     focusColumn = Math.min(activeColumn, data.rows[0].length - 1);
   } else if (action === "table-toggle-header-row") {
     data.headerRow = !data.headerRow;
@@ -15718,6 +15924,19 @@ function handleTableAction(row, action) {
   }
 
   replaceTableData(row, data, { focusRow, focusColumn });
+  if (!undoStatusKey) return;
+  const dataAfterAction = JSON.stringify(extractTableData(row));
+  setStatus(t(undoStatusKey), false, {
+    action: {
+      label: t("status.undo"),
+      onSelect: () => {
+        // Only undo onto the exact table state the deletion produced.
+        if (!row.isConnected || !requireWritablePage()) return;
+        if (JSON.stringify(extractTableData(row)) !== dataAfterAction) return;
+        replaceTableData(row, dataBeforeAction, { focusRow: activeRow, focusColumn: activeColumn });
+      }
+    }
+  });
 }
 
 function handleTableCellKeydown(event, input, row) {
@@ -19491,7 +19710,22 @@ function activatePersistedPageDraft(recovery) {
     recovery.missing.length > 0 ||
     recovery.orderConflicts.length > 0 ||
     recovery.alternates.length > 0;
-  setStatus(t(hasConflict ? "status.localDraftConflict" : "status.localDraftRecovered"), hasConflict);
+  // Offer the resolution up front so the user does not meet the fallback
+  // native confirm mid-keystroke. Decided from the recovery result alone (no
+  // extra DOM scan); the action re-checks what is still unresolved.
+  const offerKeepLocalDraft = Boolean(recovery.title?.conflict) || recovery.conflictCount > 0;
+  setStatus(
+    t(hasConflict ? "status.localDraftConflict" : "status.localDraftRecovered"),
+    hasConflict,
+    offerKeepLocalDraft ? {
+      action: {
+        label: t("status.keepLocalDraft"),
+        onSelect: () => {
+          void resolveDraftConflictsWithLocalVersion().catch((error) => setStatus(error.message, true));
+        }
+      }
+    } : {}
+  );
   return true;
 }
 
@@ -21337,7 +21571,8 @@ elements.authForm.addEventListener("submit", async (event) => {
 
   setAuthOperationBusy(true);
   try {
-    setStatus(t(mode === "login" ? "status.loggingIn" : "status.registering"));
+    // The submit button shows progress; just clear a stale error from a retry.
+    setStatus("");
     const data = await api(`/api/auth/${mode}`, { method: "POST", body });
     if (!isCurrentAuthFlowOperation(operation)) return;
     if (mode === "register") {
@@ -21345,7 +21580,9 @@ elements.authForm.addEventListener("submit", async (event) => {
       elements.username.value = body.username;
       elements.password.value = "";
       setPasswordVisible(false);
-      setStatus(t("auth.registrationPending"));
+      // This is the outcome of sign-up (sign-in waits for approval), so it
+      // stays until dismissed instead of vanishing after a few seconds.
+      setStatus(t("auth.registrationPending"), false, { dismissAfter: 0 });
       return;
     }
     if (data?.mfaRequired) {
@@ -21394,9 +21631,17 @@ let liveSearchTimer = null;
 elements.searchInput.addEventListener("input", (event) => {
   window.clearTimeout(liveSearchTimer);
   liveSearchTimer = null;
-  resetSearchDialogState({ clearInput: false });
+  if (!elements.searchInput.value.trim()) {
+    resetSearchDialogState({ clearInput: false });
+    return;
+  }
+  // Drop any in-flight answer for the previous text but keep the rendered
+  // results (dimmed) instead of blanking the list on every keystroke.
+  state.searchRequestId += 1;
   // Wait for IME composition (Korean/Japanese) to settle before querying.
-  if (event.isComposing || !elements.searchInput.value.trim()) return;
+  state.searchLoading = !event.isComposing;
+  renderSearchDialog();
+  if (event.isComposing) return;
   liveSearchTimer = window.setTimeout(() => {
     liveSearchTimer = null;
     if (state.searchDialogOpen) void performWorkspaceSearch({ live: true });
@@ -21645,8 +21890,27 @@ elements.pageCommentsForm.addEventListener("submit", (event) => {
   void submitPageComment();
 });
 
+// Screen readers hear the counter only when nearing or reaching the limit,
+// once per threshold, rather than on every keystroke.
+const pageCommentLengthThresholds = [1800, 2000];
+let pageCommentAnnouncedThreshold = 0;
+
+function announcePageCommentLength(length) {
+  const announcer = $("#page-comments-limit-announcer");
+  if (!announcer) return;
+  const reached = pageCommentLengthThresholds.filter((limit) => length >= limit).at(-1) ?? 0;
+  if (reached === pageCommentAnnouncedThreshold) return;
+  pageCommentAnnouncedThreshold = reached;
+  announcer.textContent = reached === 0
+    ? ""
+    : t(reached >= 2000 ? "comments.limitReached" : "comments.limitNear", {
+      remaining: formatNumber(Math.max(0, 2000 - length))
+    });
+}
+
 elements.pageCommentsInput.addEventListener("input", () => {
   elements.pageCommentsLength.textContent = `${formatNumber(elements.pageCommentsInput.value.length)} / ${formatNumber(2000)}`;
+  announcePageCommentLength(elements.pageCommentsInput.value.length);
   elements.pageCommentsSubmit.disabled = Boolean(
     state.pageComments.loading
       || state.pageComments.submitting
@@ -22495,13 +22759,9 @@ elements.archivePageButton.addEventListener("click", async () => {
     return;
   }
   closePageActionsMenu({ restoreFocus: true });
+  // Archiving is reversible and offers Undo afterwards, so it does not ask first.
   const pageIdAtPrompt = state.selectedPage?.id;
   const navigationGenerationAtPrompt = workspaceNavigationGeneration;
-  const ok = await showConfirmDialog({
-    message: t("confirm.archivePage"),
-    confirmLabel: t("dialog.archive")
-  });
-  if (!ok) return;
   if (
     !pageIdAtPrompt
     || state.selectedPage?.id !== pageIdAtPrompt

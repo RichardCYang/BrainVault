@@ -2,9 +2,15 @@
 
 ## Workspace and editor
 
-BrainVault uses a page-first workspace with a compact document tree and automatic title saving. A crash-resilient browser draft journal restores unacknowledged title and block edits without overwriting a newer server version.
+BrainVault uses a page-first workspace with a compact document tree and automatic title saving. A crash-resilient browser draft journal restores unacknowledged title and block edits without overwriting a newer server version. When a recovered draft conflicts with a newer server version, the notice offers **Keep my version**, which asks once and then saves the recovered content over the server copy, so the choice is made before you continue typing.
 
 Pages and collections support Unicode Emoji 17 icons with Korean/English search, categories, skin-tone variants, recent selections, and reusable custom PNG, JPEG, WebP, or ICO image icons up to 512 KB. Pages can be nested, archived, or permanently deleted from their three-dot menus, and search covers page titles and block content.
+
+Archiving takes effect immediately and shows an **Undo** action, because an archived page can always be restored. Permanent deletion still asks first, names how many nested pages it will remove, and suggests archiving instead. When a delegated collection administrator opens a collection menu, the unavailable permanent delete item explains in place that only the workspace owner can delete a collection root.
+
+Quick Find updates results as you type. While the next query loads, the previous results stay on screen in a dimmed state instead of clearing on every keystroke.
+
+Page comments appear below the content. While the comment panel is open, new comments from other people load automatically every 20 seconds and when you return to the tab, without disturbing a comment you are writing. The character counter is announced to screen readers as you approach and reach the 2,000-character limit.
 
 ### Page cover images
 
@@ -63,7 +69,7 @@ Useful slash commands include:
 
 Inline formatting supports bold, italic, strikethrough, code, formulas, links, text color, and left/center/right/justified block alignment. Drag-and-drop reordering supports nested content.
 
-Table blocks include row, column, and header controls. Cells support arrow-key movement; `Enter` advances down the current column, and `Tab` from the final cell adds a row.
+Table blocks include row, column, and header controls. Cells support arrow-key movement; `Enter` advances down the current column, and `Tab` from the final cell adds a row. Deleting a row or column that contains text shows an **Undo** action; empty rows and columns are removed quietly.
 
 ## Database and Kanban blocks
 
@@ -73,7 +79,7 @@ Table, board, and list views operate over the same rows. Each view stores its ow
 
 Property and row changes are stored in `metadata.database`, while a searchable text summary is kept in `markdown`.
 
-Kanban boards support direct title, group, and card editing. Cards can use an emoji and a default, pink, yellow, blue, light-green, purple, or peach pastel theme. Drag the six-dot card handle to reorder cards or move them between groups; arrow controls provide equivalent movement on touch devices and for keyboard users.
+Kanban boards support direct title, group, and card editing. Cards can use an emoji and a default, pink, yellow, blue, light-green, purple, or peach pastel theme. Drag the six-dot card handle to reorder cards or move them between groups; arrow controls provide equivalent movement on touch devices and for keyboard users. Blank cards are removed immediately, while cards with any content ask for confirmation first.
 
 ## Gantt timeline blocks
 
