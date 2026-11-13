@@ -1,6 +1,7 @@
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatNumber, t } from "./i18n.js";
 import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
+import { showConfirmDialog } from "./app-dialog.js";
 
 export const accordionLimits = {
   titleLength: 120,
@@ -41,6 +42,24 @@ function uniqueId(requested, seen, fallbackPrefix) {
 
 function normalizeIcon(value) {
   return typeof value === "string" && value.trim() ? value : "📄";
+}
+
+// Numbers shift as items move, so any generated "Item N" title still counts
+// as untouched.
+function isDefaultAccordionItemTitle(title, itemCount) {
+  const value = String(title ?? "").trim();
+  if (!value) return true;
+  const upper = Math.max(itemCount, accordionLimits.items);
+  for (let number = 1; number <= upper; number += 1) {
+    if (value === t("accordion.defaultItemTitle", { number: formatNumber(number) })) return true;
+  }
+  return false;
+}
+
+function isBlankAccordionItem(item, itemCount) {
+  return !String(item?.content ?? "").trim()
+    && normalizeIcon(item?.icon) === "📄"
+    && isDefaultAccordionItemTitle(item?.title, itemCount);
 }
 
 export function createDefaultAccordionData() {
@@ -360,6 +379,26 @@ export function createAccordionEditor(row, value, options = {}) {
     onDirty?.();
   });
 
+  const removeAccordionItem = (removedId, itemElement) => {
+    const removedIndex = data.items.findIndex((candidate) => candidate.id === removedId);
+    if (removedIndex < 0) return;
+    data.items.splice(removedIndex, 1);
+    const focusItemId = data.items[Math.min(removedIndex, data.items.length - 1)]?.id ?? null;
+    const focusTarget = focusItemId
+      ? list.querySelector(`.accordion-item[data-accordion-item-id="${CSS.escape(focusItemId)}"] .accordion-item-title-input`)
+      : addButton;
+
+    // Keep the live editor mounted. Replacing the entire editor here briefly
+    // removes focus and resets every textarea before focus/height restoration
+    // on the next animation frame, which is visible as a block flicker.
+    focusWithoutScroll(focusTarget);
+    itemElement?.remove();
+    syncAccordionItemControls();
+    renderFallbackPreview(preview, data, renderIcon);
+    editor.accordionData = data;
+    onDirty?.();
+  };
+
   editor.addEventListener("click", (event) => {
     if (isReadOnly()) return;
     const button = event.target.closest("button[data-action]");
@@ -401,21 +440,21 @@ export function createAccordionEditor(row, value, options = {}) {
       return;
     }
     if (action === "accordion-remove-item") {
-      const itemElement = button.closest(".accordion-item");
-      data.items.splice(itemIndex, 1);
-      const focusItemId = data.items[Math.min(itemIndex, data.items.length - 1)]?.id ?? null;
-      const focusTarget = focusItemId
-        ? list.querySelector(`.accordion-item[data-accordion-item-id="${CSS.escape(focusItemId)}"] .accordion-item-title-input`)
-        : addButton;
-
-      // Keep the live editor mounted. Replacing the entire editor here briefly
-      // removes focus and resets every textarea before focus/height restoration
-      // on the next animation frame, which is visible as a block flicker.
-      focusWithoutScroll(focusTarget);
-      itemElement?.remove();
-      syncAccordionItemControls();
-      renderFallbackPreview(preview, data, renderIcon);
-      onDirty?.();
+      // Same rule as every other block: an untouched item goes at once, an
+      // item with written content asks first.
+      if (isBlankAccordionItem(item, data.items.length)) {
+        removeAccordionItem(item.id, button.closest(".accordion-item"));
+        return;
+      }
+      void showConfirmDialog({
+        message: t("accordion.confirmRemoveItem", { title: item.title || formatNumber(itemIndex + 1) }),
+        confirmLabel: t("dialog.delete"),
+        danger: true
+      }).then((confirmed) => {
+        if (!confirmed || !editor.isConnected || isReadOnly()) return;
+        const itemElement = list.querySelector(`.accordion-item[data-accordion-item-id="${CSS.escape(item.id)}"]`);
+        removeAccordionItem(item.id, itemElement);
+      });
       return;
     }
     if (action === "accordion-move-up" && itemIndex > 0) {

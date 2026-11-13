@@ -2056,6 +2056,21 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
       replaceEditor({ focusRowId: dataRow.id });
     } else if (action === "database-delete-row") {
       const rowId = button.dataset.rowId;
+      // A row with nothing typed into it loses nothing, so it goes at once, as
+      // blank blocks and Kanban cards do. Select and checkbox values are one
+      // click to set and are prefilled when a row is added inside a group.
+      const dataRow = database.rows.find((candidate) => candidate.id === rowId);
+      const isBlankRow = dataRow && database.properties.every((property) => {
+        if (property.type === "select" || property.type === "checkbox") return true;
+        const value = dataRow.values?.[property.id];
+        if (Array.isArray(value)) return value.length === 0;
+        return value === null || value === undefined || !String(value).trim();
+      });
+      if (isBlankRow) {
+        database.rows = database.rows.filter((candidate) => candidate.id !== rowId);
+        replaceEditor();
+        return;
+      }
       void showConfirmDialog({
         message: t("database.confirmDeleteRow"),
         confirmLabel: t("dialog.delete"),

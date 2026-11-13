@@ -24149,7 +24149,12 @@ document.addEventListener("keydown", (event) => {
   ) return;
   if (!state.user || state.workspaceView !== "page" || !state.selectedPage) return;
   event.preventDefault();
-  if (isPageReadOnly()) return;
+  // The browser's own save is suppressed either way, so say why nothing was
+  // saved instead of swallowing the key in silence.
+  if (isPageReadOnly()) {
+    reportReadOnlyBlocked();
+    return;
+  }
   void saveCurrentPageNow();
 });
 

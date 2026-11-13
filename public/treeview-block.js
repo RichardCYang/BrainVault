@@ -1,4 +1,5 @@
 import { formatNumber, t } from "./i18n.js";
+import { showConfirmDialog } from "./app-dialog.js";
 
 export const treeViewLimits = Object.freeze({
   titleLength: 120,
@@ -52,6 +53,19 @@ function parentWouldCycle(nodeId, parentId, parentById, acyclicIds) {
   // Do not cache a cyclic path: preserve the original input-order repair rule,
   // including nodes outside a cycle whose ancestors enter that cycle.
   for (const id of seen) acyclicIds.add(id);
+  return false;
+}
+
+// Numbers shift as items are added and removed, so any generated "Item N"
+// title still counts as untouched.
+function isBlankTreeViewNode(node, nodeCount) {
+  if (String(node?.note ?? "").trim()) return false;
+  const title = String(node?.title ?? "").trim();
+  if (!title) return true;
+  const upper = Math.max(nodeCount, treeViewLimits.nodes);
+  for (let number = 1; number <= upper; number += 1) {
+    if (title === t("treeview.defaultNodeTitle", { number: formatNumber(number) })) return true;
+  }
   return false;
 }
 
@@ -540,17 +554,35 @@ export function createTreeViewEditor(row, value, options = {}) {
     }
 
     if (action === "treeview-delete-node") {
-      const parentId = node.parentId;
-      for (const child of data.nodes) {
-        if (child.parentId === node.id) child.parentId = parentId;
+      const deleteNode = () => {
+        const target = getNode(data, node.id);
+        if (!target) return;
+        const parentId = target.parentId;
+        for (const child of data.nodes) {
+          if (child.parentId === target.id) child.parentId = parentId;
+        }
+        data.nodes = data.nodes.filter((candidate) => candidate.id !== target.id);
+        editor.treeViewData = data;
+        const fallbackId = parentId && getNode(data, parentId)
+          ? parentId
+          : data.nodes[Math.min(data.nodes.length - 1, Math.max(0, data.nodes.findIndex((candidate) => candidate.parentId === parentId)))]?.id ?? null;
+        selectedNodeId = fallbackId;
+        replaceEditor({ focusId: fallbackId });
+      };
+      // Children are kept, so only the item's own title and memo can be lost:
+      // an untouched item goes at once, a written one asks first.
+      if (isBlankTreeViewNode(node, data.nodes.length)) {
+        deleteNode();
+        return;
       }
-      data.nodes = data.nodes.filter((candidate) => candidate.id !== node.id);
-      editor.treeViewData = data;
-      const fallbackId = parentId && getNode(data, parentId)
-        ? parentId
-        : data.nodes[Math.min(data.nodes.length - 1, Math.max(0, data.nodes.findIndex((candidate) => candidate.parentId === parentId)))]?.id ?? null;
-      selectedNodeId = fallbackId;
-      replaceEditor({ focusId: fallbackId });
+      void showConfirmDialog({
+        message: t("treeview.confirmDeleteNode", { title: node.title || t("treeview.nodeTitlePlaceholder") }),
+        confirmLabel: t("dialog.delete"),
+        danger: true
+      }).then((confirmed) => {
+        if (!confirmed || !editor.isConnected || isReadOnly()) return;
+        deleteNode();
+      });
     }
   });
 

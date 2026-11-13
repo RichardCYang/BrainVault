@@ -495,6 +495,13 @@ export function createTimetableEditor(row, value, { onDirty = () => {} } = {}) {
     } else if (action === "timetable-delete-entry") {
       const entry = timetable.entries.find((item) => item.id === button.dataset.entryId);
       if (!entry) return;
+      // A time slot with no title, note, or check mark loses nothing, so it
+      // goes at once, as blank blocks and Kanban cards do.
+      if (!String(entry.title ?? "").trim() && !String(entry.note ?? "").trim() && !entry.completed) {
+        timetable.entries = timetable.entries.filter((item) => item.id !== entry.id);
+        replaceEditor();
+        return;
+      }
       void showConfirmDialog({
         message: t("timetable.confirmDeleteEntry", { schedule: entry.title || `${entry.start}–${entry.end}` }),
         confirmLabel: t("dialog.delete"),

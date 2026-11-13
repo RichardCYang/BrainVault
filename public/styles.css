@@ -3634,8 +3634,9 @@ body.is-kanban-column-dragging {
 }
 
 .kanban-card-delete {
-  width: 1.45rem;
-  min-width: 1.45rem;
+  width: 1.5rem;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
   opacity: 0;
 }
 
@@ -8094,9 +8095,9 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
 }
 
 .gantt-delete-task {
-  width: 1.45rem;
-  min-width: 1.45rem;
-  min-height: 1.45rem;
+  width: 1.5rem;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
   color: var(--danger);
   opacity: 0;
 }

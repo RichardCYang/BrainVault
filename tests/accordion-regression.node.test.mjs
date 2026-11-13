@@ -99,12 +99,19 @@ test("accordion item removal keeps the live editor mounted to avoid focus and la
   const moveStart = editor.indexOf('if (action === "accordion-move-up"', removeStart);
   assert.ok(removeStart >= 0 && moveStart > removeStart);
   const removeBranch = editor.slice(removeStart, moveStart);
+  // Both the immediate (blank item) and the confirmed path share one helper.
+  const helperStart = editor.indexOf("const removeAccordionItem = ");
+  const helperEnd = editor.indexOf("\n  };", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const removeHelper = editor.slice(helperStart, helperEnd);
 
   assert.doesNotMatch(removeBranch, /replaceEditor\s*\(/);
-  assert.match(removeBranch, /itemElement\?\.remove\(\)/);
-  assert.match(removeBranch, /syncAccordionItemControls\(\)/);
-  assert.match(removeBranch, /renderFallbackPreview\(preview, data, renderIcon\)/);
-  assert.match(removeBranch, /focusWithoutScroll\(focusTarget\)/);
+  assert.match(removeBranch, /removeAccordionItem\(/);
+  assert.doesNotMatch(removeHelper, /replaceEditor\s*\(/);
+  assert.match(removeHelper, /itemElement\?\.remove\(\)/);
+  assert.match(removeHelper, /syncAccordionItemControls\(\)/);
+  assert.match(removeHelper, /renderFallbackPreview\(preview, data, renderIcon\)/);
+  assert.match(removeHelper, /focusWithoutScroll\(focusTarget\)/);
   assert.match(editor, /target\.focus\(\{ preventScroll: true \}\)/);
 });
 

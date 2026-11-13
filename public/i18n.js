@@ -5181,7 +5181,7 @@ const accordionTranslationAdditions = {
       defaultTitle: "Accordion", defaultItemTitle: "Item {number}", titlePlaceholder: "Accordion title", titleAria: "Accordion title",
       addItem: "Add item", dragItem: "Drag to reorder item", changeIcon: "Change icon", changeIconFor: "Change icon for {title}",
       collapseItem: "Collapse item", expandItem: "Expand item", itemTitlePlaceholder: "Item title", itemTitleAria: "Title for item {number}",
-      moveUp: "Move item up", moveDown: "Move item down", removeItem: "Remove item", contentPlaceholder: "Add content…",
+      moveUp: "Move item up", moveDown: "Move item down", removeItem: "Remove item", confirmRemoveItem: "Remove “{title}” and its content?", contentPlaceholder: "Add content…",
       contentAria: "Content for {title}", emptyState: "No items yet. Add an item to get started.", iconSaved: "Accordion item icon saved.",
       orderEnabled: "Item numbers are shown.", orderDisabled: "Item numbers are hidden."
     }
@@ -5193,7 +5193,7 @@ const accordionTranslationAdditions = {
       defaultTitle: "아코디언", defaultItemTitle: "항목 {number}", titlePlaceholder: "아코디언 제목", titleAria: "아코디언 제목",
       addItem: "항목 추가", dragItem: "드래그하여 항목 순서 변경", changeIcon: "아이콘 변경", changeIconFor: "{title} 아이콘 변경",
       collapseItem: "항목 접기", expandItem: "항목 펼치기", itemTitlePlaceholder: "항목 제목", itemTitleAria: "{number}번 항목 제목",
-      moveUp: "항목 위로 이동", moveDown: "항목 아래로 이동", removeItem: "항목 삭제", contentPlaceholder: "내용을 입력하세요…",
+      moveUp: "항목 위로 이동", moveDown: "항목 아래로 이동", removeItem: "항목 삭제", confirmRemoveItem: "‘{title}’ 항목과 내용을 삭제할까요?", contentPlaceholder: "내용을 입력하세요…",
       contentAria: "{title} 내용", emptyState: "아직 항목이 없습니다. 항목을 추가해보세요.", iconSaved: "아코디언 항목 아이콘을 저장했습니다.",
       orderEnabled: "항목 순서 번호를 표시합니다.", orderDisabled: "항목 순서 번호를 숨깁니다."
     }
@@ -5205,7 +5205,7 @@ const accordionTranslationAdditions = {
       defaultTitle: "アコーディオン", defaultItemTitle: "項目 {number}", titlePlaceholder: "アコーディオンのタイトル", titleAria: "アコーディオンのタイトル",
       addItem: "項目を追加", dragItem: "ドラッグして並べ替え", changeIcon: "アイコンを変更", changeIconFor: "{title} のアイコンを変更",
       collapseItem: "項目を閉じる", expandItem: "項目を開く", itemTitlePlaceholder: "項目タイトル", itemTitleAria: "項目 {number} のタイトル",
-      moveUp: "上へ移動", moveDown: "下へ移動", removeItem: "項目を削除", contentPlaceholder: "内容を入力…",
+      moveUp: "上へ移動", moveDown: "下へ移動", removeItem: "項目を削除", confirmRemoveItem: "「{title}」とその内容を削除しますか？", contentPlaceholder: "内容を入力…",
       contentAria: "{title} の内容", emptyState: "項目がありません。項目を追加してください。", iconSaved: "項目のアイコンを保存しました。",
       orderEnabled: "項目番号を表示します。", orderDisabled: "項目番号を非表示にします。"
     }
@@ -5217,7 +5217,7 @@ const accordionTranslationAdditions = {
       defaultTitle: "Accordéon", defaultItemTitle: "Élément {number}", titlePlaceholder: "Titre de l’accordéon", titleAria: "Titre de l’accordéon",
       addItem: "Ajouter un élément", dragItem: "Faire glisser pour réordonner", changeIcon: "Changer l’icône", changeIconFor: "Changer l’icône de {title}",
       collapseItem: "Replier l’élément", expandItem: "Développer l’élément", itemTitlePlaceholder: "Titre de l’élément", itemTitleAria: "Titre de l’élément {number}",
-      moveUp: "Déplacer vers le haut", moveDown: "Déplacer vers le bas", removeItem: "Supprimer l’élément", contentPlaceholder: "Ajouter du contenu…",
+      moveUp: "Déplacer vers le haut", moveDown: "Déplacer vers le bas", removeItem: "Supprimer l’élément", confirmRemoveItem: "Supprimer « {title} » et son contenu ?", contentPlaceholder: "Ajouter du contenu…",
       contentAria: "Contenu de {title}", emptyState: "Aucun élément. Ajoutez-en un pour commencer.", iconSaved: "Icône de l’élément enregistrée.",
       orderEnabled: "Les numéros sont affichés.", orderDisabled: "Les numéros sont masqués."
     }
@@ -5229,7 +5229,7 @@ const accordionTranslationAdditions = {
       defaultTitle: "Akkordeon", defaultItemTitle: "Eintrag {number}", titlePlaceholder: "Akkordeon-Titel", titleAria: "Akkordeon-Titel",
       addItem: "Eintrag hinzufügen", dragItem: "Zum Sortieren ziehen", changeIcon: "Symbol ändern", changeIconFor: "Symbol für {title} ändern",
       collapseItem: "Eintrag einklappen", expandItem: "Eintrag ausklappen", itemTitlePlaceholder: "Eintragstitel", itemTitleAria: "Titel für Eintrag {number}",
-      moveUp: "Nach oben verschieben", moveDown: "Nach unten verschieben", removeItem: "Eintrag entfernen", contentPlaceholder: "Inhalt hinzufügen…",
+      moveUp: "Nach oben verschieben", moveDown: "Nach unten verschieben", removeItem: "Eintrag entfernen", confirmRemoveItem: "„{title}“ und seinen Inhalt entfernen?", contentPlaceholder: "Inhalt hinzufügen…",
       contentAria: "Inhalt für {title}", emptyState: "Noch keine Einträge. Fügen Sie einen Eintrag hinzu.", iconSaved: "Eintragssymbol gespeichert.",
       orderEnabled: "Eintragsnummern werden angezeigt.", orderDisabled: "Eintragsnummern werden ausgeblendet."
     }
@@ -5241,7 +5241,7 @@ const accordionTranslationAdditions = {
       defaultTitle: "Acordeón", defaultItemTitle: "Elemento {number}", titlePlaceholder: "Título del acordeón", titleAria: "Título del acordeón",
       addItem: "Añadir elemento", dragItem: "Arrastrar para reordenar", changeIcon: "Cambiar icono", changeIconFor: "Cambiar icono de {title}",
       collapseItem: "Contraer elemento", expandItem: "Expandir elemento", itemTitlePlaceholder: "Título del elemento", itemTitleAria: "Título del elemento {number}",
-      moveUp: "Mover hacia arriba", moveDown: "Mover hacia abajo", removeItem: "Eliminar elemento", contentPlaceholder: "Añadir contenido…",
+      moveUp: "Mover hacia arriba", moveDown: "Mover hacia abajo", removeItem: "Eliminar elemento", confirmRemoveItem: "¿Eliminar «{title}» y su contenido?", contentPlaceholder: "Añadir contenido…",
       contentAria: "Contenido de {title}", emptyState: "Aún no hay elementos. Añade uno para empezar.", iconSaved: "Icono del elemento guardado.",
       orderEnabled: "Se muestran los números de elemento.", orderDisabled: "Se ocultan los números de elemento."
     }
@@ -5253,7 +5253,7 @@ const accordionTranslationAdditions = {
       defaultTitle: "Acordeão", defaultItemTitle: "Item {number}", titlePlaceholder: "Título do acordeão", titleAria: "Título do acordeão",
       addItem: "Adicionar item", dragItem: "Arraste para reordenar", changeIcon: "Alterar ícone", changeIconFor: "Alterar ícone de {title}",
       collapseItem: "Recolher item", expandItem: "Expandir item", itemTitlePlaceholder: "Título do item", itemTitleAria: "Título do item {number}",
-      moveUp: "Mover para cima", moveDown: "Mover para baixo", removeItem: "Remover item", contentPlaceholder: "Adicionar conteúdo…",
+      moveUp: "Mover para cima", moveDown: "Mover para baixo", removeItem: "Remover item", confirmRemoveItem: "Remover “{title}” e seu conteúdo?", contentPlaceholder: "Adicionar conteúdo…",
       contentAria: "Conteúdo de {title}", emptyState: "Ainda não há itens. Adicione um item para começar.", iconSaved: "Ícone do item salvo.",
       orderEnabled: "Os números dos itens são exibidos.", orderDisabled: "Os números dos itens estão ocultos."
     }
@@ -5280,7 +5280,7 @@ const treeViewTranslationAdditions = {
       memoFor: "Memo for {title}", nodeTitlePlaceholder: "Item title", nodeTitleAria: "Selected tree item title",
       notePlaceholder: "Write a detailed memo for this item…", noteAria: "Selected tree item memo", emptyState: "No items yet. Add a root item to start.",
       noSelection: "Select an item to write its memo.", moveUp: "Move up", moveDown: "Move down", indent: "Indent under previous item",
-      outdent: "Move one level up", deleteNode: "Delete item and keep its children", expandNode: "Expand item", collapseNode: "Collapse item"
+      outdent: "Move one level up", deleteNode: "Delete item and keep its children", confirmDeleteNode: "Delete “{title}” and its memo? Its child items will stay.", expandNode: "Expand item", collapseNode: "Collapse item"
     }
   },
   ko: {
@@ -5291,7 +5291,7 @@ const treeViewTranslationAdditions = {
       memoFor: "{title} 상세 메모", nodeTitlePlaceholder: "항목 제목", nodeTitleAria: "선택한 트리 항목 제목",
       notePlaceholder: "이 항목에 대한 상세 메모를 작성하세요…", noteAria: "선택한 트리 항목의 상세 메모", emptyState: "아직 항목이 없습니다. 최상위 항목을 추가해 시작하세요.",
       noSelection: "메모를 작성할 항목을 선택하세요.", moveUp: "위로 이동", moveDown: "아래로 이동", indent: "이전 항목의 하위로 들여쓰기",
-      outdent: "한 단계 상위로 내어쓰기", deleteNode: "항목 삭제(하위 항목 유지)", expandNode: "항목 펼치기", collapseNode: "항목 접기"
+      outdent: "한 단계 상위로 내어쓰기", deleteNode: "항목 삭제(하위 항목 유지)", confirmDeleteNode: "‘{title}’ 항목과 상세 메모를 삭제할까요? 하위 항목은 유지됩니다.", expandNode: "항목 펼치기", collapseNode: "항목 접기"
     }
   },
   ja: {
@@ -5302,7 +5302,7 @@ const treeViewTranslationAdditions = {
       memoFor: "{title} のメモ", nodeTitlePlaceholder: "項目タイトル", nodeTitleAria: "選択した項目のタイトル",
       notePlaceholder: "この項目の詳細メモを入力…", noteAria: "選択した項目のメモ", emptyState: "項目がありません。ルート項目を追加してください。",
       noSelection: "メモを書く項目を選択してください。", moveUp: "上へ移動", moveDown: "下へ移動", indent: "前の項目の子にする",
-      outdent: "1階層上へ移動", deleteNode: "項目を削除（子は保持）", expandNode: "展開", collapseNode: "折りたたむ"
+      outdent: "1階層上へ移動", deleteNode: "項目を削除（子は保持）", confirmDeleteNode: "「{title}」とメモを削除しますか？子項目は残ります。", expandNode: "展開", collapseNode: "折りたたむ"
     }
   },
   fr: {
@@ -5313,7 +5313,7 @@ const treeViewTranslationAdditions = {
       memoFor: "Note pour {title}", nodeTitlePlaceholder: "Titre de l’élément", nodeTitleAria: "Titre de l’élément sélectionné",
       notePlaceholder: "Écrire une note détaillée pour cet élément…", noteAria: "Note de l’élément sélectionné", emptyState: "Aucun élément. Ajoutez une racine pour commencer.",
       noSelection: "Sélectionnez un élément pour écrire sa note.", moveUp: "Monter", moveDown: "Descendre", indent: "Placer sous l’élément précédent",
-      outdent: "Remonter d’un niveau", deleteNode: "Supprimer l’élément et garder ses enfants", expandNode: "Développer", collapseNode: "Réduire"
+      outdent: "Remonter d’un niveau", deleteNode: "Supprimer l’élément et garder ses enfants", confirmDeleteNode: "Supprimer « {title} » et sa note ? Ses éléments enfants seront conservés.", expandNode: "Développer", collapseNode: "Réduire"
     }
   },
   de: {
@@ -5324,7 +5324,7 @@ const treeViewTranslationAdditions = {
       memoFor: "Notiz für {title}", nodeTitlePlaceholder: "Eintragstitel", nodeTitleAria: "Titel des ausgewählten Eintrags",
       notePlaceholder: "Detailnotiz für diesen Eintrag schreiben…", noteAria: "Notiz des ausgewählten Eintrags", emptyState: "Noch keine Einträge. Fügen Sie eine Wurzel hinzu.",
       noSelection: "Wählen Sie einen Eintrag für die Notiz aus.", moveUp: "Nach oben", moveDown: "Nach unten", indent: "Unter vorherigen Eintrag einrücken",
-      outdent: "Eine Ebene nach oben", deleteNode: "Eintrag löschen, Kinder behalten", expandNode: "Aufklappen", collapseNode: "Zuklappen"
+      outdent: "Eine Ebene nach oben", deleteNode: "Eintrag löschen, Kinder behalten", confirmDeleteNode: "„{title}“ und seine Notiz löschen? Untergeordnete Einträge bleiben erhalten.", expandNode: "Aufklappen", collapseNode: "Zuklappen"
     }
   },
   es: {
@@ -5335,7 +5335,7 @@ const treeViewTranslationAdditions = {
       memoFor: "Nota de {title}", nodeTitlePlaceholder: "Título del elemento", nodeTitleAria: "Título del elemento seleccionado",
       notePlaceholder: "Escribe una nota detallada para este elemento…", noteAria: "Nota del elemento seleccionado", emptyState: "Aún no hay elementos. Añade una raíz para empezar.",
       noSelection: "Selecciona un elemento para escribir su nota.", moveUp: "Subir", moveDown: "Bajar", indent: "Anidar bajo el elemento anterior",
-      outdent: "Subir un nivel", deleteNode: "Eliminar elemento y conservar sus hijos", expandNode: "Expandir", collapseNode: "Contraer"
+      outdent: "Subir un nivel", deleteNode: "Eliminar elemento y conservar sus hijos", confirmDeleteNode: "¿Eliminar «{title}» y su nota? Sus elementos hijos se conservarán.", expandNode: "Expandir", collapseNode: "Contraer"
     }
   },
   pt: {
@@ -5346,7 +5346,7 @@ const treeViewTranslationAdditions = {
       memoFor: "Nota de {title}", nodeTitlePlaceholder: "Título do item", nodeTitleAria: "Título do item selecionado",
       notePlaceholder: "Escreva uma nota detalhada para este item…", noteAria: "Nota do item selecionado", emptyState: "Ainda não há itens. Adicione uma raiz para começar.",
       noSelection: "Selecione um item para escrever a nota.", moveUp: "Mover para cima", moveDown: "Mover para baixo", indent: "Recuar sob o item anterior",
-      outdent: "Subir um nível", deleteNode: "Excluir item e manter os filhos", expandNode: "Expandir", collapseNode: "Recolher"
+      outdent: "Subir um nível", deleteNode: "Excluir item e manter os filhos", confirmDeleteNode: "Excluir “{title}” e sua nota? Os itens filhos serão mantidos.", expandNode: "Expandir", collapseNode: "Recolher"
     }
   }
 };

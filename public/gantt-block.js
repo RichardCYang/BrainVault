@@ -823,6 +823,18 @@ export function createGanttEditor(row, value, { onDirty = () => {} } = {}) {
     } else if (action === "gantt-delete-task") {
       const task = gantt.tasks.find((item) => item.id === button.dataset.taskId);
       if (!task) return;
+      // An untouched task (default title, no assignee, no progress) loses
+      // nothing, so it goes at once, as blank blocks and Kanban cards do.
+      const title = String(task.title ?? "").trim();
+      const isBlankTask = (!title || title === t("gantt.untitledTask"))
+        && !String(task.assignee ?? "").trim()
+        && !Number(task.progress)
+        && task.status === "not_started";
+      if (isBlankTask) {
+        gantt.tasks = gantt.tasks.filter((item) => item.id !== task.id);
+        replaceEditor();
+        return;
+      }
       void showConfirmDialog({
         message: t("gantt.confirmDeleteTask", { task: task.title || t("gantt.untitledTask") }),
         confirmLabel: t("dialog.delete"),
