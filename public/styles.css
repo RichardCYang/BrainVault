@@ -1246,13 +1246,6 @@ button.page-view-path-segment:focus-visible {
 .page-toolbar .button-row {
   flex: 0 0 auto;
   flex-wrap: nowrap;
-  opacity: 0.72;
-  transition: opacity 120ms ease;
-}
-
-.page-toolbar:hover .button-row,
-.page-toolbar:focus-within .button-row {
-  opacity: 1;
 }
 
 .page-toolbar .button-row button {
@@ -19804,4 +19797,18 @@ body.auth-mode {
   .editor-block-row[data-block-type="VIDEO"] .youtube-video-url-input {
     font-size: 16px !important;
   }
+}
+
+/* These block controls drop the outline and tint the background on focus,
+   which looks the same as hover. Keyboard focus also needs a ring. The ring
+   is inset so popovers and scrolling tab bars do not clip it. */
+.database-view-tab:focus-visible,
+.database-add-view-popover button:focus-visible,
+.database-add-view-select:focus-visible,
+.database-board-add-row:focus-visible,
+.database-new-row-button:focus-visible,
+.ai-chat-provider-option:focus-visible,
+.ai-chat-layout-option:focus-visible,
+.gantt-scale-select:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
 }
