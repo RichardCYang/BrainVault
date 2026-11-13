@@ -69,6 +69,7 @@ npm run verify:collaboration # Run collaboration checks
 npm run db:migrate         # Apply database migrations
 npm run db:seed            # Add demo data
 npm run registration:approve -- <username>
+npm run password:reset -- <username>   # Reset a forgotten password (prompts for it; signs out all sessions)
 ```
 
 Before deploying a change, run at least:

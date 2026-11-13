@@ -114,6 +114,8 @@
               <button id="auth-submit" type="submit" data-auth-mode="login">Log in</button>
             </div>
 
+            <p id="auth-recovery-hint" class="auth-passkey-hint auth-recovery-hint" data-i18n="auth.recoveryHint">Forgot your password? Ask the administrator of this BrainVault server to reset it, or sign in with a passkey if you registered one.</p>
+
             <div id="auth-passkey-login-section" class="auth-passkey-login-section">
               <div class="mfa-login-divider"><span data-i18n="auth.passkeyDivider">or</span></div>
               <button id="auth-passkey-login" class="secondary auth-passkey-login" type="button" data-i18n="auth.passkeyLogin">Sign in with a passkey</button>
@@ -1165,6 +1167,8 @@
                     </div>
 
                     <p class="country-login-warning" data-i18n="account.countryLoginWarning">When enabled, a login is denied if the IP country cannot be determined. Saving also revokes other active sessions.</p>
+
+                    <p id="account-country-login-self-block" class="country-login-self-block hidden" role="alert"></p>
 
                     <div class="account-form-actions">
                       <button id="account-country-login-save" type="button" data-i18n="account.countryLoginSave">Save country access policy</button>

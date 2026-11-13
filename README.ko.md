@@ -69,6 +69,7 @@ npm run verify:collaboration # 협업 검사 실행
 npm run db:migrate         # 데이터베이스 마이그레이션 적용
 npm run db:seed            # 데모 데이터 추가
 npm run registration:approve -- <username>
+npm run password:reset -- <username>   # 잊어버린 비밀번호 재설정(입력 프롬프트 표시, 모든 세션 로그아웃)
 ```
 
 변경 사항을 배포하기 전에 최소한 다음 명령을 실행하세요.

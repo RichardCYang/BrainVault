@@ -69,6 +69,7 @@ npm run verify:collaboration # 共同編集チェックを実行
 npm run db:migrate         # データベースマイグレーションを適用
 npm run db:seed            # デモデータを追加
 npm run registration:approve -- <username>
+npm run password:reset -- <username>   # 忘れたパスワードを再設定（入力を求め、全セッションをサインアウト）
 ```
 
 変更をデプロイする前に、少なくとも次のコマンドを実行してください。

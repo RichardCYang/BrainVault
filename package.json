@@ -34,6 +34,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "registration:approve": "tsx scripts/approve-registration.ts",
+    "password:reset": "tsx scripts/reset-password.ts",
     "setup": "npm run env:init && npm run db:init && npm run db:migrate",
     "setup:demo": "npm run setup && npm run db:seed",
     "dev": "node scripts/dev.mjs",

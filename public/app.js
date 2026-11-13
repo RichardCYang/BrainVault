@@ -1288,6 +1288,7 @@ const elements = {
   accountCountryLoginCurrentCountry: $("#account-country-login-current-country"),
   accountCountryLoginPassword: $("#account-country-login-password"),
   accountCountryLoginSave: $("#account-country-login-save"),
+  accountCountryLoginSelfBlock: $("#account-country-login-self-block"),
   accountCountryLoginStatus: $("#account-country-login-status"),
   sidebarUserAvatar: $("#sidebar-user-avatar"),
   sidebarUserAvatarFallback: $("#sidebar-user-avatar-fallback"),
@@ -1353,6 +1354,7 @@ const elements = {
   authDescription: $("#auth-description"),
   authSubmit: $("#auth-submit"),
   authPasskeyLoginSection: $("#auth-passkey-login-section"),
+  authRecoveryHint: $("#auth-recovery-hint"),
   authPasskeyLogin: $("#auth-passkey-login"),
   authSwitchCopy: $("#auth-switch-copy"),
   authSwitchLink: $("#auth-switch-link"),
@@ -1853,6 +1855,7 @@ function setAuthMode(mode, updateHash = true) {
   elements.authSwitchLink.href = isRegister ? "#login" : "#signup";
   elements.registerFields.classList.toggle("hidden", !isRegister);
   elements.authPasskeyLoginSection.classList.toggle("hidden", isRegister);
+  elements.authRecoveryHint.classList.toggle("hidden", isRegister);
   elements.username.autocomplete = isRegister ? "username" : "username webauthn";
   elements.password.autocomplete = isRegister ? "new-password" : "current-password";
   // Sign-up states its rules up front instead of failing with a generic
@@ -4239,6 +4242,15 @@ function normalizeCountryLoginMode(mode) {
   return ["OFF", "ALLOWLIST", "BLOCKLIST"].includes(mode) ? mode : "OFF";
 }
 
+function getCountryLoginSelfBlockMessageKey(policy) {
+  const currentCountry = typeof policy.currentCountryCode === "string" ? policy.currentCountryCode : "";
+  if (!/^[A-Z]{2}$/.test(currentCountry) || !policy.countries.length) return null;
+  const listed = policy.countries.includes(currentCountry);
+  if (policy.mode === "ALLOWLIST" && !listed) return "account.countryLoginSelfBlockAllowlist";
+  if (policy.mode === "BLOCKLIST" && listed) return "account.countryLoginSelfBlockBlocklist";
+  return null;
+}
+
 function renderCountryLoginPolicy() {
   const policy = state.countryLoginPolicy;
   const enabled = policy.mode !== "OFF";
@@ -4284,7 +4296,26 @@ function renderCountryLoginPolicy() {
   elements.accountCountryLoginCountry.disabled = busy || !enabled;
   elements.accountCountryLoginAdd.disabled = busy || !enabled;
   elements.accountCountryLoginPassword.disabled = busy;
-  elements.accountCountryLoginSave.disabled = busy || (enabled && policy.countries.length === 0);
+  // Say up front when the draft would lock out this connection, instead of
+  // letting the person type a password and pass step-up only to be refused.
+  // The server still decides; unknown or local-network locations are left to it.
+  const selfBlockMessageKey = getCountryLoginSelfBlockMessageKey(policy);
+  const selfBlockMessage = selfBlockMessageKey
+    ? t(selfBlockMessageKey, { country: getCountryLoginCountryLabel(policy.currentCountryCode) })
+    : "";
+  // Rewriting identical text would make the alert announce again on every render.
+  if (elements.accountCountryLoginSelfBlock.textContent !== selfBlockMessage) {
+    elements.accountCountryLoginSelfBlock.textContent = selfBlockMessage;
+  }
+  elements.accountCountryLoginSelfBlock.classList.toggle("hidden", !selfBlockMessageKey);
+  toggleAttribute(
+    elements.accountCountryLoginSave,
+    "aria-describedby",
+    selfBlockMessageKey ? "account-country-login-self-block" : null
+  );
+  elements.accountCountryLoginSave.disabled = busy
+    || (enabled && policy.countries.length === 0)
+    || Boolean(selfBlockMessageKey);
   elements.accountCountryLoginSave.textContent = t(policy.saving ? "account.countryLoginSaving" : "account.countryLoginSave");
 }
 

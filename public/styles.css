@@ -10618,6 +10618,9 @@ body.search-dialog-open {
   font-weight: 800;
   line-height: 1;
   opacity: 0;
+  /* While hidden it must not take clicks: an invisible remove target over the
+     icon's corner would open a delete prompt the person never asked for. */
+  pointer-events: none;
   transform: scale(0.82);
   box-shadow: 0 2px 7px rgba(31, 35, 38, 0.15);
   transition: opacity 100ms ease, transform 100ms ease, background-color 100ms ease;
@@ -10627,6 +10630,7 @@ body.search-dialog-open {
 .custom-icon-library-item:focus-within .custom-icon-library-remove,
 .custom-icon-library-remove:focus-visible {
   opacity: 1;
+  pointer-events: auto;
   transform: scale(1);
 }
 
@@ -10799,6 +10803,7 @@ body.search-dialog-open {
 
   .custom-icon-library-remove {
     opacity: 1;
+    pointer-events: auto;
     transform: scale(1);
   }
 
@@ -12702,6 +12707,18 @@ body.search-dialog-open {
   color: var(--muted);
   padding: 0.68rem 0.78rem;
   font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.country-login-self-block {
+  margin: 0;
+  border-left: 3px solid var(--danger);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: color-mix(in srgb, var(--danger) 9%, var(--panel));
+  color: var(--ink);
+  padding: 0.68rem 0.78rem;
+  font-size: 0.8rem;
+  font-weight: 600;
   line-height: 1.55;
 }
 
@@ -19367,6 +19384,10 @@ body.auth-mode {
   line-height: 1.5;
 }
 
+.auth-recovery-hint {
+  margin-top: 0.75rem;
+}
+
 .auth-approval-notice {
   margin-top: 0.6rem;
   border-left: 3px solid var(--line-strong);
@@ -19598,6 +19619,13 @@ body.auth-mode {
   .timetable-delete-entry,
   .bookmark-item-actions {
     opacity: 1;
+  }
+
+  /* Tapping an icon applies it, so the remove badge could never be revealed. */
+  .custom-icon-library-remove {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
   }
 
   .status-action,
