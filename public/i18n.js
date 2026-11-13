@@ -6644,6 +6644,130 @@ for (const [language, addition] of Object.entries(uxAuditTranslationAdditions)) 
   }
 }
 
+// Settings discard guard, draft-conflict notice, and toolbar shortcut hints.
+const settingsAndShortcutTranslationAdditions = {
+  en: {
+    dialog: { discardChangesTitle: "Discard unsaved changes?", discard: "Discard", keepEditing: "Keep editing" },
+    account: { discardUnsavedConfirm: "Your profile or password changes have not been saved yet. Close settings and discard them?" },
+    status: {
+      draftConflictEditBlocked: "This text has a recovered version that conflicts with a newer copy on the server, so editing is paused. Choose “Keep my version” to overwrite the server copy.",
+      resolveRecoveredDraftConflict: "Your recovered changes conflict with a newer version on the server. Before saving or deleting, choose “Keep my version” to overwrite the server copy."
+    },
+    toolbar: {
+      boldTitle: "Bold (Ctrl/⌘+B)",
+      italicTitle: "Italic (Ctrl/⌘+I)",
+      strikeTitle: "Strikethrough (Ctrl/⌘+Shift+X)",
+      codeTitle: "Inline code (Ctrl/⌘+E)",
+      inlineMathTitle: "Inline formula (Ctrl/⌘+Shift+M)",
+      linkTitle: "Link (Ctrl/⌘+K)"
+    }
+  },
+  ja: {
+    dialog: { discardChangesTitle: "保存していない変更を破棄しますか？", discard: "破棄", keepEditing: "編集を続ける" },
+    account: { discardUnsavedConfirm: "プロフィールまたはパスワードの変更がまだ保存されていません。設定を閉じて変更を破棄しますか？" },
+    status: {
+      draftConflictEditBlocked: "このテキストには、サーバー上の新しい版と競合する復元済みの版があるため、編集を一時停止しています。サーバーの版を上書きするには「自分の版を残す」を選んでください。",
+      resolveRecoveredDraftConflict: "復元した変更がサーバー上の新しい版と競合しています。保存や削除の前に「自分の版を残す」を選んでサーバーの版を上書きしてください。"
+    },
+    toolbar: {
+      boldTitle: "太字 (Ctrl/⌘+B)",
+      italicTitle: "斜体 (Ctrl/⌘+I)",
+      strikeTitle: "取り消し線 (Ctrl/⌘+Shift+X)",
+      codeTitle: "インラインコード (Ctrl/⌘+E)",
+      inlineMathTitle: "インライン数式 (Ctrl/⌘+Shift+M)",
+      linkTitle: "リンク (Ctrl/⌘+K)"
+    }
+  },
+  ko: {
+    dialog: { discardChangesTitle: "저장하지 않은 변경 사항을 버릴까요?", discard: "버리기", keepEditing: "계속 편집" },
+    account: { discardUnsavedConfirm: "프로필 또는 비밀번호 변경 사항이 아직 저장되지 않았습니다. 설정을 닫고 변경 사항을 버릴까요?" },
+    status: {
+      draftConflictEditBlocked: "이 내용에는 서버의 최신 버전과 충돌하는 복구 버전이 있어 편집을 잠시 멈췄습니다. 서버 사본을 덮어쓰려면 ‘내 버전 유지’를 선택하세요.",
+      resolveRecoveredDraftConflict: "복구한 변경 사항이 서버의 최신 버전과 충돌합니다. 저장하거나 삭제하기 전에 ‘내 버전 유지’를 선택해 서버 사본을 덮어쓰세요."
+    },
+    toolbar: {
+      boldTitle: "굵게 (Ctrl/⌘+B)",
+      italicTitle: "기울임꼴 (Ctrl/⌘+I)",
+      strikeTitle: "취소선 (Ctrl/⌘+Shift+X)",
+      codeTitle: "인라인 코드 (Ctrl/⌘+E)",
+      inlineMathTitle: "인라인 수식 (Ctrl/⌘+Shift+M)",
+      linkTitle: "링크 (Ctrl/⌘+K)"
+    }
+  },
+  fr: {
+    dialog: { discardChangesTitle: "Abandonner les modifications non enregistrées ?", discard: "Abandonner", keepEditing: "Continuer à modifier" },
+    account: { discardUnsavedConfirm: "Les modifications de votre profil ou de votre mot de passe ne sont pas encore enregistrées. Fermer les paramètres et les abandonner ?" },
+    status: {
+      draftConflictEditBlocked: "Ce texte a une version récupérée en conflit avec une copie plus récente sur le serveur ; la modification est suspendue. Choisissez « Garder ma version » pour remplacer la copie du serveur.",
+      resolveRecoveredDraftConflict: "Vos modifications récupérées sont en conflit avec une version plus récente sur le serveur. Avant d’enregistrer ou de supprimer, choisissez « Garder ma version » pour remplacer la copie du serveur."
+    },
+    toolbar: {
+      boldTitle: "Gras (Ctrl/⌘+B)",
+      italicTitle: "Italique (Ctrl/⌘+I)",
+      strikeTitle: "Barré (Ctrl/⌘+Shift+X)",
+      codeTitle: "Code en ligne (Ctrl/⌘+E)",
+      inlineMathTitle: "Formule en ligne (Ctrl/⌘+Shift+M)",
+      linkTitle: "Lien (Ctrl/⌘+K)"
+    }
+  },
+  de: {
+    dialog: { discardChangesTitle: "Nicht gespeicherte Änderungen verwerfen?", discard: "Verwerfen", keepEditing: "Weiter bearbeiten" },
+    account: { discardUnsavedConfirm: "Änderungen an Profil oder Passwort sind noch nicht gespeichert. Einstellungen schließen und Änderungen verwerfen?" },
+    status: {
+      draftConflictEditBlocked: "Für diesen Text gibt es eine wiederhergestellte Version, die mit einer neueren Kopie auf dem Server kollidiert. Das Bearbeiten ist pausiert. Wähle „Meine Version behalten“, um die Serverkopie zu überschreiben.",
+      resolveRecoveredDraftConflict: "Deine wiederhergestellten Änderungen kollidieren mit einer neueren Version auf dem Server. Wähle vor dem Speichern oder Löschen „Meine Version behalten“, um die Serverkopie zu überschreiben."
+    },
+    toolbar: {
+      boldTitle: "Fett (Ctrl/⌘+B)",
+      italicTitle: "Kursiv (Ctrl/⌘+I)",
+      strikeTitle: "Durchgestrichen (Ctrl/⌘+Shift+X)",
+      codeTitle: "Inline-Code (Ctrl/⌘+E)",
+      inlineMathTitle: "Inline-Formel (Ctrl/⌘+Shift+M)",
+      linkTitle: "Link (Ctrl/⌘+K)"
+    }
+  },
+  es: {
+    dialog: { discardChangesTitle: "¿Descartar los cambios sin guardar?", discard: "Descartar", keepEditing: "Seguir editando" },
+    account: { discardUnsavedConfirm: "Los cambios del perfil o de la contraseña aún no se han guardado. ¿Cerrar la configuración y descartarlos?" },
+    status: {
+      draftConflictEditBlocked: "Este texto tiene una versión recuperada que entra en conflicto con una copia más reciente en el servidor, así que la edición está en pausa. Elige “Conservar mi versión” para sobrescribir la copia del servidor.",
+      resolveRecoveredDraftConflict: "Tus cambios recuperados entran en conflicto con una versión más reciente en el servidor. Antes de guardar o eliminar, elige “Conservar mi versión” para sobrescribir la copia del servidor."
+    },
+    toolbar: {
+      boldTitle: "Negrita (Ctrl/⌘+B)",
+      italicTitle: "Cursiva (Ctrl/⌘+I)",
+      strikeTitle: "Tachado (Ctrl/⌘+Shift+X)",
+      codeTitle: "Código en línea (Ctrl/⌘+E)",
+      inlineMathTitle: "Fórmula en línea (Ctrl/⌘+Shift+M)",
+      linkTitle: "Enlace (Ctrl/⌘+K)"
+    }
+  },
+  pt: {
+    dialog: { discardChangesTitle: "Descartar alterações não salvas?", discard: "Descartar", keepEditing: "Continuar editando" },
+    account: { discardUnsavedConfirm: "As alterações do perfil ou da senha ainda não foram salvas. Fechar as configurações e descartá-las?" },
+    status: {
+      draftConflictEditBlocked: "Este texto tem uma versão recuperada em conflito com uma cópia mais recente no servidor, então a edição está pausada. Escolha “Manter minha versão” para substituir a cópia do servidor.",
+      resolveRecoveredDraftConflict: "Suas alterações recuperadas entram em conflito com uma versão mais recente no servidor. Antes de salvar ou excluir, escolha “Manter minha versão” para substituir a cópia do servidor."
+    },
+    toolbar: {
+      boldTitle: "Negrito (Ctrl/⌘+B)",
+      italicTitle: "Itálico (Ctrl/⌘+I)",
+      strikeTitle: "Tachado (Ctrl/⌘+Shift+X)",
+      codeTitle: "Código embutido (Ctrl/⌘+E)",
+      inlineMathTitle: "Fórmula embutida (Ctrl/⌘+Shift+M)",
+      linkTitle: "Link (Ctrl/⌘+K)"
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(settingsAndShortcutTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

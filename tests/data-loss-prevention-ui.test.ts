@@ -269,7 +269,9 @@ describe("Data-loss prevention integration", () => {
 
   it("requires explicit resolution before recovered conflict drafts can overwrite or delete newer server data", () => {
     expect(client).toContain('function confirmRecoveredDraftOverwrite()');
-    expect(client).toContain('window.confirm(t("confirm.overwriteRecoveredDraft"))');
+    expect(client).toContain('return recoveredDraftOverwriteApproved;');
+    expect(client).not.toContain('window.confirm(');
+    expect(client).toContain('message: t("confirm.overwriteRecoveredDraft"),');
     expect(client).toContain('const expectedVersion = pageTitleDraftConflict');
     expect(client).toContain('const expectedVersion = row.dataset.draftConflict === "true"');
     expect(client).toContain('function promotePageTitleDraftConflict()');

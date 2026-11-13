@@ -111,10 +111,12 @@ describe("themed confirm and prompt dialogs", () => {
 });
 
 describe("usability wiring", () => {
-  it("replaces native dialogs except the synchronous recovered-draft guard", () => {
+  it("replaces every native dialog, including the recovered-draft guard", () => {
     const nativeCalls = client.match(/\b(?:window|globalThis)\.(?:confirm|prompt|alert)\(/g) ?? [];
-    expect(nativeCalls).toHaveLength(1);
-    expect(client).toContain('return window.confirm(t("confirm.overwriteRecoveredDraft"));');
+    expect(nativeCalls).toHaveLength(0);
+    // The synchronous guard keeps the server copy and offers the themed choice instead.
+    expect(client).toContain("return recoveredDraftOverwriteApproved;");
+    expect(client).toContain('setStatus(t("status.draftConflictEditBlocked"), true, getDraftConflictStatusOptions());');
     for (const source of blockModules) {
       expect(source).not.toMatch(/\bwindow\.(?:confirm|prompt)\(/);
       expect(source).toContain('import { showConfirmDialog } from "./app-dialog.js";');

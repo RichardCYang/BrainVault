@@ -64,6 +64,8 @@ See [Page and collection sharing and real-time collaboration](../../collaboratio
 | `/` | Open the block type menu |
 | `Ctrl/Cmd + B` | Apply bold formatting to selected text |
 | `Ctrl/Cmd + I` | Apply italic formatting to selected text |
+| `Ctrl/Cmd + Shift + X` | Apply strikethrough to selected text |
+| `Ctrl/Cmd + E` | Format selected text as inline code |
 | `Ctrl/Cmd + Shift + M` | Wrap selected text as an inline LaTeX formula |
 | `Ctrl/Cmd + K` with text selected | Turn the selection into a Markdown link; with nothing selected it opens Quick Find |
 | Drag the six-dot handle | Reorder a block within its current hierarchy |
@@ -74,7 +76,7 @@ Useful slash commands include:
 /h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /gantt  /board  /bookmark  /ai  /math  /code  /divider  /image  /file
 ```
 
-Inline formatting supports bold, italic, strikethrough, code, formulas, links, text color, and left/center/right/justified block alignment. Drag-and-drop reordering supports nested content. Choosing another color replaces the existing color instead of nesting it, the default color removes it, and toolbar colors are shown in lighter tones in the dark theme so colored text stays readable. The keyboard tips above the editor can be folded away with **Hide tips**.
+Inline formatting supports bold, italic, strikethrough, code, formulas, links, text color, and left/center/right/justified block alignment. Drag-and-drop reordering supports nested content. Choosing another color replaces the existing color instead of nesting it, the default color removes it, and toolbar colors are shown in lighter tones in the dark theme so colored text stays readable. The keyboard tips above the editor can be folded away with **Hide tips**, and each formatting toolbar button shows its shortcut in its tooltip.
 
 Table blocks include row, column, and header controls. Cells support arrow-key movement; `Enter` advances down the current column, and `Tab` from the final cell adds a row. Deleting a row or column that contains text shows an **Undo** action; empty rows and columns are removed quietly.
 
@@ -86,7 +88,7 @@ Table, board, and list views operate over the same rows. Each view stores its ow
 
 Property and row changes are stored in `metadata.database`, while a searchable text summary is kept in `markdown`.
 
-Kanban boards support direct title, group, and card editing. Cards can use an emoji and a default, pink, yellow, blue, light-green, purple, or peach pastel theme. Drag the six-dot card handle to reorder cards or move them between groups; the ← and → buttons move a card between groups on touch devices, and with the handle focused the arrow keys move it up and down within its group or to the neighbouring group. Blank cards are removed immediately, while cards with any content ask for confirmation first.
+Kanban boards support direct title, group, and card editing. Cards can use an emoji and a default, pink, yellow, blue, light-green, purple, or peach pastel theme. Drag the six-dot card handle to reorder cards or move them between groups; the ← and → buttons move a card between groups on touch devices, and with the handle focused the arrow keys move it up and down within its group or to the neighbouring group. Blank cards and empty groups are removed immediately, while cards with any content and groups that still hold cards ask for confirmation first.
 
 ## Gantt timeline blocks
 

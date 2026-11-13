@@ -5105,12 +5105,46 @@ function closeAccountSettings({ restoreFocus = true, force = false } = {}) {
   if (restoreFocus && state.user) elements.accountSettingsTrigger.focus();
 }
 
+// Language, theme and page mode save as soon as they change, but the profile
+// and password forms need their own button. Closing must not silently drop
+// what was typed there.
+function hasUnsavedAccountSettingsChanges() {
+  if (!state.user || state.accountProfileSaving) return false;
+  const savedName = String(state.user.name ?? "").trim();
+  if (elements.accountDisplayName.value.trim() !== savedName) return true;
+  if ((state.pendingAvatarData ?? null) !== (state.user.avatarData ?? null)) return true;
+  return [...elements.accountPasswordForm.querySelectorAll("input")].some((input) => input.value !== "");
+}
+
+let accountSettingsCloseConfirming = false;
+
+async function requestCloseAccountSettings() {
+  if (!state.accountSettingsOpen || accountSettingsCloseConfirming || state.accountDataOperationBusy) return;
+  if (hasUnsavedAccountSettingsChanges()) {
+    accountSettingsCloseConfirming = true;
+    let discard = false;
+    try {
+      discard = await showConfirmDialog({
+        title: t("dialog.discardChangesTitle"),
+        message: t("account.discardUnsavedConfirm"),
+        confirmLabel: t("dialog.discard"),
+        cancelLabel: t("dialog.keepEditing"),
+        danger: true
+      });
+    } finally {
+      accountSettingsCloseConfirming = false;
+    }
+    if (!discard) return;
+  }
+  closeAccountSettings();
+}
+
 function handleAccountSettingsKeydown(event) {
   if (!state.accountSettingsOpen) return;
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopImmediatePropagation();
-    closeAccountSettings();
+    void requestCloseAccountSettings();
     return;
   }
   if (event.key !== "Tab") return;
@@ -8407,12 +8441,15 @@ function persistBlockDraft(row, payload = null) {
 let recoveredDraftOverwriteApproved = false;
 
 function confirmRecoveredDraftOverwrite() {
-  if (recoveredDraftOverwriteApproved) return true;
-  // Fallback only: the conflict notice offers "Keep my version" up front so
-  // users can decide before typing. This runs inside input and beforeinput
-  // handlers that must decide synchronously, hence the native confirm. If the
-  // browser suppresses dialogs it returns false, which keeps the server copy.
-  return window.confirm(t("confirm.overwriteRecoveredDraft"));
+  // This runs inside input and beforeinput handlers that must decide
+  // synchronously, so it cannot wait for a themed dialog. Without an approval
+  // made through resolveDraftConflictsWithLocalVersion() the server copy is
+  // kept, and the caller offers "Keep my version" to settle it properly.
+  return recoveredDraftOverwriteApproved;
+}
+
+function reportDraftConflictEditBlocked() {
+  setStatus(t("status.draftConflictEditBlocked"), true, getDraftConflictStatusOptions());
 }
 
 function getResolvableDraftConflictRows() {
@@ -8474,7 +8511,7 @@ async function resolveDraftConflictsWithLocalVersion() {
 function promotePageTitleDraftConflict() {
   if (!pageTitleDraftConflict) return true;
   if (!confirmRecoveredDraftOverwrite()) {
-    setStatus(t("status.localDraftOverwriteCancelled"), true);
+    reportDraftConflictEditBlocked();
     return false;
   }
   const previousSourceId = pageTitleDraftSourceId;
@@ -8511,7 +8548,7 @@ function promoteBlockDraftConflict(row) {
     row.classList.add("is-dirty", "save-error");
   }
   if (!confirmRecoveredDraftOverwrite()) {
-    setStatus(t("status.localDraftOverwriteCancelled"), true);
+    reportDraftConflictEditBlocked();
     return false;
   }
   const conflictOrigin = blockDraftConflictOrigins.get(blockId);
@@ -9018,7 +9055,9 @@ function positionPageActionsMenu() {
   }
 
   elements.pageActionsMenu.style.left = `${left}px`;
-  elements.pageActionsMenu.style.top = `${Math.max(viewportPadding, top)}px`;
+  // The menu scrolls when the viewport is too short for it, so it always fits.
+  const maxTop = Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding);
+  elements.pageActionsMenu.style.top = `${Math.min(Math.max(viewportPadding, top), maxTop)}px`;
   elements.pageActionsMenu.style.visibility = "visible";
 }
 
@@ -9634,7 +9673,9 @@ function positionNavigationContextMenu(trigger) {
   }
 
   elements.navigationContextMenu.style.left = `${left}px`;
-  elements.navigationContextMenu.style.top = `${Math.max(viewportPadding, top)}px`;
+  // The menu scrolls when the viewport is too short for it, so it always fits.
+  const maxTop = Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding);
+  elements.navigationContextMenu.style.top = `${Math.min(Math.max(viewportPadding, top), maxTop)}px`;
   elements.navigationContextMenu.style.visibility = "visible";
 }
 
@@ -13959,18 +14000,24 @@ function handleKanbanAction(row, button) {
     const columnIndex = data.columns.findIndex((column) => column.id === button.dataset.columnId);
     if (columnIndex < 0) return;
     const column = data.columns[columnIndex];
-    const message = column.cards.length
-      ? t("confirm.deleteKanbanColumnWithCards", { count: formatNumber(column.cards.length) })
-      : t("confirm.deleteKanbanColumn");
     const columnId = column.id;
-    void showConfirmDialog({ message, confirmLabel: t("dialog.delete"), danger: true }).then((confirmed) => {
+    const removeColumn = () => {
       // The board can rerender while the dialog is open; delete by id from fresh data.
-      if (!confirmed || !row.isConnected) return;
+      if (!row.isConnected) return;
       const latest = extractKanbanData(row);
       const latestIndex = latest.columns.findIndex((item) => item.id === columnId);
       if (latest.columns.length <= 1 || latestIndex < 0) return;
       latest.columns.splice(latestIndex, 1);
       replaceKanbanData(row, latest);
+    };
+    // Same rule as blank cards: an empty group loses nothing, so it goes at once.
+    if (!column.cards.length) {
+      removeColumn();
+      return;
+    }
+    const message = t("confirm.deleteKanbanColumnWithCards", { count: formatNumber(column.cards.length) });
+    void showConfirmDialog({ message, confirmLabel: t("dialog.delete"), danger: true }).then((confirmed) => {
+      if (confirmed) removeColumn();
     });
     return;
   }
@@ -15827,7 +15874,9 @@ function positionBlockContextMenu(handle) {
   }
 
   elements.blockContextMenu.style.left = `${left}px`;
-  elements.blockContextMenu.style.top = `${Math.max(viewportPadding, top)}px`;
+  // The menu scrolls when the viewport is too short for it, so it always fits.
+  const maxTop = Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding);
+  elements.blockContextMenu.style.top = `${Math.min(Math.max(viewportPadding, top), maxTop)}px`;
   elements.blockContextMenu.style.visibility = "visible";
 }
 
@@ -21177,8 +21226,8 @@ window.addEventListener("resize", () => {
 });
 
 elements.accountSettingsTrigger.addEventListener("click", () => openAccountSettings("profile"));
-elements.accountSettingsClose.addEventListener("click", () => closeAccountSettings());
-elements.accountSettingsBackdrop.addEventListener("click", () => closeAccountSettings());
+elements.accountSettingsClose.addEventListener("click", () => void requestCloseAccountSettings());
+elements.accountSettingsBackdrop.addEventListener("click", () => void requestCloseAccountSettings());
 document.addEventListener("keydown", handleAccountSettingsKeydown);
 
 elements.accountSettingsTabs.forEach((tab) => {
@@ -22908,9 +22957,30 @@ elements.pageCoverDialog.addEventListener("cancel", (event) => {
   event.preventDefault();
   closePageCoverDialog();
 });
-elements.pageCoverDialog.addEventListener("click", (event) => {
-  if (event.target === elements.pageCoverDialog) closePageCoverDialog();
-});
+// A press that starts inside a modal <dialog> (selecting text, dragging a
+// scrollbar) and ends on the backdrop still fires "click" on the dialog itself.
+// Close only when both the press and the release land outside its box.
+function isPointOutsideElement(element, event) {
+  const rect = element.getBoundingClientRect();
+  return event.clientX < rect.left || event.clientX > rect.right
+    || event.clientY < rect.top || event.clientY > rect.bottom;
+}
+
+function closeDialogOnBackdropClick(dialog, close) {
+  let pressStartedOnBackdrop = false;
+  dialog.addEventListener("pointerdown", (event) => {
+    pressStartedOnBackdrop = event.target === dialog && isPointOutsideElement(dialog, event);
+  });
+  dialog.addEventListener("click", (event) => {
+    const startedOnBackdrop = pressStartedOnBackdrop;
+    pressStartedOnBackdrop = false;
+    // Keyboard-activated clicks report (0, 0) and never target the dialog box.
+    if (event.target !== dialog || !startedOnBackdrop || !isPointOutsideElement(dialog, event)) return;
+    close();
+  });
+}
+
+closeDialogOnBackdropClick(elements.pageCoverDialog, closePageCoverDialog);
 
 elements.pageCoverDialog.querySelector(".page-cover-default-grid").addEventListener("click", async (event) => {
   const option = event.target.closest("button[data-cover-url]");
@@ -23164,9 +23234,7 @@ elements.pageVersionHistoryDialog.addEventListener("cancel", (event) => {
   closePageVersionHistory();
 });
 
-elements.pageVersionHistoryDialog.addEventListener("click", (event) => {
-  if (event.target === elements.pageVersionHistoryDialog) closePageVersionHistory();
-});
+closeDialogOnBackdropClick(elements.pageVersionHistoryDialog, closePageVersionHistory);
 
 elements.pageVersionHistoryDialog.addEventListener("close", () => {
   state.pageVersionHistory.requestId += 1;
@@ -23559,10 +23627,7 @@ elements.archiveDialog.addEventListener("close", () => {
   archiveDialogState.generation += 1;
   archiveDialogState.loading = false;
 });
-elements.archiveDialog.addEventListener("click", (event) => {
-  // A click on the backdrop lands on the <dialog> element itself.
-  if (event.target === elements.archiveDialog) elements.archiveDialog.close();
-});
+closeDialogOnBackdropClick(elements.archiveDialog, () => elements.archiveDialog.close());
 // Keep workspace shortcuts (Ctrl/Cmd+K, Escape handlers) from acting behind the modal.
 elements.archiveDialog.addEventListener("keydown", (event) => event.stopPropagation());
 elements.archiveList.addEventListener("click", async (event) => {
@@ -24426,11 +24491,16 @@ elements.blockList.addEventListener("keydown", async (event) => {
 
   if (!["MATH", "MERMAID"].includes(row.dataset.blockType) && (event.ctrlKey || event.metaKey) && !event.altKey && !event.isComposing) {
     const shortcut = event.key.toLowerCase();
-    if (shortcut === "b" || shortcut === "i" || (shortcut === "m" && event.shiftKey)) {
+    // Strikethrough (Ctrl/⌘+Shift+X) and inline code (Ctrl/⌘+E) follow the
+    // bindings most block editors use, so muscle memory carries over.
+    const inlineShortcutFormat = !event.shiftKey
+      ? { b: "bold", i: "italic", e: "code" }[shortcut]
+      : { m: "math-inline", x: "strike" }[shortcut];
+    if (inlineShortcutFormat) {
       event.preventDefault();
       state.activeInlineBlockId = row.dataset.blockId;
       state.activeInlineSelection = getTextareaSelection(textarea);
-      applyInlineFormat(shortcut === "b" ? "bold" : shortcut === "i" ? "italic" : "math-inline");
+      applyInlineFormat(inlineShortcutFormat);
       return;
     }
     // As in most editors, Ctrl/⌘+K over selected text makes a link. With no
@@ -25269,10 +25339,12 @@ window.addEventListener("resize", () => {
   closeKanbanCardStyleMenus();
 });
 
-document.addEventListener("scroll", () => {
-  closeNavigationContextMenu();
-  closePageActionsMenu();
-  closeKanbanCardStyleMenus();
+document.addEventListener("scroll", (event) => {
+  // Scrolling inside a menu that overflows a short viewport must not close it.
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target?.closest("#navigation-context-menu")) closeNavigationContextMenu();
+  if (!target?.closest("#page-actions-menu")) closePageActionsMenu();
+  if (!target?.closest(".kanban-card-style-menu")) closeKanbanCardStyleMenus();
 }, { capture: true, passive: true });
 window.addEventListener("scroll", () => {
   closeBlockContextMenu();
