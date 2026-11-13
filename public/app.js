@@ -7932,6 +7932,9 @@ function requireWritablePage({ announce = true } = {}) {
   return false;
 }
 
+// These input types cannot be read-only, so read mode disables them instead.
+const readModeDisabledInputTypes = new Set(["checkbox", "radio", "file", "button", "submit", "reset", "range"]);
+
 function setControlReadOnlyState(control, readOnly) {
   if (!(control instanceof HTMLElement)) return;
 
@@ -7950,7 +7953,7 @@ function setControlReadOnlyState(control, readOnly) {
   }
 
   if (control instanceof HTMLInputElement) {
-    if (["checkbox", "radio", "file", "button", "submit", "reset", "range"].includes(control.type)) {
+    if (readModeDisabledInputTypes.has(control.type)) {
       if (readOnly) {
         if (!control.dataset.pageModeWasDisabled) control.dataset.pageModeWasDisabled = String(control.disabled);
         control.disabled = true;
@@ -7982,13 +7985,36 @@ function setControlReadOnlyState(control, readOnly) {
   }
 }
 
+// In read mode, block fields are text to read, not places to type. Leaving them
+// in the tab order made keyboard users step through every card title, cell, and
+// description before reaching the next real control. They stay clickable, so
+// pointer selection and copying still work.
+function setControlReadModeTabStop(control, removed) {
+  if (removed) {
+    if (control.dataset.readModeTabIndex !== undefined) return;
+    control.dataset.readModeTabIndex = control.getAttribute("tabindex") ?? "";
+    control.tabIndex = -1;
+  } else if (control.dataset.readModeTabIndex !== undefined) {
+    const previous = control.dataset.readModeTabIndex;
+    if (previous === "") control.removeAttribute("tabindex");
+    else control.setAttribute("tabindex", previous);
+    delete control.dataset.readModeTabIndex;
+  }
+}
+
 function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageInteractionLocked()) {
   if (!row) return;
   row.classList.toggle("is-read-only", readOnly);
   row.setAttribute("aria-readonly", String(readOnly));
 
+  // Only reading removes tab stops; a brief edit lock in write mode must not
+  // reshuffle focus order under the writer.
+  const removeFieldTabStops = readOnly && isPageReadOnly();
   for (const control of row.querySelectorAll("input, textarea, select, button")) {
     setControlReadOnlyState(control, readOnly);
+    const isTextField = control instanceof HTMLTextAreaElement
+      || (control instanceof HTMLInputElement && !readModeDisabledInputTypes.has(control.type));
+    if (isTextField) setControlReadModeTabStop(control, removeFieldTabStops && control.readOnly);
   }
 
   for (const draggable of row.querySelectorAll("[draggable]")) {
@@ -8109,7 +8135,9 @@ function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
   elements.pageModeBadge.classList.toggle("hidden", !state.selectedPage || !canEdit);
   elements.pageModeBadge.disabled = elements.pageModeToggle.disabled;
   elements.pageModeBadge.classList.toggle("is-write-mode", !readOnly);
-  elements.pageModeBadge.setAttribute("aria-label", t(modeActionAriaKey));
+  // The visible "Edit"/"Done" text is the accessible name, so voice control
+  // users can say what they see; the longer wording stays as a description.
+  elements.pageModeBadge.removeAttribute("aria-label");
   elements.pageModeBadge.title = t(modeActionAriaKey);
   elements.pageModeBadgeIcon.textContent = readOnly ? "✎" : "✓";
   elements.pageModeBadgeLabel.textContent = t(readOnly ? "page.startEditing" : "page.finishEditing");
@@ -13802,11 +13830,12 @@ function createKanbanEditor(row, boardValue) {
       const tagsField = document.createElement("div");
       tagsField.className = "kanban-card-tags-field";
 
+      // The preview is a pointer shortcut only. Keyboard and assistive technology
+      // reach the tags through the input, which reveals itself on focus, so the
+      // field is one tab stop instead of two.
       const tagsPreview = document.createElement("div");
       tagsPreview.className = "kanban-card-tags-preview";
-      tagsPreview.tabIndex = 0;
-      tagsPreview.setAttribute("role", "button");
-      tagsPreview.setAttribute("aria-label", t("kanban.tagsAria"));
+      tagsPreview.setAttribute("aria-hidden", "true");
 
       const tagsInput = document.createElement("input");
       tagsInput.type = "text";
@@ -13822,11 +13851,6 @@ function createKanbanEditor(row, boardValue) {
         tagsInput.select();
       };
       tagsPreview.addEventListener("click", focusTagsInput);
-      tagsPreview.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        focusTagsInput();
-      });
 
       tagsField.append(tagsPreview, tagsInput);
       syncKanbanTagField(tagsInput);
@@ -22190,8 +22214,31 @@ elements.addCollectionButton.addEventListener("click", async () => {
   }
 });
 
+let logoutConfirming = false;
+
+// Logging out discards unsaved settings and, with two-step sign-in, is costly
+// to undo, so it asks first instead of acting on a single tap next to the tabs.
+async function requestLogout() {
+  if (logoutConfirming) return;
+  const hasUnsavedSettings = state.accountSettingsOpen && hasUnsavedAccountSettingsChanges();
+  logoutConfirming = true;
+  let confirmed = false;
+  try {
+    confirmed = await showConfirmDialog({
+      title: hasUnsavedSettings ? t("dialog.discardChangesTitle") : t("account.signOutConfirmTitle"),
+      message: hasUnsavedSettings ? t("account.signOutUnsavedConfirm") : t("account.signOutConfirm"),
+      confirmLabel: t("dialog.signOut"),
+      danger: hasUnsavedSettings
+    });
+  } finally {
+    logoutConfirming = false;
+  }
+  if (!confirmed) return;
+  await logout();
+}
+
 elements.logoutButton.addEventListener("click", () => {
-  logout().catch((error) => setStatus(error.message, true));
+  requestLogout().catch((error) => setStatus(error.message, true));
 });
 
 

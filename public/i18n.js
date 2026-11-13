@@ -6768,6 +6768,74 @@ for (const [language, addition] of Object.entries(settingsAndShortcutTranslation
   }
 }
 
+// Logout confirmation and the database view list label.
+const logoutAndViewTranslationAdditions = {
+  en: {
+    account: {
+      signOutConfirmTitle: "Log out?",
+      signOutConfirm: "You will need to sign in again to open your workspace on this device.",
+      signOutUnsavedConfirm: "Your profile or password changes have not been saved yet. Log out and discard them?"
+    },
+    database: { views: "Database views" }
+  },
+  ja: {
+    account: {
+      signOutConfirmTitle: "ログアウトしますか？",
+      signOutConfirm: "このデバイスでワークスペースを開くには、もう一度サインインが必要です。",
+      signOutUnsavedConfirm: "プロフィールまたはパスワードの変更がまだ保存されていません。ログアウトして変更を破棄しますか？"
+    },
+    database: { views: "データベースビュー" }
+  },
+  ko: {
+    account: {
+      signOutConfirmTitle: "로그아웃할까요?",
+      signOutConfirm: "이 기기에서 워크스페이스를 다시 열려면 다시 로그인해야 합니다.",
+      signOutUnsavedConfirm: "프로필 또는 비밀번호 변경 사항이 아직 저장되지 않았습니다. 로그아웃하고 변경 사항을 버릴까요?"
+    },
+    database: { views: "데이터베이스 뷰" }
+  },
+  fr: {
+    account: {
+      signOutConfirmTitle: "Se déconnecter ?",
+      signOutConfirm: "Vous devrez vous reconnecter pour ouvrir votre espace de travail sur cet appareil.",
+      signOutUnsavedConfirm: "Les modifications de votre profil ou de votre mot de passe ne sont pas encore enregistrées. Se déconnecter et les abandonner ?"
+    },
+    database: { views: "Vues de la base de données" }
+  },
+  de: {
+    account: {
+      signOutConfirmTitle: "Abmelden?",
+      signOutConfirm: "Du musst dich erneut anmelden, um deinen Arbeitsbereich auf diesem Gerät zu öffnen.",
+      signOutUnsavedConfirm: "Änderungen an Profil oder Passwort sind noch nicht gespeichert. Abmelden und Änderungen verwerfen?"
+    },
+    database: { views: "Datenbankansichten" }
+  },
+  es: {
+    account: {
+      signOutConfirmTitle: "¿Cerrar sesión?",
+      signOutConfirm: "Tendrás que volver a iniciar sesión para abrir tu espacio de trabajo en este dispositivo.",
+      signOutUnsavedConfirm: "Los cambios del perfil o de la contraseña aún no se han guardado. ¿Cerrar sesión y descartarlos?"
+    },
+    database: { views: "Vistas de la base de datos" }
+  },
+  pt: {
+    account: {
+      signOutConfirmTitle: "Sair?",
+      signOutConfirm: "Você precisará entrar novamente para abrir seu espaço de trabalho neste dispositivo.",
+      signOutUnsavedConfirm: "As alterações do perfil ou da senha ainda não foram salvas. Sair e descartá-las?"
+    },
+    database: { views: "Visualizações do banco de dados" }
+  }
+};
+
+for (const [language, addition] of Object.entries(logoutAndViewTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

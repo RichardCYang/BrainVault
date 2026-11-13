@@ -34,7 +34,7 @@ describe("Database block UI", () => {
 
   it("inherits BrainVault's light sky-blue theme without changing the transparent layout", () => {
     expect(styles).toMatch(/\.database-block-editor\s*\{[^}]*--database-ink:\s*var\(--ink\);[^}]*--database-accent:\s*var\(--accent\);[^}]*--database-blue:\s*var\(--focus\);/s);
-    expect(styles).toMatch(/\.database-view-tab\[aria-pressed="true"\]::after\s*\{[^}]*background:\s*var\(--database-blue\);/s);
+    expect(styles).toMatch(/\.database-view-tab\[aria-selected="true"\]::after\s*\{[^}]*background:\s*var\(--database-blue\);/s);
     expect(styles).toMatch(/\.database-new-row-button\s*\{[^}]*background:\s*var\(--database-accent\);[^}]*color:\s*var\(--database-accent-ink\);/s);
   });
 

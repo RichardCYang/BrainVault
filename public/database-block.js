@@ -29,7 +29,8 @@ const databaseToolbarPanels = [
   { selector: ".database-sort-panel", reopenKey: "openSorts" },
   { selector: ".database-view-options-panel", reopenKey: "openViewOptions" },
   { selector: ".database-search-panel" },
-  { selector: ".database-new-menu" }
+  { selector: ".database-new-menu" },
+  { selector: ".database-add-view-menu" }
 ];
 const openDatabaseToolbarPanelSelector = databaseToolbarPanels
   .map(({ selector }) => `${selector}[open]`)
@@ -1782,6 +1783,7 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
       if (reopen.openViewOptions) next.querySelector(".database-view-options-panel")?.setAttribute("open", "");
       if (focus.focusPropertyId && reopen.openProperties) next.querySelector(`.database-property-item[data-property-id="${CSS.escape(focus.focusPropertyId)}"] .database-property-name`)?.focus();
       else if (focus.focusViewName && reopen.openViewOptions) next.querySelector(".database-view-name")?.focus();
+      else if (focus.focusViewId) next.querySelector(`[data-view-tab="${CSS.escape(focus.focusViewId)}"]`)?.focus();
       else if (focus.focusRowId) next.querySelector(`[data-database-row-id="${CSS.escape(focus.focusRowId)}"] .database-value-input`)?.focus();
     });
   };
@@ -1807,14 +1809,27 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
   const toolbar = document.createElement("div");
   toolbar.className = "database-toolbar";
 
+  // Views are a tab list: one tab stop, arrow keys move between views, and
+  // Enter/Space switches. Switching rebuilds the editor and saves the choice,
+  // so arrows only move focus instead of activating each view on the way.
+  const activeViewId = getDatabaseActiveView(database)?.id;
+  const tabIdPrefix = createId("database-view");
   const viewBar = document.createElement("div");
   viewBar.className = "database-view-bar";
-  database.views.forEach((view) => {
+  viewBar.setAttribute("role", "tablist");
+  viewBar.setAttribute("aria-label", t("database.views"));
+  database.views.forEach((view, index) => {
     const tab = makeButton("database-select-view", "", t("database.selectView", { view: view.name }), { viewId: view.id });
+    // The visible view name is the accessible name; the longer hint stays a tooltip.
+    tab.removeAttribute("aria-label");
     tab.className = "database-view-tab";
+    tab.id = `${tabIdPrefix}-${index}`;
     tab.dataset.viewTab = view.id;
     tab.dataset.viewType = view.type;
-    tab.setAttribute("aria-pressed", String(view.id === database.activeViewId));
+    const selected = view.id === activeViewId;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
     const icon = document.createElement("span");
     icon.className = "database-view-tab-icon";
     icon.setAttribute("aria-hidden", "true");
@@ -1824,21 +1839,63 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
     tab.append(icon, label);
     viewBar.append(tab);
   });
+  viewBar.addEventListener("keydown", (event) => {
+    const tabs = [...viewBar.querySelectorAll(".database-view-tab")];
+    const current = tabs.indexOf(event.target);
+    if (current < 0) return;
+    const next = {
+      ArrowLeft: current - 1,
+      ArrowRight: current + 1,
+      Home: 0,
+      End: tabs.length - 1
+    }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    const target = tabs[(next + tabs.length) % tabs.length];
+    tabs.forEach((tab) => { tab.tabIndex = tab === target ? 0 : -1; });
+    target.focus();
+  });
 
-  const addView = makeSelect(
-    [
-      { value: "", label: "+" },
-      ...databaseViewTypes.map((type) => ({ value: type, label: viewTypeLabel(type) }))
-    ],
-    "",
-    "database-add-view-select",
-    t("database.addView")
-  );
-  addView.title = t("database.addView");
-  addView.disabled = database.views.length >= databaseLimits.views;
-  addView.addEventListener("change", () => {
-    if (!addView.value) return;
-    const type = normalizeViewType(addView.value);
+  // Adding a view is an action, so it is a button that opens a menu. A bare
+  // "+" <select> looked like a field and created a view as soon as arrow keys
+  // changed its value.
+  const viewLimitReached = database.views.length >= databaseLimits.views;
+  const addViewMenu = document.createElement("details");
+  addViewMenu.className = "database-add-view-menu";
+  const addViewSummary = document.createElement("summary");
+  addViewSummary.className = "database-add-view-select";
+  addViewSummary.textContent = "+";
+  addViewSummary.title = t("database.addView");
+  addViewSummary.setAttribute("aria-label", t("database.addView"));
+  if (viewLimitReached) addViewSummary.setAttribute("aria-disabled", "true");
+  addViewSummary.addEventListener("click", (event) => {
+    if (viewLimitReached) event.preventDefault();
+  });
+  const addViewPopover = document.createElement("div");
+  addViewPopover.className = "database-toolbar-popover database-add-view-popover";
+  databaseViewTypes.forEach((type) => {
+    const option = makeButton("database-add-view", viewTypeLabel(type), viewTypeLabel(type), { viewType: type });
+    option.removeAttribute("aria-label");
+    option.removeAttribute("title");
+    option.dataset.viewTypeIcon = type;
+    addViewPopover.append(option);
+  });
+  addViewMenu.append(addViewSummary, addViewPopover);
+  addViewMenu.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !addViewMenu.open) return;
+    event.preventDefault();
+    event.stopPropagation();
+    addViewMenu.removeAttribute("open");
+    addViewSummary.focus();
+  });
+  addViewMenu.addEventListener("toggle", () => {
+    if (addViewMenu.open) requestAnimationFrame(() => addViewPopover.querySelector("button")?.focus());
+  });
+  addViewPopover.addEventListener("click", (event) => {
+    const option = event.target.closest('button[data-action="database-add-view"]');
+    if (!option || viewLimitReached) return;
+    event.stopPropagation();
+    const type = normalizeViewType(option.dataset.viewType);
     const groupProperty = database.properties.find((property) => ["select", "checkbox"].includes(property.type));
     const view = {
       id: createId("view"),
@@ -1853,7 +1910,12 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
     database.activeViewId = view.id;
     replaceEditor({ openViewOptions: true, focusViewName: true });
   });
-  viewBar.append(addView);
+
+  // The menu sits beside the tab list rather than inside it: a tablist may only
+  // own tabs, and the scrolling tab strip would clip the popover.
+  const viewStrip = document.createElement("div");
+  viewStrip.className = "database-view-strip";
+  viewStrip.append(viewBar, addViewMenu);
 
   const activeView = getDatabaseActiveView(database);
   const viewRows = applyDatabaseView(database, activeView);
@@ -1895,7 +1957,7 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
   newButtonGroup.append(newRowButton, newMenu);
   settings.append(newButtonGroup);
 
-  toolbar.append(viewBar, settings);
+  toolbar.append(viewStrip, settings);
 
   const renderViewContent = (query = "") => {
     const visibleRows = applyDatabaseSearch(database, viewRows, query);
@@ -1905,6 +1967,9 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
         ? createListView(row, database, activeView, visibleRows, onDirty, replaceEditor)
         : createTableView(row, database, activeView, visibleRows, onDirty, replaceEditor);
     content.dataset.databaseContent = "true";
+    content.setAttribute("role", "tabpanel");
+    const activeTab = viewBar.querySelector('[role="tab"][aria-selected="true"]');
+    if (activeTab) content.setAttribute("aria-labelledby", activeTab.id);
     return { content, visibleRows };
   };
 
@@ -1948,8 +2013,10 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
     const action = button.dataset.action;
 
     if (action === "database-select-view") {
+      if (button.dataset.viewId === activeViewId) return;
       database.activeViewId = button.dataset.viewId;
-      replaceEditor();
+      // Rebuilding the editor drops focus; return it to the chosen tab.
+      replaceEditor({ focusViewId: button.dataset.viewId });
     } else if (action === "database-add-property") {
       if (database.properties.length >= databaseLimits.properties) return;
       const property = { id: createId("property"), name: t("database.newProperty"), type: "text", options: [] };
