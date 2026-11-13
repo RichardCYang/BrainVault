@@ -8,7 +8,9 @@ BrainVault is a self-hosted block-based notes app built with Node.js, Express, T
 
 ## What it includes
 
-- Block editor with nested content, drag-and-drop ordering, slash commands, tables, databases, Kanban boards, Gantt timelines, lists, toggles, and tree views
+- Block editor with nested content, drag-and-drop ordering with menu and keyboard alternatives, slash commands, tables, databases, Kanban boards, Gantt timelines, lists, toggles, and tree views
+- Keyboard-first editing: `Enter` splits a block at the caret and keeps anything typed while the new block is created, `Backspace` at the start joins the block above, arrow keys move between blocks, `Ctrl/Cmd + Shift + ↑/↓` reorders, and `Enter` types a line break inside code blocks
+- Deleting a text block offers an undo action instead of a confirmation prompt
 - Rich text, Markdown, syntax-highlighted code, callouts, bookmarks, videos, attachments, AI chat blocks, formulas, and Mermaid diagrams
 - Pages open in read mode and switch to editing with an explicit **Edit** button, so a stray click or keystroke cannot change a note; an autosave indicator, `Ctrl/Cmd + S`, and browser Back/Forward navigation are supported
 - Page collections, nested pages, custom icons and covers, one-click archiving with an undo action and an archive view for restoring pages, permanent deletion that states how many nested pages it removes, version history, PDF export, and ZIP backup/restore

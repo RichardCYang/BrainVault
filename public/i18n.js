@@ -6302,6 +6302,144 @@ for (const [language, addition] of Object.entries(uxFrictionTranslationAdditions
   }
 }
 
+// Editor flow: split/join at the caret, keyboard reordering, block Undo.
+const editorFlowTranslationAdditions = {
+  en: {
+    page: {
+      editorHelp: "<kbd>Enter</kbd> splits into a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break (<kbd>Enter</kbd> in code; <kbd>Ctrl/⌘</kbd> + <kbd>Enter</kbd> leaves it) · <kbd>Backspace</kbd> at the start joins the block above · <kbd>↑</kbd> <kbd>↓</kbd> move between blocks · <kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>↑</kbd> <kbd>↓</kbd> reorders"
+    },
+    menu: { reorderBlock: "Reorder", moveBlockUp: "Move up", moveBlockDown: "Move down" },
+    navigationMenu: { moveUp: "Move up", moveDown: "Move down" },
+    status: {
+      blockMergeTooLong: "These blocks are too long to join. Shorten one of them first.",
+      blockRestored: "Block restored.",
+      blockRestoreUnavailable: "The block could not be put back here. Its text is no longer on this page."
+    },
+    kanban: {
+      dragCard: "Move card: drag it, or focus here and use the arrow keys",
+      moveCardHint: "Use the arrow keys to move this card: up and down within the group, left and right to another group.",
+      cardMoved: "Moved to {column}, position {position} of {count}.",
+      columnFull: "That group is full. Move or delete a card there first."
+    }
+  },
+  ja: {
+    page: {
+      editorHelp: "<kbd>Enter</kbd>でブロックを分割 · <kbd>Shift</kbd> + <kbd>Enter</kbd>で改行(コードでは<kbd>Enter</kbd>、抜けるには<kbd>Ctrl/⌘</kbd> + <kbd>Enter</kbd>) · 先頭で<kbd>Backspace</kbd>を押すと上のブロックと結合 · <kbd>↑</kbd> <kbd>↓</kbd>でブロック間を移動 · <kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>↑</kbd> <kbd>↓</kbd>で並べ替え"
+    },
+    menu: { reorderBlock: "並べ替え", moveBlockUp: "上へ移動", moveBlockDown: "下へ移動" },
+    navigationMenu: { moveUp: "上へ移動", moveDown: "下へ移動" },
+    status: {
+      blockMergeTooLong: "ブロックが長すぎるため結合できません。先にどちらかを短くしてください。",
+      blockRestored: "ブロックを元に戻しました。",
+      blockRestoreUnavailable: "このブロックを元の場所に戻せませんでした。テキストはこのページに残っていません。"
+    },
+    kanban: {
+      dragCard: "カードを移動: ドラッグするか、ここにフォーカスして矢印キーを使用",
+      moveCardHint: "矢印キーでカードを移動できます。上下でグループ内、左右で別のグループへ移動します。",
+      cardMoved: "「{column}」の{position}番目に移動しました(全{count}件)。",
+      columnFull: "このグループは上限に達しています。先にカードを移動または削除してください。"
+    }
+  },
+  ko: {
+    page: {
+      editorHelp: "<kbd>Enter</kbd>로 블록 나누기 · <kbd>Shift</kbd> + <kbd>Enter</kbd>로 줄바꿈(코드에서는 <kbd>Enter</kbd>, 빠져나오려면 <kbd>Ctrl/⌘</kbd> + <kbd>Enter</kbd>) · 맨 앞에서 <kbd>Backspace</kbd>로 윗 블록과 합치기 · <kbd>↑</kbd> <kbd>↓</kbd>로 블록 간 이동 · <kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>↑</kbd> <kbd>↓</kbd>로 순서 변경"
+    },
+    menu: { reorderBlock: "순서 변경", moveBlockUp: "위로 이동", moveBlockDown: "아래로 이동" },
+    navigationMenu: { moveUp: "위로 이동", moveDown: "아래로 이동" },
+    status: {
+      blockMergeTooLong: "블록이 너무 길어 합칠 수 없습니다. 먼저 한쪽을 줄여 주세요.",
+      blockRestored: "블록을 되돌렸습니다.",
+      blockRestoreUnavailable: "블록을 원래 자리에 되돌릴 수 없습니다. 내용이 이 페이지에 더 이상 없습니다."
+    },
+    kanban: {
+      dragCard: "카드 이동: 드래그하거나, 여기에 포커스한 뒤 방향키 사용",
+      moveCardHint: "방향키로 카드를 옮길 수 있습니다. 위아래는 그룹 안에서, 좌우는 다른 그룹으로 이동합니다.",
+      cardMoved: "‘{column}’ 그룹의 {position}번째로 옮겼습니다. (전체 {count}개)",
+      columnFull: "이 그룹은 가득 찼습니다. 먼저 카드를 옮기거나 삭제해 주세요."
+    }
+  },
+  fr: {
+    page: {
+      editorHelp: "<kbd>Entrée</kbd> coupe en un nouveau bloc · <kbd>Maj</kbd> + <kbd>Entrée</kbd> pour un saut de ligne (<kbd>Entrée</kbd> dans le code ; <kbd>Ctrl/⌘</kbd> + <kbd>Entrée</kbd> pour en sortir) · <kbd>Retour arrière</kbd> au début fusionne avec le bloc précédent · <kbd>↑</kbd> <kbd>↓</kbd> pour passer d’un bloc à l’autre · <kbd>Ctrl/⌘</kbd> + <kbd>Maj</kbd> + <kbd>↑</kbd> <kbd>↓</kbd> pour réordonner"
+    },
+    menu: { reorderBlock: "Réordonner", moveBlockUp: "Monter", moveBlockDown: "Descendre" },
+    navigationMenu: { moveUp: "Monter", moveDown: "Descendre" },
+    status: {
+      blockMergeTooLong: "Ces blocs sont trop longs pour être fusionnés. Raccourcissez-en un d’abord.",
+      blockRestored: "Bloc restauré.",
+      blockRestoreUnavailable: "Impossible de remettre le bloc ici. Son texte n’est plus sur cette page."
+    },
+    kanban: {
+      dragCard: "Déplacer la carte : faites-la glisser, ou placez le focus ici et utilisez les flèches",
+      moveCardHint: "Utilisez les flèches pour déplacer cette carte : haut et bas dans le groupe, gauche et droite vers un autre groupe.",
+      cardMoved: "Déplacée dans {column}, position {position} sur {count}.",
+      columnFull: "Ce groupe est plein. Déplacez ou supprimez d’abord une carte."
+    }
+  },
+  de: {
+    page: {
+      editorHelp: "<kbd>Eingabe</kbd> teilt in einen neuen Block · <kbd>Umschalt</kbd> + <kbd>Eingabe</kbd> für einen Zeilenumbruch (<kbd>Eingabe</kbd> im Code; <kbd>Strg/⌘</kbd> + <kbd>Eingabe</kbd> verlässt ihn) · <kbd>Rücktaste</kbd> am Anfang verbindet mit dem Block darüber · <kbd>↑</kbd> <kbd>↓</kbd> wechseln zwischen Blöcken · <kbd>Strg/⌘</kbd> + <kbd>Umschalt</kbd> + <kbd>↑</kbd> <kbd>↓</kbd> zum Umsortieren"
+    },
+    menu: { reorderBlock: "Reihenfolge", moveBlockUp: "Nach oben", moveBlockDown: "Nach unten" },
+    navigationMenu: { moveUp: "Nach oben", moveDown: "Nach unten" },
+    status: {
+      blockMergeTooLong: "Diese Blöcke sind zu lang zum Verbinden. Kürzen Sie zuerst einen davon.",
+      blockRestored: "Block wiederhergestellt.",
+      blockRestoreUnavailable: "Der Block konnte hier nicht wiederhergestellt werden. Sein Text ist nicht mehr auf dieser Seite."
+    },
+    kanban: {
+      dragCard: "Karte verschieben: ziehen, oder hier fokussieren und die Pfeiltasten verwenden",
+      moveCardHint: "Mit den Pfeiltasten verschieben Sie diese Karte: hoch und runter innerhalb der Gruppe, links und rechts in eine andere Gruppe.",
+      cardMoved: "Nach {column} verschoben, Position {position} von {count}.",
+      columnFull: "Diese Gruppe ist voll. Verschieben oder löschen Sie dort zuerst eine Karte."
+    }
+  },
+  es: {
+    page: {
+      editorHelp: "<kbd>Intro</kbd> divide en un bloque nuevo · <kbd>Mayús</kbd> + <kbd>Intro</kbd> para un salto de línea (<kbd>Intro</kbd> en código; <kbd>Ctrl/⌘</kbd> + <kbd>Intro</kbd> para salir) · <kbd>Retroceso</kbd> al inicio une con el bloque anterior · <kbd>↑</kbd> <kbd>↓</kbd> para pasar entre bloques · <kbd>Ctrl/⌘</kbd> + <kbd>Mayús</kbd> + <kbd>↑</kbd> <kbd>↓</kbd> para reordenar"
+    },
+    menu: { reorderBlock: "Reordenar", moveBlockUp: "Subir", moveBlockDown: "Bajar" },
+    navigationMenu: { moveUp: "Subir", moveDown: "Bajar" },
+    status: {
+      blockMergeTooLong: "Estos bloques son demasiado largos para unirlos. Acorta uno primero.",
+      blockRestored: "Bloque restaurado.",
+      blockRestoreUnavailable: "No se pudo devolver el bloque aquí. Su texto ya no está en esta página."
+    },
+    kanban: {
+      dragCard: "Mover tarjeta: arrástrala, o enfoca aquí y usa las flechas",
+      moveCardHint: "Usa las flechas para mover esta tarjeta: arriba y abajo dentro del grupo, izquierda y derecha a otro grupo.",
+      cardMoved: "Movida a {column}, posición {position} de {count}.",
+      columnFull: "Ese grupo está lleno. Mueve o elimina primero una tarjeta."
+    }
+  },
+  pt: {
+    page: {
+      editorHelp: "<kbd>Enter</kbd> divide em um novo bloco · <kbd>Shift</kbd> + <kbd>Enter</kbd> para quebrar a linha (<kbd>Enter</kbd> no código; <kbd>Ctrl/⌘</kbd> + <kbd>Enter</kbd> para sair) · <kbd>Backspace</kbd> no início junta com o bloco acima · <kbd>↑</kbd> <kbd>↓</kbd> para passar entre blocos · <kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>↑</kbd> <kbd>↓</kbd> para reordenar"
+    },
+    menu: { reorderBlock: "Reordenar", moveBlockUp: "Mover para cima", moveBlockDown: "Mover para baixo" },
+    navigationMenu: { moveUp: "Mover para cima", moveDown: "Mover para baixo" },
+    status: {
+      blockMergeTooLong: "Estes blocos são longos demais para juntar. Encurte um deles primeiro.",
+      blockRestored: "Bloco restaurado.",
+      blockRestoreUnavailable: "Não foi possível devolver o bloco aqui. O texto dele não está mais nesta página."
+    },
+    kanban: {
+      dragCard: "Mover cartão: arraste-o, ou foque aqui e use as setas",
+      moveCardHint: "Use as setas para mover este cartão: para cima e para baixo no grupo, para a esquerda e a direita para outro grupo.",
+      cardMoved: "Movido para {column}, posição {position} de {count}.",
+      columnFull: "Esse grupo está cheio. Mova ou exclua um cartão primeiro."
+    }
+  }
+};
+
+for (const [language, addition] of Object.entries(editorFlowTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

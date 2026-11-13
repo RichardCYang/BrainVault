@@ -349,6 +349,7 @@ const state = {
   collapsedNavigationPageIds: new Set(),
   navigationPageOrder: new Map(),
   pendingFocusBlockId: null,
+  pendingFocusSelection: null,
   accountSettingsOpen: false,
   activeAccountPanel: "profile",
   activeSecurityPanel: "settings",
@@ -1194,6 +1195,8 @@ let activeBlockDrag = null;
 let activeKanbanCardDrag = null;
 let activeKanbanColumnDrag = null;
 let activeNavigationDrag = null;
+const keyboardBlockMovePointerId = -2;
+const keyboardNavigationMovePointerId = -3;
 let suppressBlockHandleClickUntil = 0;
 let suppressKanbanColumnMenuClickUntil = 0;
 let suppressNavigationMenuClickUntil = 0;
@@ -1478,6 +1481,8 @@ const elements = {
   slashMenu: $("#slash-menu"),
   blockContextMenu: $("#block-context-menu"),
   blockMoveMenuItem: $("#block-move-menu-item"),
+  blockMoveUpMenuItem: $("#block-move-up-menu-item"),
+  blockMoveDownMenuItem: $("#block-move-down-menu-item"),
   archiveOpenButton: $("#archive-open-button"),
   archiveDialog: $("#archive-dialog"),
   archiveDialogClose: $("#archive-dialog-close"),
@@ -1494,6 +1499,8 @@ const elements = {
   navigationContextMenu: $("#navigation-context-menu"),
   navigationAddSubpageButton: $("#navigation-add-subpage-button"),
   navigationMovePageButton: $("#navigation-move-page-button"),
+  navigationMoveUpButton: $("#navigation-move-up-button"),
+  navigationMoveDownButton: $("#navigation-move-down-button"),
   navigationDeleteLabel: $("#navigation-delete-label"),
   navigationArchivePageButton: $("#navigation-archive-page-button"),
   pageMoveDialog: $("#page-move-dialog"),
@@ -7036,6 +7043,54 @@ async function finishNavigationDrag(event, { cancelled = false } = {}) {
   }
 }
 
+function findSidebarNavigationHandle(id) {
+  if (!id) return null;
+  for (const list of [elements.pageList, elements.collectionList]) {
+    for (const handle of list?.querySelectorAll(".navigation-more-button") ?? []) {
+      if (handle.dataset.navigationMenuId === id && getNavigationDragNode(handle)) return handle;
+    }
+  }
+  return null;
+}
+
+// The same order the ⋮ handle can be dragged to, reachable without dragging.
+function getNavigationStepMoveContext(id) {
+  // Filtered lists show only part of a level, so a step would be ambiguous.
+  if (!id || navigationOrderSaving || activeNavigationDrag || state.searchQuery || state.activeTag) return null;
+  const handle = findSidebarNavigationHandle(id);
+  const node = getNavigationDragNode(handle);
+  const siblings = getNavigationSiblingNodes(node);
+  const index = siblings.indexOf(node);
+  if (!node || siblings.length < 2 || index < 0) return null;
+  return { handle, node, siblings, index };
+}
+
+async function moveNavigationItemByStep(id, step) {
+  const context = getNavigationStepMoveContext(id);
+  const targetIndex = (context?.index ?? -1) + step;
+  if (!context || targetIndex < 0 || targetIndex >= context.siblings.length) return false;
+  activeNavigationDrag = {
+    pointerId: keyboardNavigationMovePointerId,
+    pointerType: "keyboard",
+    handle: context.handle,
+    node: context.node,
+    container: context.node.parentElement,
+    active: true,
+    initialIndex: context.index,
+    targetIndex,
+    siblingNodes: context.siblings,
+    candidates: context.siblings.filter((candidate) => candidate !== context.node),
+    indicator: null
+  };
+  try {
+    await finishNavigationDrag({ pointerId: keyboardNavigationMovePointerId, preventDefault() {} });
+  } finally {
+    // The sidebar was rebuilt; keep keyboard focus on the item that moved.
+    findSidebarNavigationHandle(id)?.focus();
+  }
+  return true;
+}
+
 function renderSubpageIndexItem(page, depth = 0) {
   const button = document.createElement("button");
   button.type = "button";
@@ -9481,6 +9536,11 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
   elements.navigationAddSubpageButton.disabled = state.workspaceCreateBusy;
   elements.navigationMovePageButton.classList.toggle("hidden", kind !== "page");
   elements.navigationMovePageButton.disabled = kind !== "page" || pageMoveSubmitting;
+  const stepMove = getNavigationStepMoveContext(id);
+  elements.navigationMoveUpButton.classList.toggle("hidden", !stepMove);
+  elements.navigationMoveDownButton.classList.toggle("hidden", !stepMove);
+  elements.navigationMoveUpButton.disabled = !stepMove || stepMove.index === 0;
+  elements.navigationMoveDownButton.disabled = !stepMove || stepMove.index === stepMove.siblings.length - 1;
   // Archiving is the reversible way to remove a page, so it sits before the
   // permanent delete and is offered wherever the page can be managed.
   elements.navigationArchivePageButton.classList.toggle("hidden", kind !== "page");
@@ -13473,6 +13533,7 @@ function createKanbanEditor(row, boardValue) {
       dragHandle.textContent = "⠿";
       dragHandle.title = t("kanban.dragCard");
       dragHandle.setAttribute("aria-label", t("kanban.dragCard"));
+      dragHandle.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown ArrowLeft ArrowRight");
       dragHandle.setAttribute("role", "button");
 
       const styleMenu = createKanbanCardStyleMenu(card);
@@ -15356,7 +15417,7 @@ function getBlockInsertionIndex(clientY, candidates) {
 
 function getBlockContextMenuItems() {
   return [...elements.blockContextMenu.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]')].filter(
-    (item) => !item.closest(".hidden")
+    (item) => !item.closest(".hidden") && !item.disabled
   );
 }
 
@@ -15608,6 +15669,11 @@ function openBlockContextMenu(row, handle, { focusFirst = false } = {}) {
     "hidden",
     !(row.classList.contains("save-error") || row.dataset.draftConflict === "true")
   );
+  // Dragging is not the only way to reorder (WCAG 2.5.7): the same move is
+  // offered here and as Ctrl/Cmd+Shift+Arrow from inside the block.
+  const reorderAvailability = getBlockStepMoveAvailability(row);
+  elements.blockMoveUpMenuItem.disabled = !reorderAvailability.up;
+  elements.blockMoveDownMenuItem.disabled = !reorderAvailability.down;
   positionBlockContextMenu(handle);
 
   if (focusFirst) getBlockContextMenuItems()[0]?.focus();
@@ -15800,6 +15866,53 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
       syncBeforeUnloadProtection();
     }
   });
+}
+
+function getBlockStepMoveAvailability(row) {
+  const unavailable = { up: false, down: false, siblingRows: [], index: -1 };
+  if (!row?.dataset.blockId || activeBlockDrag || blockOrderSaving || isPageReadOnly()) return unavailable;
+  const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
+  const siblingRows = getSiblingRows(parentBlockId);
+  const index = siblingRows.indexOf(row);
+  if (index < 0) return unavailable;
+  return { up: index > 0, down: index < siblingRows.length - 1, siblingRows, index };
+}
+
+// Keyboard and menu reordering reuse the drag commit path, so the move gets
+// the same edit lock, navigation fences, durable draft, and rollback.
+async function moveBlockRowByStep(row, step, { keepSelection = null } = {}) {
+  if (!requireWritablePage()) return false;
+  const availability = getBlockStepMoveAvailability(row);
+  if (availability.index < 0 || !(step < 0 ? availability.up : availability.down)) return false;
+  const handle = row.querySelector(".block-handle");
+  if (!handle) return false;
+
+  syncVisibleBlocksToState();
+  closeSlashMenu();
+  closeInlineToolbar();
+  closeBlockContextMenu();
+
+  const blockId = row.dataset.blockId;
+  // Real pointer ids are non-negative; hasPointerCapture() needs a number.
+  const pointerId = keyboardBlockMovePointerId;
+  activeBlockDrag = {
+    pointerId,
+    pointerType: "keyboard",
+    handle,
+    row,
+    parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
+    active: true,
+    siblingRows: availability.siblingRows,
+    candidates: availability.siblingRows.filter((candidate) => candidate !== row),
+    initialIndex: availability.index,
+    targetIndex: availability.index + step,
+    groupRows: getBlockGroupRows(row),
+    indicator: null
+  };
+  state.pendingFocusBlockId = blockId;
+  state.pendingFocusSelection = keepSelection ? { blockId, ...keepSelection } : null;
+  await finishBlockDrag({ pointerId, preventDefault() {} });
+  return true;
 }
 
 function setRowType(row, type, { markdown } = {}) {
@@ -17956,7 +18069,7 @@ async function tryRenderConfirmedBlockInsertion(context, data, parentBlockId, or
 async function insertBlockRelative(
   referenceRow,
   placement = "after",
-  { type = "MARKDOWN", markdown = "", metadata } = {}
+  { type = "MARKDOWN", markdown = "", metadata, announce = true } = {}
 ) {
   if (!requireWritablePage() || !referenceRow?.dataset.blockId) return;
 
@@ -18017,17 +18130,21 @@ async function insertBlockRelative(
       });
     }
   }
-  setStatus(
-    t("status.blockInserted", {
-      position: t(placement === "before" ? "position.top" : "position.bottom")
-    })
-  );
+  // Typing Enter is routine and the caret already shows the new block; only
+  // an explicit "Add block above/below" choice is confirmed with a notice.
+  if (announce) {
+    setStatus(
+      t("status.blockInserted", {
+        position: t(placement === "before" ? "position.top" : "position.bottom")
+      })
+    );
+  }
   return data;
 }
 
-async function appendBlock(afterRow = null) {
+async function appendBlock(afterRow = null, { type = "MARKDOWN", markdown = "", metadata, announce = true } = {}) {
   if (!requireWritablePage()) return;
-  if (afterRow) return insertBlockRelative(afterRow, "after");
+  if (afterRow) return insertBlockRelative(afterRow, "after", { type, markdown, metadata, announce });
 
   const authenticationScope = captureAuthenticatedSessionScope();
   if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return;
@@ -18035,7 +18152,7 @@ async function appendBlock(afterRow = null) {
   const pageId = state.selectedPage.id;
   const insertionContext = captureDirectBlockInsertionContext(authenticationScope);
   const requestedSortOrder = siblingIds.length;
-  const data = await createEmptyBlock(pageId, { sortOrder: requestedSortOrder });
+  const data = await createEmptyBlock(pageId, { sortOrder: requestedSortOrder, type, markdown, metadata });
   if (!data || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
 
   const orderedIds = [...siblingIds, data.block.id];
@@ -18073,7 +18190,8 @@ async function appendBlock(afterRow = null) {
       });
     }
   }
-  setStatus(t("status.blockAppended"));
+  if (announce) setStatus(t("status.blockAppended"));
+  return data;
 }
 
 async function refreshSelectedPageAfterBlockDeletion(
@@ -18233,13 +18351,22 @@ function focusPendingBlock() {
     toggleTitle.select();
   } else if (textarea) {
     textarea.focus();
-    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+    // Keyboard moves and splits say where the caret belongs; otherwise it
+    // goes to the end, as before.
+    const selection = state.pendingFocusSelection?.blockId === state.pendingFocusBlockId
+      ? state.pendingFocusSelection
+      : null;
+    const length = textarea.value.length;
+    const start = selection ? Math.min(Math.max(0, selection.start ?? length), length) : length;
+    const end = selection ? Math.min(Math.max(start, selection.end ?? start), length) : length;
+    textarea.setSelectionRange(start, end);
   } else {
     row?.querySelector(
       ".table-cell-input, .kanban-title-input, .database-title-input, .gantt-title-input, .bookmark-title-input, .bookmark-url-input, .attachment-download-button"
     )?.focus();
   }
   state.pendingFocusBlockId = null;
+  state.pendingFocusSelection = null;
 }
 
 const pdfExportPage = Object.freeze({
@@ -23320,6 +23447,346 @@ elements.blockList.addEventListener("change", (event) => {
   }
 });
 
+// Plain-text blocks: Enter moves the text after the caret into the new block,
+// and Backspace at the very start joins the block onto the one above.
+const splittableTextBlockTypes = new Set([
+  "MARKDOWN", "HEADING_1", "HEADING_2", "HEADING_3", "HEADING_4", "HEADING_5", "TODO", "QUOTE"
+]);
+// Multi-line editors: Enter types a newline like any code editor, and
+// Ctrl/Cmd+Enter leaves the block.
+const multilineTextBlockTypes = new Set(["CODE", "MATH", "MERMAID", "TOGGLE"]);
+// Enter pressed while the previous Enter's block is still being created.
+// Keyed by the block the user is typing in.
+const pendingBlockSplits = new Map();
+
+function placeCaretInBlock(blockId, start, end = start) {
+  if (!blockId) return;
+  // A render scheduled the focus but has not run it yet: tell it where to go.
+  if (state.pendingFocusBlockId === blockId) {
+    state.pendingFocusSelection = { blockId, start, end };
+    return;
+  }
+  const textarea = getBlockTextarea(findRenderedBlockRow(blockId));
+  if (!textarea) return;
+  const length = textarea.value.length;
+  const safeStart = Math.min(Math.max(0, start), length);
+  textarea.focus();
+  textarea.setSelectionRange(safeStart, Math.min(Math.max(safeStart, end), length));
+}
+
+// Programmatic edits go through the same dirty/draft path as typing.
+function replaceBlockTextareaValue(row, textarea, value) {
+  if (!row || !textarea || textarea.value === value) return false;
+  textarea.setRangeText(value, 0, textarea.value.length, "end");
+  autoGrowTextarea(textarea);
+  scheduleBlockSave(row);
+  return true;
+}
+
+async function splitBlockAtCaret(row, textarea) {
+  const pending = pendingBlockSplits.get(row.dataset.blockId);
+  if (pending) {
+    // Split here once the block for the earlier Enter exists.
+    pending.queued.push(textarea.selectionStart ?? textarea.value.length);
+    return;
+  }
+
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? start;
+  if (start !== end) {
+    // Enter replaces a selection, as typing would.
+    textarea.setRangeText("", start, end, "start");
+    autoGrowTextarea(textarea);
+    scheduleBlockSave(row);
+  }
+  const splits = splittableTextBlockTypes.has(row.dataset.blockType ?? "MARKDOWN");
+  await runBlockSplit(row, {
+    splitAt: splits ? start : textarea.value.length,
+    caret: start,
+    queued: []
+  });
+}
+
+async function runBlockSplit(row, { splitAt, caret, queued }) {
+  const sourceId = row?.dataset.blockId;
+  const textarea = getBlockTextarea(row);
+  if (!sourceId || !textarea) return;
+
+  const value = textarea.value;
+  const head = value.slice(0, splitAt);
+  const tail = value.slice(splitAt);
+  const pending = { queued: [...queued], caret, lengthAtStart: value.length };
+  pendingBlockSplits.set(sourceId, pending);
+  let created;
+  try {
+    // Save the full text first. The tail is then copied into the new block and
+    // only removed from this one afterwards, so a failed create loses nothing.
+    await saveBlockRow(row, { quiet: true });
+    created = await insertBlockRelative(row, "after", { markdown: tail, announce: false });
+  } finally {
+    if (pendingBlockSplits.get(sourceId) === pending) pendingBlockSplits.delete(sourceId);
+  }
+  const createdId = created?.block?.id;
+  if (!createdId) return;
+  await settleBlockSplit({ sourceId, createdId, head, pending });
+}
+
+// While the new block was being created the caret stayed in the old one, so
+// anything typed meanwhile landed after the split point. Move it across.
+async function settleBlockSplit({ sourceId, createdId, head, pending }) {
+  const sourceRow = findRenderedBlockRow(sourceId);
+  const createdRow = findRenderedBlockRow(createdId);
+  const sourceTextarea = getBlockTextarea(sourceRow);
+  const createdTextarea = getBlockTextarea(createdRow);
+  const current = sourceTextarea?.value ?? "";
+  if (!sourceTextarea || !createdTextarea || !current.startsWith(head)) {
+    // Text before the split changed meanwhile. Leave both blocks as they are:
+    // nothing is lost, at worst the moved text appears twice.
+    placeCaretInBlock(createdId, 0);
+    return;
+  }
+
+  const carried = current.slice(head.length);
+  const caretNow = pending.caret + (current.length - pending.lengthAtStart);
+  const caret = Math.min(Math.max(0, caretNow - head.length), carried.length);
+  const queued = pending.queued
+    .map((position) => position - head.length)
+    .filter((position) => position >= 0 && position <= carried.length);
+
+  // Enter pressed in the new block while the saves below run is queued too.
+  const hold = { queued: [], caret, lengthAtStart: carried.length };
+  pendingBlockSplits.set(createdId, hold);
+  try {
+    const createdChanged = replaceBlockTextareaValue(createdRow, createdTextarea, carried);
+    const sourceChanged = replaceBlockTextareaValue(sourceRow, sourceTextarea, head);
+    placeCaretInBlock(createdId, caret);
+    // The carried text must be saved in the new block before it leaves the old one.
+    if (createdChanged) await saveBlockRow(createdRow, { quiet: true });
+    if (sourceChanged) await saveBlockRow(sourceRow, { quiet: true });
+  } finally {
+    if (pendingBlockSplits.get(createdId) === hold) pendingBlockSplits.delete(createdId);
+  }
+
+  const followUps = [...queued, ...hold.queued].sort((left, right) => left - right);
+  if (!followUps.length) return;
+  const latestRow = findRenderedBlockRow(createdId);
+  const latestTextarea = getBlockTextarea(latestRow);
+  if (!latestTextarea) return;
+  const [nextSplit, ...rest] = followUps;
+  const caretPosition = document.activeElement === latestTextarea
+    ? latestTextarea.selectionStart ?? caret
+    : caret;
+  await runBlockSplit(latestRow, {
+    splitAt: Math.min(nextSplit, latestTextarea.value.length),
+    caret: Math.max(nextSplit, caretPosition),
+    queued: rest
+  });
+}
+
+function getBlockMergeTarget(row) {
+  const blockId = row?.dataset.blockId;
+  if (!blockId || !splittableTextBlockTypes.has(row.dataset.blockType ?? "MARKDOWN")) return null;
+  if ((getBlockById(blockId)?.children ?? []).length) return null;
+  if (elements.blockList.querySelector(`.editor-block-row[data-parent-block-id="${CSS.escape(blockId)}"]`)) return null;
+
+  const rows = [...elements.blockList.querySelectorAll(".editor-block-row")];
+  const target = rows[rows.indexOf(row) - 1];
+  if (!target?.dataset.blockId || !splittableTextBlockTypes.has(target.dataset.blockType ?? "MARKDOWN")) return null;
+  for (const candidate of [row, target]) {
+    if (
+      candidate.dataset.deleting === "true"
+      || candidate.dataset.draftConflict === "true"
+      || candidate.classList.contains("save-error")
+    ) return null;
+  }
+  const targetTextarea = getBlockTextarea(target);
+  if (!targetTextarea || targetTextarea.readOnly || targetTextarea.disabled) return null;
+  if (!targetTextarea.getClientRects().length) return null;
+  return target;
+}
+
+async function mergeBlockIntoPrevious(row, target) {
+  const textarea = getBlockTextarea(row);
+  const targetTextarea = getBlockTextarea(target);
+  if (!textarea || !targetTextarea) return;
+  const original = targetTextarea.value;
+  const moved = textarea.value;
+  const maxLength = targetTextarea.maxLength > 0 ? targetTextarea.maxLength : BLOCK_MARKDOWN_MAX_LENGTH;
+  if (original.length + moved.length > maxLength) {
+    setStatus(t("status.blockMergeTooLong"), true);
+    return;
+  }
+
+  const targetId = target.dataset.blockId;
+  const joinAt = original.length;
+  // The text is saved in the block above before this block is emptied and
+  // removed, so it always exists in at least one place.
+  replaceBlockTextareaValue(target, targetTextarea, original + moved);
+  try {
+    await saveBlockRow(target, { quiet: true });
+  } catch (error) {
+    replaceBlockTextareaValue(target, targetTextarea, original);
+    throw error;
+  }
+  const savedTarget = findRenderedBlockRow(targetId);
+  if (
+    !savedTarget
+    || savedTarget.classList.contains("is-dirty")
+    || savedTarget.classList.contains("save-error")
+  ) {
+    // The joined text did not reach the server (read-only, conflict, or the
+    // page changed). Put the upper block back and keep the lower one.
+    if (savedTarget === target) replaceBlockTextareaValue(target, targetTextarea, original);
+    return;
+  }
+  replaceBlockTextareaValue(row, textarea, "");
+  await saveBlockRow(row, { quiet: true });
+  state.pendingFocusSelection = { blockId: targetId, start: joinAt, end: joinAt };
+  await deleteEmptyBlock(row);
+  placeCaretInBlock(targetId, joinAt);
+}
+
+function focusAdjacentTextBlock(row, direction) {
+  const rows = [...elements.blockList.querySelectorAll(".editor-block-row")];
+  for (let index = rows.indexOf(row) + direction; index >= 0 && index < rows.length; index += direction) {
+    const textarea = getBlockTextarea(rows[index]);
+    if (!textarea || textarea.disabled || !textarea.getClientRects().length) continue;
+    const position = direction < 0 ? textarea.value.length : 0;
+    textarea.focus();
+    textarea.setSelectionRange(position, position);
+    return true;
+  }
+  return false;
+}
+
+function handleBlockCaretArrowKey(event, textarea, row) {
+  const direction = event.key === "ArrowUp" ? -1 : 1;
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  if (start !== end) return;
+  const atEdge = direction < 0 ? start === 0 : end === textarea.value.length;
+  if (atEdge) {
+    if (focusAdjacentTextBlock(row, direction)) event.preventDefault();
+    return;
+  }
+  // Wrapped lines are invisible to the value, so let the browser move first and
+  // leave the block only when the caret had nowhere to go.
+  window.setTimeout(() => {
+    if (
+      document.activeElement === textarea
+      && textarea.selectionStart === start
+      && textarea.selectionEnd === end
+    ) focusAdjacentTextBlock(row, direction);
+  }, 0);
+}
+
+const kanbanKeyboardMoves = Object.freeze({
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0]
+});
+
+function handleKanbanCardHandleKeydown(event, handle) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return;
+  if (event.key === "Enter" || event.key === " ") {
+    // The handle is announced as a button; say what it does instead of nothing.
+    event.preventDefault();
+    setStatus(t("kanban.moveCardHint"));
+    return;
+  }
+  const move = kanbanKeyboardMoves[event.key];
+  if (!move) return;
+  event.preventDefault();
+
+  const row = getBlockRow(handle);
+  const cardId = handle.closest(".kanban-card")?.dataset.cardId;
+  if (!row || !cardId) return;
+  const data = extractKanbanData(row);
+  const found = findKanbanCard(data, cardId);
+  if (!found) return;
+
+  const [columnStep, cardStep] = move;
+  let targetColumn = found.column;
+  let targetIndex = found.cardIndex + cardStep;
+  if (columnStep) {
+    targetColumn = data.columns[found.columnIndex + columnStep];
+    if (!targetColumn) return;
+    if (targetColumn.cards.length >= kanbanLimits.cardsPerColumn) {
+      setStatus(t("kanban.columnFull"), true);
+      return;
+    }
+    targetIndex = Math.min(found.cardIndex, targetColumn.cards.length);
+  } else if (targetIndex < 0 || targetIndex >= found.column.cards.length) {
+    return;
+  }
+
+  found.column.cards.splice(found.cardIndex, 1);
+  targetColumn.cards.splice(targetIndex, 0, found.card);
+  replaceKanbanData(row, data);
+  requestAnimationFrame(() => {
+    row.querySelector(`.kanban-card[data-card-id="${CSS.escape(cardId)}"] .kanban-card-drag-handle`)?.focus();
+  });
+  setStatus(t("kanban.cardMoved", {
+    column: targetColumn.title || t("kanban.untitledColumn"),
+    position: formatNumber(targetIndex + 1),
+    count: formatNumber(targetColumn.cards.length)
+  }));
+}
+
+// Text blocks without children can be recreated exactly, so their deletion is
+// offered as Undo instead of a confirmation. Anything else still asks first.
+function captureBlockDeletionUndo(row, blockId) {
+  const type = row?.dataset.blockType ?? "MARKDOWN";
+  if (!splittableTextBlockTypes.has(type) && !listBlockTypes.has(type)) return null;
+  const block = getBlockById(blockId);
+  const textarea = getBlockTextarea(row);
+  if (!block || !textarea || block.checked) return null;
+  if ((block.children ?? []).length) return null;
+  if (elements.blockList.querySelector(`.editor-block-row[data-parent-block-id="${CSS.escape(blockId)}"]`)) return null;
+
+  const parentBlockId = normalizeParentBlockId(row.dataset.parentBlockId);
+  const siblingRows = getSiblingRows(parentBlockId);
+  const index = siblingRows.indexOf(row);
+  const previousSiblingId = siblingRows[index - 1]?.dataset.blockId ?? null;
+  const nextSiblingId = siblingRows[index + 1]?.dataset.blockId ?? null;
+  // A nested block needs a sibling to be put back next to.
+  if (parentBlockId && !previousSiblingId && !nextSiblingId) return null;
+  return {
+    pageId: state.selectedPage?.id ?? null,
+    type,
+    markdown: textarea.value,
+    metadata: getBlockMetadata(block),
+    parentBlockId,
+    previousSiblingId,
+    nextSiblingId
+  };
+}
+
+async function restoreDeletedBlock(snapshot) {
+  if (!snapshot?.pageId || state.selectedPage?.id !== snapshot.pageId || !requireWritablePage()) return;
+  const options = {
+    type: snapshot.type,
+    markdown: snapshot.markdown,
+    metadata: snapshot.metadata,
+    announce: false
+  };
+  const previousRow = snapshot.previousSiblingId ? findRenderedBlockRow(snapshot.previousSiblingId) : null;
+  const nextRow = snapshot.nextSiblingId ? findRenderedBlockRow(snapshot.nextSiblingId) : null;
+  // A top-level block whose neighbours are gone goes back at the top.
+  const fallbackRow = !snapshot.parentBlockId ? getSiblingRows(null)[0] ?? null : null;
+  let created = null;
+  if (previousRow) created = await insertBlockRelative(previousRow, "after", options);
+  else if (nextRow) created = await insertBlockRelative(nextRow, "before", options);
+  else if (fallbackRow) created = await insertBlockRelative(fallbackRow, "before", options);
+  else if (!snapshot.parentBlockId) created = await appendBlock(null, options);
+  if (!created?.block?.id) {
+    setStatus(t("status.blockRestoreUnavailable"), true);
+    return;
+  }
+  setStatus(t("status.blockRestored"));
+}
+
 async function handleListBlockEnter(event, textarea, row) {
   const type = row?.dataset.blockType;
   if (!listBlockTypes.has(type) || event.key !== "Enter" || event.shiftKey || event.isComposing) return false;
@@ -23358,6 +23825,12 @@ async function handleListBlockEnter(event, textarea, row) {
 
 elements.blockList.addEventListener("keydown", async (event) => {
   if (!requireWritablePage({ announce: false })) return;
+  const kanbanHandle = event.target.closest(".kanban-card-drag-handle");
+  if (kanbanHandle) {
+    handleKanbanCardHandleKeydown(event, kanbanHandle);
+    return;
+  }
+
   const toggleTitle = event.target.closest(".toggle-title-input");
   if (toggleTitle) {
     const row = getBlockRow(toggleTitle);
@@ -23446,14 +23919,60 @@ elements.blockList.addEventListener("keydown", async (event) => {
     return;
   }
 
+  // Backspace at the very start joins this block onto the one above.
+  if (
+    event.key === "Backspace"
+    && !event.isComposing
+    && !event.repeat
+    && !event.shiftKey
+    && !event.altKey
+    && !event.ctrlKey
+    && !event.metaKey
+    && textarea.selectionStart === 0
+    && textarea.selectionEnd === 0
+  ) {
+    const target = getBlockMergeTarget(row);
+    if (target) {
+      event.preventDefault();
+      try {
+        await mergeBlockIntoPrevious(row, target);
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+      return;
+    }
+  }
+
+  if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.isComposing && !event.altKey) {
+    // Ctrl/Cmd+Shift+Arrow reorders the block without dragging.
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
+      event.preventDefault();
+      try {
+        await moveBlockRowByStep(row, event.key === "ArrowUp" ? -1 : 1, {
+          keepSelection: { start: textarea.selectionStart, end: textarea.selectionEnd }
+        });
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+      return;
+    }
+    // Plain arrows continue into the previous or next block at the edges.
+    if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      handleBlockCaretArrowKey(event, textarea, row);
+      return;
+    }
+  }
+
   if (await handleListBlockEnter(event, textarea, row)) return;
 
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    // Code, math, diagram, and toggle bodies are multi-line: Enter types a
+    // newline there and Ctrl/Cmd+Enter leaves the block.
+    if (multilineTextBlockTypes.has(row.dataset.blockType) && !(event.ctrlKey || event.metaKey)) return;
     event.preventDefault();
     try {
       if (row.dataset.draftConflict === "true" && !promoteBlockDraftConflict(row)) return;
-      await saveBlockRow(row, { quiet: true });
-      await appendBlock(row);
+      await splitBlockAtCaret(row, textarea);
     } catch (error) {
       setStatus(error.message, true);
     }
@@ -23768,6 +24287,12 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       return;
     }
 
+    if (button.dataset.action === "move-block-up" || button.dataset.action === "move-block-down") {
+      if (button.disabled) return;
+      await moveBlockRowByStep(row, button.dataset.action === "move-block-up" ? -1 : 1);
+      return;
+    }
+
     if (button.dataset.action === "toggle-accordion-order") {
       await changeAccordionOrderVisibility(row);
       return;
@@ -23820,9 +24345,11 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         return;
       }
       // Asking before removing an empty line is friction without protection:
-      // nothing can be lost. Anything with content or children still asks.
+      // nothing can be lost. A text block can be put back from the Undo notice
+      // instead. Anything with children or structured content still asks.
       const pageIdAtIntent = state.selectedPage.id;
-      const ok = isBlockDeletionTrivial(row, blockId) || await showConfirmDialog({
+      const undoSnapshot = isBlockDeletionTrivial(row, blockId) ? null : captureBlockDeletionUndo(row, blockId);
+      const ok = isBlockDeletionTrivial(row, blockId) || Boolean(undoSnapshot) || await showConfirmDialog({
         title: t("dialog.deleteTitle"),
         message: t("confirm.deleteBlock"),
         confirmLabel: t("dialog.delete"),
@@ -23870,7 +24397,16 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
           setStatus(t("errors.BLOCK_EDIT_CONFLICT"), true);
           return;
         }
-        setStatus(t("status.blockDeleted"));
+        setStatus(t("status.blockDeleted"), false, undoSnapshot
+          ? {
+              action: {
+                label: t("status.undo"),
+                onSelect: () => {
+                  void restoreDeletedBlock(undoSnapshot).catch((error) => setStatus(error.message, true));
+                }
+              }
+            }
+          : {});
       });
     }
   } catch (error) {
@@ -24004,6 +24540,13 @@ elements.navigationContextMenu.addEventListener("click", async (event) => {
       if (!target || target.kind !== "page") return;
       closeNavigationContextMenu();
       openPageMoveDialog(target.id, returnFocus);
+      return;
+    }
+    if (button.dataset.action === "move-navigation-up" || button.dataset.action === "move-navigation-down") {
+      const target = state.activeNavigationMenuTarget;
+      if (!target || button.disabled) return;
+      closeNavigationContextMenu();
+      await moveNavigationItemByStep(target.id, button.dataset.action === "move-navigation-up" ? -1 : 1);
       return;
     }
     if (button.dataset.action === "archive-navigation-page") {

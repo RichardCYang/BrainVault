@@ -52,9 +52,13 @@ See [Page and collection sharing and real-time collaboration](../../collaboratio
 
 | Action | Result |
 | --- | --- |
-| `Enter` | Insert a block below the current one |
+| `Enter` | Split the block at the caret: text after the caret moves into a new block below. Anything typed before the new block appears is moved into it. In code, math, Mermaid, and toggle bodies `Enter` adds a line break instead |
+| `Ctrl/Cmd + Enter` | Leave a code, math, Mermaid, or toggle body by adding a block below |
 | `Shift + Enter` | Add a line break inside the same block |
+| `Backspace` at the start of a text block | Join it onto the text block above, keeping the caret at the join point |
 | `Backspace` on an empty block | Remove it, promote nested children in place, and move focus to the previous block; ambiguous network completion is retried with the same deletion receipt |
+| `↑` / `↓` at the first or last line | Move the caret into the previous or next block |
+| `Ctrl/Cmd + Shift + ↑` / `↓` | Move the block up or down among its siblings (also in the block menu) |
 | `/` | Open the block type menu |
 | `Ctrl/Cmd + B` | Apply bold formatting to selected text |
 | `Ctrl/Cmd + I` | Apply italic formatting to selected text |
@@ -79,7 +83,7 @@ Table, board, and list views operate over the same rows. Each view stores its ow
 
 Property and row changes are stored in `metadata.database`, while a searchable text summary is kept in `markdown`.
 
-Kanban boards support direct title, group, and card editing. Cards can use an emoji and a default, pink, yellow, blue, light-green, purple, or peach pastel theme. Drag the six-dot card handle to reorder cards or move them between groups; arrow controls provide equivalent movement on touch devices and for keyboard users. Blank cards are removed immediately, while cards with any content ask for confirmation first.
+Kanban boards support direct title, group, and card editing. Cards can use an emoji and a default, pink, yellow, blue, light-green, purple, or peach pastel theme. Drag the six-dot card handle to reorder cards or move them between groups; the ← and → buttons move a card between groups on touch devices, and with the handle focused the arrow keys move it up and down within its group or to the neighbouring group. Blank cards are removed immediately, while cards with any content ask for confirmation first.
 
 ## Gantt timeline blocks
 
