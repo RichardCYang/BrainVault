@@ -25,6 +25,14 @@ const darkUserRow = {
   updated_at: "2026-08-04T00:00:00.000Z"
 };
 
+test("the page-open mode is only exposed by the signed-in account's own projection", () => {
+  assert.equal(toPublicUser({ ...darkUserRow, default_page_mode: "write" }).defaultPageMode, "write");
+  assert.equal(toPublicUser({ ...darkUserRow, default_page_mode: "read" }).defaultPageMode, "read");
+  // Owner/share projections never select the column, so other people's
+  // preferences are not part of the public user shape.
+  assert.equal("defaultPageMode" in toPublicUser(darkUserRow), false);
+});
+
 test("a missing theme projection silently converts a dark account to light", () => {
   assert.equal(toPublicUser(darkUserRow).theme, "dark");
   assert.equal(toPublicUser({ ...darkUserRow, theme: undefined }).theme, "light");
@@ -33,7 +41,7 @@ test("a missing theme projection silently converts a dark account to light", () 
 test("session restoration selects the persisted theme before mapping /api/auth/me", () => {
   assert.match(
     authMiddlewareSource,
-    /SELECT\s+id,\s*username,\s*name,\s*avatar_data,\s*preferred_language,\s*default_collection_icon,\s*theme,\s*country_login_mode,\s*password_hash,/s
+    /SELECT\s+id,\s*username,\s*name,\s*avatar_data,\s*preferred_language,\s*default_collection_icon,\s*theme,\s*default_page_mode,\s*country_login_mode,\s*password_hash,/s
   );
 });
 

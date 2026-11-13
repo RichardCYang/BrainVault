@@ -177,6 +177,12 @@ const customCoverMaxHeight = 1600;
 const mobileSidebarMedia = window.matchMedia("(max-width: 760px)");
 const desktopSidebarMedia = window.matchMedia("(min-width: 761px)");
 const pageModes = Object.freeze({ READ: "read", WRITE: "write" });
+
+// The account's choice for how an existing page opens. Read is the default so
+// opening a page can never change it by accident; write is an explicit opt-in.
+function getPreferredPageMode(user = state.user) {
+  return user?.defaultPageMode === pageModes.WRITE ? pageModes.WRITE : pageModes.READ;
+}
 const keepaliveSaveBudgetBytes = 60 * 1024;
 
 function createPageDraftSourceId() {
@@ -228,6 +234,7 @@ const accountAvatarOperationGuard = createAccountAvatarOperationGuard();
 const accountProfileSaveGuard = createAccountAvatarOperationGuard();
 const accountLanguageOperationGuard = createAccountAvatarOperationGuard();
 const accountThemeOperationGuard = createAccountAvatarOperationGuard();
+const accountPageModeOperationGuard = createAccountAvatarOperationGuard();
 const authFlowOperationGuard = createAccountAvatarOperationGuard();
 const authenticatedSessionOperationGuard = createAccountAvatarOperationGuard();
 const accountDataOperationGuard = createAccountAvatarOperationGuard();
@@ -1230,6 +1237,7 @@ const elements = {
   desktopSidebarToggle: $("#desktop-sidebar-toggle"),
   languageSelect: $("#language-select"),
   themeSelect: $("#theme-select"),
+  defaultPageModeSelect: $("#default-page-mode-select"),
   accountSettingsTrigger: $("#account-settings-trigger"),
   accountSettingsLayer: $("#account-settings-layer"),
   accountSettingsBackdrop: $("#account-settings-backdrop"),
@@ -1381,6 +1389,7 @@ const elements = {
   collectionViewList: $("#collection-view-list"),
   collectionAddPageButton: $("#collection-add-page-button"),
   shareCollectionButton: $("#share-collection-button"),
+  collectionRenameButton: $("#collection-rename-button"),
   pageViewHeader: $("#page-view-header"),
   pagePath: $("#page-path"),
   pageActionsButton: $("#page-actions-button"),
@@ -1477,6 +1486,7 @@ const elements = {
   shareCollectionCount: $("#share-collection-count"),
   shareCollectionList: $("#share-collection-list"),
   blockEditorHelp: $("#block-editor-help"),
+  blockEditorHelpToggle: $("#block-editor-help-toggle"),
   blockCount: $("#block-count"),
   blockList: $("#block-list"),
   slashMenu: $("#slash-menu"),
@@ -1504,6 +1514,7 @@ const elements = {
   navigationMoveDownButton: $("#navigation-move-down-button"),
   navigationDeleteLabel: $("#navigation-delete-label"),
   navigationArchivePageButton: $("#navigation-archive-page-button"),
+  navigationRenameButton: $("#navigation-rename-button"),
   pageMoveDialog: $("#page-move-dialog"),
   pageMoveForm: $("#page-move-form"),
   pageMoveClose: $("#page-move-close"),
@@ -4409,7 +4420,7 @@ function setSecurityPanel(panel, { focusTab = false, load = true } = {}) {
 function handleSecurityTabKeydown(event) {
   if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
   event.preventDefault();
-  const tabs = elements.accountSecurityTabs;
+  const tabs = elements.accountSecurityTabs.filter((tab) => !tab.classList.contains("hidden"));
   const currentIndex = Math.max(0, tabs.indexOf(event.currentTarget));
   const nextIndex = event.key === "Home"
     ? 0
@@ -4614,6 +4625,13 @@ function renderMfaSettings() {
   elements.accountTotpStatus.classList.toggle("enabled", state.mfaStatus.totpEnabled);
   elements.accountTotpSetup.textContent = t(state.mfaStatus.totpEnabled ? "mfa.replaceTotp" : "mfa.setUpTotp");
   elements.accountTotpDisable.classList.toggle("hidden", !state.mfaStatus.totpEnabled);
+  // IPs can only be blocked by failed authenticator codes, so the list of
+  // blocked IPs is one tab fewer for accounts that do not use an authenticator.
+  const totpBlocksTab = elements.accountSecurityTabs.find((tab) => tab.dataset.securityPanel === "totp-blocks");
+  totpBlocksTab?.classList.toggle("hidden", !state.mfaStatus.totpEnabled);
+  if (!state.mfaStatus.totpEnabled && state.activeSecurityPanel === "totp-blocks") {
+    setSecurityPanel("settings", { load: false });
+  }
   elements.accountPasskeyCount.textContent = t("mfa.passkeyCount", { count: formatNumber(passkeys.length) });
 
   elements.accountPasskeySupport.textContent = t(isWebAuthnSupported() ? "mfa.passkeyReady" : "mfa.passkeyUnsupported");
@@ -4996,6 +5014,7 @@ function fillAccountSettings() {
   elements.accountLoginId.value = state.user.username;
   elements.languageSelect.value = state.user.preferredLanguage || getLanguage();
   elements.themeSelect.value = normalizeTheme(state.user.theme);
+  elements.defaultPageModeSelect.value = getPreferredPageMode();
   renderUserAvatar(
     elements.accountAvatarPreview,
     elements.accountAvatarFallback,
@@ -6633,6 +6652,40 @@ function handleEmojiPickerKeydown(event) {
   }
 }
 
+// Shortcut tips help at first and only take space afterwards, so a reader can
+// fold them away. The choice is a per-browser convenience, not account data.
+const editorHelpHiddenStorageKey = "brainvault:editor-help-hidden";
+
+function isEditorHelpHidden() {
+  try {
+    return localStorage.getItem(editorHelpHiddenStorageKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function syncEditorHelpVisibility() {
+  const hidden = isEditorHelpHidden();
+  elements.blockEditorHelp.classList.toggle("hidden", hidden);
+  elements.blockEditorHelpToggle.textContent = t(hidden ? "page.showEditorHelp" : "page.hideEditorHelp");
+  elements.blockEditorHelpToggle.setAttribute("aria-expanded", String(!hidden));
+}
+
+elements.blockEditorHelpToggle.addEventListener("click", () => {
+  const hidden = !isEditorHelpHidden();
+  try {
+    if (hidden) localStorage.setItem(editorHelpHiddenStorageKey, "1");
+    else localStorage.removeItem(editorHelpHiddenStorageKey);
+  } catch {
+    // Storage can be unavailable; the toggle then only lasts for this view.
+    elements.blockEditorHelp.classList.toggle("hidden", hidden);
+    elements.blockEditorHelpToggle.textContent = t(hidden ? "page.showEditorHelp" : "page.hideEditorHelp");
+    elements.blockEditorHelpToggle.setAttribute("aria-expanded", String(!hidden));
+    return;
+  }
+  syncEditorHelpVisibility();
+});
+
 function renderDefaultCollection() {
   elements.collectionCount.textContent = String(getDefaultCollectionPages().length);
   renderIconLabel(
@@ -6989,7 +7042,11 @@ function activateNavigationDrag(event) {
   drag.indicator.style.setProperty("--navigation-drop-depth", drag.node.style.getPropertyValue("--depth") || "0");
 
   drag.node.classList.add("is-navigation-dragging");
-  drag.handle.classList.add("is-pressed");
+  if (drag.fromRow) {
+    drag.handle.setPointerCapture?.(drag.pointerId);
+  } else {
+    drag.handle.classList.add("is-pressed");
+  }
   drag.handle.setAttribute("aria-grabbed", "true");
   document.body.classList.add("is-navigation-dragging");
   placeNavigationDropIndicator(drag);
@@ -7964,6 +8021,7 @@ function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
   elements.blockList.setAttribute("aria-readonly", String(controlsReadOnly));
   elements.blockList.setAttribute("aria-label", t(readOnly ? "page.readerAria" : "page.editorAria"));
   elements.blockEditorHelp.innerHTML = t(readOnly ? "page.readOnlyHelp" : "page.editorHelp");
+  syncEditorHelpVisibility();
 
   elements.pageModeToggle.disabled = !canEdit || interactionLocked || isPageModeMutationFenced();
   elements.pageModeToggle.setAttribute("aria-checked", String(!readOnly));
@@ -9583,6 +9641,8 @@ function openNavigationContextMenu(trigger, { focusFirst = false } = {}) {
     document.createTextNode(t(kind === "collection" ? "collection.addTitle" : "navigationMenu.addSubpage"))
   );
   elements.navigationAddSubpageButton.disabled = state.workspaceCreateBusy;
+  elements.navigationRenameButton.classList.toggle("hidden", kind !== "collection");
+  elements.navigationRenameButton.disabled = kind !== "collection" || !canManagePage(getPageSummaryById(id));
   elements.navigationMovePageButton.classList.toggle("hidden", kind !== "page");
   elements.navigationMovePageButton.disabled = kind !== "page" || pageMoveSubmitting;
   const stepMove = getNavigationStepMoveContext(id);
@@ -10406,6 +10466,8 @@ function renderCollectionView() {
   elements.collectionIconButton.disabled = collection ? !canManageCollection : false;
   elements.collectionAddPageButton.classList.toggle("hidden", collection ? !canManageCollection : false);
   elements.collectionAddPageButton.disabled = state.workspaceCreateBusy || (collection ? !canManageCollection : false);
+  elements.collectionRenameButton.classList.toggle("hidden", !collection || !canManageCollection);
+  elements.collectionRenameButton.disabled = !collection || !canManageCollection;
   elements.shareCollectionButton.classList.toggle("hidden", !collection || !canManagePageSharing(collection));
   elements.shareCollectionButton.disabled = !collection || !canManagePageSharing(collection);
   const collectionViewFragment = document.createDocumentFragment();
@@ -16741,11 +16803,8 @@ function getTextareaSelection(textarea) {
   return { start: Math.min(start, end), end: Math.max(start, end) };
 }
 
-function escapeInlineHtml(value) {
-  const element = document.createElement("div");
-  element.textContent = value;
-  return element.innerHTML;
-}
+// The toolbar's "default color" swatch: it clears a color instead of storing one.
+const defaultInlineTextColor = "#26384a";
 
 function getTextareaSelectionRect(textarea, selection) {
   const textareaRect = textarea.getBoundingClientRect();
@@ -16890,6 +16949,8 @@ function applyInlineFormat(format, value = "") {
   let replacement = selected;
   let selectStart = selection.start;
   let selectEnd = selection.end;
+  let rangeStart = selection.start;
+  let rangeEnd = selection.end;
 
   if (format === "bold") {
     replacement = `**${selected}**`;
@@ -16916,16 +16977,32 @@ function applyInlineFormat(format, value = "") {
     selectStart = selection.start + selected.length + 3;
     selectEnd = selectStart + "https://".length;
   } else if (format === "color") {
-    const color = /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : "#26384a";
-    const prefix = `<span style="color: ${color}">`;
-    const escaped = escapeInlineHtml(selected);
-    replacement = `${prefix}${escaped}</span>`;
-    selectStart = selection.start + prefix.length;
-    selectEnd = selectStart + escaped.length;
+    // Recoloring replaces the color around the selection instead of nesting a
+    // new span inside it, and the default color removes the span entirely, so
+    // the source stays readable and the text follows the theme's ink color.
+    const openingSpan = /<span style="color: #[0-9a-f]{3}(?:[0-9a-f]{3})?">$/i.exec(textarea.value.slice(0, selection.start));
+    if (openingSpan && textarea.value.startsWith("</span>", selection.end)) {
+      rangeStart = selection.start - openingSpan[0].length;
+      rangeEnd = selection.end + "</span>".length;
+    }
+    const plain = selected
+      .replace(/<span style="color: #[0-9a-f]{3}(?:[0-9a-f]{3})?">([\s\S]*?)<\/span>/gi, "$1")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    const color = /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : defaultInlineTextColor;
+    if (color === defaultInlineTextColor) {
+      replacement = plain;
+      selectStart = rangeStart;
+    } else {
+      const prefix = `<span style="color: ${color}">`;
+      replacement = `${prefix}${plain}</span>`;
+      selectStart = rangeStart + prefix.length;
+    }
+    selectEnd = selectStart + plain.length;
   }
 
   textarea.focus();
-  textarea.setRangeText(replacement, selection.start, selection.end, "preserve");
+  textarea.setRangeText(replacement, rangeStart, rangeEnd, "preserve");
   textarea.setSelectionRange(selectStart, selectEnd);
   autoGrowTextarea(textarea);
 
@@ -20124,6 +20201,49 @@ async function enterWriteModeForCreatedPage(pageId) {
   elements.pageTitle.select();
 }
 
+// Collections are pages without a title editor, so their name is changed here.
+async function renameCollection(collectionId) {
+  const collection = getPageSummaryById(collectionId);
+  if (!isCollectionPage(collection)) return { applied: false };
+  if (!canManagePage(collection)) {
+    setStatus(t("collection.renameNotAllowed"), true);
+    return { applied: false };
+  }
+  const authenticationScope = captureAuthenticatedSessionScope();
+  const requestedName = await showPromptDialog({
+    title: t("collection.renameTitle"),
+    label: t("collection.renamePrompt"),
+    defaultValue: collection.title,
+    confirmLabel: t("dialog.rename"),
+    maxLength: 160
+  });
+  if (requestedName === null || !isCurrentAuthenticatedSessionScope(authenticationScope)) return { applied: false };
+  const name = requestedName.trim().slice(0, 160);
+  if (!name) {
+    setStatus(t("status.collectionNameRequired"), true);
+    return { applied: false };
+  }
+  const current = getPageSummaryById(collectionId);
+  if (!current || name === current.title) return { applied: false };
+
+  const task = { mutationId: createMutationId() };
+  const data = await submitWithFreshMutationIdOnReuse(task, () => {
+    if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return skippedApiRequest;
+    return api(`/api/pages/${encodeURIComponent(collectionId)}`, {
+      method: "PATCH",
+      body: { title: name, expectedVersion: getPageSummaryById(collectionId)?.version, mutationId: task.mutationId },
+      beforeFetch: () => isCurrentAuthenticatedSessionScope(authenticationScope)
+    });
+  });
+  if (data === skippedApiRequest || !data?.page || !isCurrentAuthenticatedSessionScope(authenticationScope)) {
+    return { applied: false };
+  }
+  applyPageMetadataMutationResult(data.page, { title: data.page.title });
+  renderPages();
+  setStatus(t("status.collectionRenamed", { name: data.page.title }));
+  return { applied: true };
+}
+
 async function createCollection() {
   if (state.workspaceCreateBusy) return { applied: false };
   const requestedName = await showPromptDialog({
@@ -20463,8 +20583,13 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
         : requestedPageMode === pageModes.READ
           ? pageModes.READ
           : null;
+      // Opening in write mode needs the same durable local recovery storage as
+      // pressing Edit; without it the page falls back to read mode.
+      const preferredPageMode = getPreferredPageMode() === pageModes.WRITE && isRecoveryStorageWritable()
+        ? pageModes.WRITE
+        : pageModes.READ;
       if (!preserveMode) {
-        state.pageMode = normalizedRequestedPageMode ?? pageModes.READ;
+        state.pageMode = normalizedRequestedPageMode ?? preferredPageMode;
         state.pendingFocusBlockId = null;
       } else if (normalizedRequestedPageMode) {
         state.pageMode = normalizedRequestedPageMode;
@@ -21675,6 +21800,28 @@ elements.languageSelect.addEventListener("change", async () => {
   }
 });
 
+elements.defaultPageModeSelect.addEventListener("change", async () => {
+  const targetKey = getAccountAvatarTargetKey(state.user);
+  if (!targetKey) return;
+  const nextMode = elements.defaultPageModeSelect.value === pageModes.WRITE ? pageModes.WRITE : pageModes.READ;
+  const operation = accountPageModeOperationGuard.begin(targetKey);
+
+  try {
+    setAccountMessage(t("account.savingDefaultPageMode"));
+    const result = await enqueueAccountProfilePatch(targetKey, { defaultPageMode: nextMode });
+    if (!result.applied) return;
+    state.user = result.value.user;
+    if (!accountPageModeOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
+    elements.defaultPageModeSelect.value = getPreferredPageMode();
+    setAccountMessage(t("account.defaultPageModeSaved"));
+    setStatus(t("account.defaultPageModeSaved"));
+  } catch (error) {
+    if (!accountPageModeOperationGuard.isCurrent(operation, getAccountAvatarTargetKey(state.user))) return;
+    elements.defaultPageModeSelect.value = getPreferredPageMode();
+    setAccountMessage(error.message, true);
+  }
+});
+
 elements.themeSelect.addEventListener("change", async () => {
   const targetKey = getAccountAvatarTargetKey(state.user);
   if (!targetKey) return;
@@ -21801,6 +21948,15 @@ elements.authForm.addEventListener("submit", async (event) => {
   }
 });
 
+elements.collectionRenameButton.addEventListener("click", async () => {
+  if (!state.activeCollectionId) return;
+  try {
+    await renameCollection(state.activeCollectionId);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
 elements.addCollectionButton.addEventListener("click", async () => {
   try {
     await createCollection();
@@ -21898,6 +22054,11 @@ elements.addDocumentButton.addEventListener("click", async () => {
 
 
 async function handleSidebarPageClick(event) {
+  // The click that ends a row drag is not a request to open the page.
+  if (Date.now() < suppressNavigationMenuClickUntil) {
+    event.preventDefault();
+    return;
+  }
   const childrenToggle = event.target.closest("[data-page-children-toggle-id]");
   if (childrenToggle) {
     const pageId = childrenToggle.dataset.pageChildrenToggleId;
@@ -22032,7 +22193,15 @@ elements.collectionViewList.addEventListener("click", handleSidebarPageClick);
 
 
 elements.appSidebar.addEventListener("pointerdown", (event) => {
-  const handle = event.target.closest(".navigation-more-button");
+  // With a mouse or pen the row itself can be dragged, as in most note apps;
+  // a press that does not move still opens the page. Touch keeps the ⋮ handle
+  // so dragging the list never fights with scrolling it.
+  const rowHandle = event.pointerType !== "touch"
+    && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey
+    && !event.target.closest(".navigation-more-button, [data-page-children-toggle-id], .sidebar-add-button")
+    ? event.target.closest(".document-item, .custom-collection .collection-title-button")
+    : null;
+  const handle = event.target.closest(".navigation-more-button") ?? rowHandle;
   if (
     !handle
     || activeNavigationDrag
@@ -22058,8 +22227,11 @@ elements.appSidebar.addEventListener("pointerdown", (event) => {
     targetIndex: -1,
     siblingNodes: [],
     candidates: [],
-    indicator: null
+    indicator: null,
+    fromRow: handle === rowHandle
   };
+  // A row press may just be a click, so it is captured only once it moves.
+  if (handle === rowHandle) return;
   handle.classList.add("is-pressed");
   handle.setPointerCapture?.(event.pointerId);
 });
@@ -24070,6 +24242,15 @@ elements.blockList.addEventListener("keydown", async (event) => {
       applyInlineFormat(shortcut === "b" ? "bold" : shortcut === "i" ? "italic" : "math-inline");
       return;
     }
+    // As in most editors, Ctrl/⌘+K over selected text makes a link. With no
+    // selection the key falls through to the workspace search shortcut.
+    if (shortcut === "k" && !event.shiftKey && textarea.selectionStart !== textarea.selectionEnd) {
+      event.preventDefault();
+      state.activeInlineBlockId = row.dataset.blockId;
+      state.activeInlineSelection = getTextareaSelection(textarea);
+      applyInlineFormat("link");
+      return;
+    }
   }
 
   if (!elements.slashMenu.classList.contains("hidden") && state.activeSlashBlockId === row.dataset.blockId) {
@@ -24723,6 +24904,13 @@ elements.navigationContextMenu.addEventListener("click", async (event) => {
   try {
     if (button.dataset.action === "add-navigation-subpage") {
       await createNavigationSubpage();
+      return;
+    }
+    if (button.dataset.action === "rename-navigation-collection") {
+      const target = state.activeNavigationMenuTarget;
+      if (!target || target.kind !== "collection" || button.disabled) return;
+      closeNavigationContextMenu({ restoreFocus: true });
+      await renameCollection(target.id);
       return;
     }
     if (button.dataset.action === "move-navigation-page") {

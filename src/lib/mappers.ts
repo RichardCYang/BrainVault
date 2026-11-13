@@ -25,6 +25,7 @@ export function toPublicUser(
     | "preferred_language"
     | "default_collection_icon"
     | "theme"
+    | "default_page_mode"
     | "attachment_generation"
     | "created_at"
     | "updated_at"
@@ -48,6 +49,10 @@ export function toPublicUser(
     preferredLanguage: row.preferred_language ?? null,
     defaultCollectionIcon: row.default_collection_icon ?? null,
     theme,
+    // Only the signed-in account's own projections select this column.
+    ...(row.default_page_mode === undefined
+      ? {}
+      : { defaultPageMode: row.default_page_mode === "write" ? "write" as const : "read" as const }),
     ...(workspaceGeneration === null ? {} : { workspaceGeneration }),
     createdAt: row.created_at,
     updatedAt: row.updated_at

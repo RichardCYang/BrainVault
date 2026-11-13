@@ -14,6 +14,7 @@ declare global {
         preferredLanguage: string | null;
         defaultCollectionIcon: string | null;
         theme: "light" | "dark" | "system";
+        defaultPageMode?: "read" | "write";
         workspaceGeneration?: number;
         createdAt: string;
         updatedAt: string;

@@ -156,7 +156,7 @@ async function authenticateRequest(
 
     const payload = verifyAuthToken(token);
     const user = await db.queryOne<UserRow>(
-      `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, country_login_mode,
+      `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, default_page_mode, country_login_mode,
               password_hash, auth_version, attachment_generation, registration_approved, created_at, updated_at
        FROM users WHERE id = ?`,
       [payload.sub]

@@ -235,6 +235,13 @@ function workspaceDifferences(snapshot: BrainVaultBackup, current: BrainVaultBac
     fieldDifference("preferredLanguage", snapshot.account.preferred_language, current.account.preferred_language),
     fieldDifference("defaultCollectionIcon", snapshot.account.default_collection_icon, current.account.default_collection_icon),
     fieldDifference("theme", snapshot.account.theme ?? null, current.account.theme ?? null),
+    // Snapshots taken before this preference existed restore without touching
+    // it, so their missing value compares as the current one.
+    fieldDifference(
+      "defaultPageMode",
+      snapshot.account.default_page_mode ?? current.account.default_page_mode ?? null,
+      current.account.default_page_mode ?? null
+    ),
     fieldDifference("sourceUsername", snapshot.source.username, current.source.username),
     fieldDifference("retainedAttachmentCount", snapshot.retainedAttachments?.length ?? 0, current.retainedAttachments?.length ?? 0),
     longTextFieldDifference(

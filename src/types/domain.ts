@@ -6,6 +6,7 @@ export type UserRow = {
   preferred_language: string | null;
   default_collection_icon: string | null;
   theme: "light" | "dark" | "system" | null;
+  default_page_mode?: "read" | "write" | null;
   country_login_mode?: "OFF" | "ALLOWLIST" | "BLOCKLIST";
   password_hash: string;
   registration_approved?: 0 | 1 | boolean | number | string;

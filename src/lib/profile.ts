@@ -7,6 +7,9 @@ export type SupportedProfileLanguage = (typeof supportedProfileLanguages)[number
 export const supportedProfileThemes = ["light", "dark", "system"] as const;
 export type SupportedProfileTheme = (typeof supportedProfileThemes)[number];
 
+export const supportedDefaultPageModes = ["read", "write"] as const;
+export type SupportedDefaultPageMode = (typeof supportedDefaultPageModes)[number];
+
 export const maxAvatarBytes = 512 * 1024;
 const avatarDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/i;
 

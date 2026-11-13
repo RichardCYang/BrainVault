@@ -6468,6 +6468,182 @@ for (const [language, addition] of Object.entries(editorFlowTranslationAdditions
   }
 }
 
+// UX audit follow-up: page-open mode preference, collection rename, editor
+// tips toggle, and plainer names for the authenticator-code security policy.
+const uxAuditTranslationAdditions = {
+  en: {
+    account: {
+      defaultPageModeTitle: "Open pages in",
+      defaultPageModeDescription: "Read mode keeps a page from being changed by accident when you open it. New pages always open in write mode.",
+      defaultPageModeRead: "Read mode",
+      defaultPageModeWrite: "Write mode",
+      savingDefaultPageMode: "Saving how pages open...",
+      defaultPageModeSaved: "Pages will now open in the mode you chose.",
+      snapshotFieldDefaultPageMode: "Page open mode",
+      totpIpBlocksTab: "Blocked IPs",
+      totpIpBlockTitle: "Authenticator code attempt limit",
+      totpIpBlockMode: "Limit code attempts",
+      totpIpBlockSave: "Save attempt limit"
+    },
+    collection: {
+      rename: "Rename",
+      renameTitle: "Rename collection",
+      renamePrompt: "New collection name",
+      renameNotAllowed: "Only people who can manage this collection can rename it."
+    },
+    status: { collectionRenamed: "Renamed the collection to ‘{name}’." },
+    page: { hideEditorHelp: "Hide tips", showEditorHelp: "Show keyboard tips" }
+  },
+  ja: {
+    account: {
+      defaultPageModeTitle: "ページを開くモード",
+      defaultPageModeDescription: "読み取りモードなら、開いた直後にページを誤って変更しません。新しいページは常に書き込みモードで開きます。",
+      defaultPageModeRead: "読み取りモード",
+      defaultPageModeWrite: "書き込みモード",
+      savingDefaultPageMode: "ページを開くモードを保存しています...",
+      defaultPageModeSaved: "選んだモードでページを開くようになりました。",
+      snapshotFieldDefaultPageMode: "ページを開くモード",
+      totpIpBlocksTab: "ブロック中のIP",
+      totpIpBlockTitle: "認証コードの試行回数制限",
+      totpIpBlockMode: "認証コードの試行を制限",
+      totpIpBlockSave: "試行回数制限を保存"
+    },
+    collection: {
+      rename: "名前を変更",
+      renameTitle: "コレクション名を変更",
+      renamePrompt: "新しいコレクション名",
+      renameNotAllowed: "このコレクションを管理できるユーザーだけが名前を変更できます。"
+    },
+    status: { collectionRenamed: "コレクション名を「{name}」に変更しました。" },
+    page: { hideEditorHelp: "ヒントを隠す", showEditorHelp: "キーボードのヒントを表示" }
+  },
+  ko: {
+    account: {
+      defaultPageModeTitle: "페이지 열기 모드",
+      defaultPageModeDescription: "읽기 모드로 열면 페이지를 연 직후 실수로 내용이 바뀌지 않습니다. 새 페이지는 항상 쓰기 모드로 열립니다.",
+      defaultPageModeRead: "읽기 모드",
+      defaultPageModeWrite: "쓰기 모드",
+      savingDefaultPageMode: "페이지 열기 모드를 저장하고 있습니다...",
+      defaultPageModeSaved: "이제 선택한 모드로 페이지가 열립니다.",
+      snapshotFieldDefaultPageMode: "페이지 열기 모드",
+      countryLoginAllowlist: "허용 목록 국가만 로그인 허용",
+      countryLoginBlocklist: "차단 목록 국가 로그인 차단",
+      totpIpBlocksTab: "차단된 IP",
+      totpIpBlockTitle: "인증 코드 시도 횟수 제한",
+      totpIpBlockMode: "인증 코드 시도 제한",
+      totpIpBlockSave: "시도 횟수 제한 저장"
+    },
+    collection: {
+      rename: "이름 변경",
+      renameTitle: "컬렉션 이름 변경",
+      renamePrompt: "새 컬렉션 이름",
+      renameNotAllowed: "이 컬렉션을 관리할 수 있는 사용자만 이름을 바꿀 수 있습니다."
+    },
+    status: { collectionRenamed: "컬렉션 이름을 ‘{name}’(으)로 바꿨습니다." },
+    page: { hideEditorHelp: "도움말 숨기기", showEditorHelp: "단축키 도움말 보기" }
+  },
+  fr: {
+    account: {
+      defaultPageModeTitle: "Ouvrir les pages en",
+      defaultPageModeDescription: "Le mode lecture évite de modifier une page par accident à son ouverture. Les nouvelles pages s’ouvrent toujours en mode écriture.",
+      defaultPageModeRead: "Mode lecture",
+      defaultPageModeWrite: "Mode écriture",
+      savingDefaultPageMode: "Enregistrement du mode d’ouverture...",
+      defaultPageModeSaved: "Les pages s’ouvriront désormais dans le mode choisi.",
+      snapshotFieldDefaultPageMode: "Mode d’ouverture des pages",
+      totpIpBlocksTab: "IP bloquées",
+      totpIpBlockTitle: "Limite de tentatives de code d’authentification",
+      totpIpBlockMode: "Limiter les tentatives de code",
+      totpIpBlockSave: "Enregistrer la limite"
+    },
+    collection: {
+      rename: "Renommer",
+      renameTitle: "Renommer la collection",
+      renamePrompt: "Nouveau nom de la collection",
+      renameNotAllowed: "Seules les personnes qui gèrent cette collection peuvent la renommer."
+    },
+    status: { collectionRenamed: "La collection a été renommée « {name} »." },
+    page: { hideEditorHelp: "Masquer les astuces", showEditorHelp: "Afficher les raccourcis clavier" }
+  },
+  de: {
+    account: {
+      defaultPageModeTitle: "Seiten öffnen im",
+      defaultPageModeDescription: "Im Lesemodus wird eine Seite beim Öffnen nicht versehentlich geändert. Neue Seiten öffnen sich immer im Schreibmodus.",
+      defaultPageModeRead: "Lesemodus",
+      defaultPageModeWrite: "Schreibmodus",
+      savingDefaultPageMode: "Öffnungsmodus wird gespeichert...",
+      defaultPageModeSaved: "Seiten öffnen sich jetzt im gewählten Modus.",
+      snapshotFieldDefaultPageMode: "Öffnungsmodus für Seiten",
+      totpIpBlocksTab: "Gesperrte IPs",
+      totpIpBlockTitle: "Versuchslimit für Authentifizierungscodes",
+      totpIpBlockMode: "Codeversuche begrenzen",
+      totpIpBlockSave: "Versuchslimit speichern"
+    },
+    collection: {
+      rename: "Umbenennen",
+      renameTitle: "Sammlung umbenennen",
+      renamePrompt: "Neuer Name der Sammlung",
+      renameNotAllowed: "Nur wer diese Sammlung verwalten darf, kann sie umbenennen."
+    },
+    status: { collectionRenamed: "Die Sammlung heißt jetzt „{name}“." },
+    page: { hideEditorHelp: "Tipps ausblenden", showEditorHelp: "Tastaturtipps anzeigen" }
+  },
+  es: {
+    account: {
+      defaultPageModeTitle: "Abrir las páginas en",
+      defaultPageModeDescription: "El modo lectura evita cambiar una página por accidente al abrirla. Las páginas nuevas siempre se abren en modo escritura.",
+      defaultPageModeRead: "Modo lectura",
+      defaultPageModeWrite: "Modo escritura",
+      savingDefaultPageMode: "Guardando cómo se abren las páginas...",
+      defaultPageModeSaved: "Las páginas se abrirán en el modo elegido.",
+      snapshotFieldDefaultPageMode: "Modo de apertura de páginas",
+      totpIpBlocksTab: "IP bloqueadas",
+      totpIpBlockTitle: "Límite de intentos del código de autenticación",
+      totpIpBlockMode: "Limitar intentos de código",
+      totpIpBlockSave: "Guardar límite de intentos"
+    },
+    collection: {
+      rename: "Cambiar nombre",
+      renameTitle: "Cambiar nombre de la colección",
+      renamePrompt: "Nuevo nombre de la colección",
+      renameNotAllowed: "Solo quien puede administrar esta colección puede cambiarle el nombre."
+    },
+    status: { collectionRenamed: "La colección ahora se llama «{name}»." },
+    page: { hideEditorHelp: "Ocultar consejos", showEditorHelp: "Mostrar atajos de teclado" }
+  },
+  pt: {
+    account: {
+      defaultPageModeTitle: "Abrir páginas no",
+      defaultPageModeDescription: "O modo leitura evita alterar uma página por acidente ao abri-la. Páginas novas sempre abrem no modo escrita.",
+      defaultPageModeRead: "Modo leitura",
+      defaultPageModeWrite: "Modo escrita",
+      savingDefaultPageMode: "Salvando como as páginas abrem...",
+      defaultPageModeSaved: "As páginas agora abrem no modo escolhido.",
+      snapshotFieldDefaultPageMode: "Modo de abertura das páginas",
+      totpIpBlocksTab: "IPs bloqueados",
+      totpIpBlockTitle: "Limite de tentativas do código de autenticação",
+      totpIpBlockMode: "Limitar tentativas de código",
+      totpIpBlockSave: "Salvar limite de tentativas"
+    },
+    collection: {
+      rename: "Renomear",
+      renameTitle: "Renomear coleção",
+      renamePrompt: "Novo nome da coleção",
+      renameNotAllowed: "Somente quem pode gerenciar esta coleção pode renomeá-la."
+    },
+    status: { collectionRenamed: "A coleção agora se chama “{name}”." },
+    page: { hideEditorHelp: "Ocultar dicas", showEditorHelp: "Mostrar atalhos de teclado" }
+  }
+};
+
+for (const [language, addition] of Object.entries(uxAuditTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

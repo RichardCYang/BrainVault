@@ -123,7 +123,9 @@ const reviewedPortableDdlMigrations = [
   // Only retired security policy metadata changes; workspace exports are unaffected.
   "083_remove_vpn_access_policy.sql",
   // Adds the "system" theme value; export, validation, and import accept it.
-  "084_user_theme_system_preference.sql"
+  "084_user_theme_system_preference.sql",
+  // Adds the page-open mode preference; export, validation, diff, and import carry it.
+  "085_user_default_page_mode.sql"
 ];
 
 const createTablePattern = /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`?([A-Za-z0-9_]+)`?/gi;

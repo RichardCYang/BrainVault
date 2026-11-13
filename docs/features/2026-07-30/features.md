@@ -4,7 +4,9 @@
 
 BrainVault uses a page-first workspace with a compact document tree and automatic title saving. A crash-resilient browser draft journal restores unacknowledged title and block edits without overwriting a newer server version. When a recovered draft conflicts with a newer server version, the notice offers **Keep my version**, which asks once and then saves the recovered content over the server copy, so the choice is made before you continue typing.
 
-Pages and collections support Unicode Emoji 17 icons with Korean/English search, categories, skin-tone variants, recent selections, and reusable custom PNG, JPEG, WebP, or ICO image icons up to 512 KB. Pages can be nested, archived, or permanently deleted from their three-dot menus, and search covers page titles and block content.
+Pages and collections support Unicode Emoji 17 icons with Korean/English search, categories, skin-tone variants, recent selections, and reusable custom PNG, JPEG, WebP, or ICO image icons up to 512 KB. Pages can be nested, archived, or permanently deleted from their three-dot menus, and search covers page titles and block content. Custom collections can be renamed from their sidebar menu or with **Rename** in the collection view. Sidebar pages and collections can be reordered by dragging the row itself with a mouse or pen; on touch screens, drag the ⋮ handle so the list still scrolls normally.
+
+Pages open in read mode by default, so opening a page cannot change it by accident. Choose **Settings → Preferences → Open pages in** to open existing pages in write mode instead. New pages always open in write mode, and a browser without durable recovery storage falls back to read mode. The choice is stored with the account and included in backups.
 
 Archiving takes effect immediately and shows an **Undo** action, because an archived page can always be restored. Permanent deletion still asks first, names how many nested pages it will remove, and suggests archiving instead. When a delegated collection administrator opens a collection menu, the unavailable permanent delete item explains in place that only the workspace owner can delete a collection root.
 
@@ -63,6 +65,7 @@ See [Page and collection sharing and real-time collaboration](../../collaboratio
 | `Ctrl/Cmd + B` | Apply bold formatting to selected text |
 | `Ctrl/Cmd + I` | Apply italic formatting to selected text |
 | `Ctrl/Cmd + Shift + M` | Wrap selected text as an inline LaTeX formula |
+| `Ctrl/Cmd + K` with text selected | Turn the selection into a Markdown link; with nothing selected it opens Quick Find |
 | Drag the six-dot handle | Reorder a block within its current hierarchy |
 
 Useful slash commands include:
@@ -71,7 +74,7 @@ Useful slash commands include:
 /h1  /h2  /h3  /todo  /quote  /callout  /table  /database  /gantt  /board  /bookmark  /ai  /math  /code  /divider  /image  /file
 ```
 
-Inline formatting supports bold, italic, strikethrough, code, formulas, links, text color, and left/center/right/justified block alignment. Drag-and-drop reordering supports nested content.
+Inline formatting supports bold, italic, strikethrough, code, formulas, links, text color, and left/center/right/justified block alignment. Drag-and-drop reordering supports nested content. Choosing another color replaces the existing color instead of nesting it, the default color removes it, and toolbar colors are shown in lighter tones in the dark theme so colored text stays readable. The keyboard tips above the editor can be folded away with **Hide tips**.
 
 Table blocks include row, column, and header controls. Cells support arrow-key movement; `Enter` advances down the current column, and `Tab` from the final cell adds a row. Deleting a row or column that contains text shows an **Undo** action; empty rows and columns are removed quietly.
 

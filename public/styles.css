@@ -1714,6 +1714,10 @@ button.page-view-path-segment:focus-visible {
   line-height: 1.5;
 }
 
+.block-editor-help-toggle {
+  margin: 0.1rem 0 0 -0.38rem;
+}
+
 kbd {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -5083,11 +5087,21 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   border-radius: var(--radius-sm);
 }
 
-.color-ink { background: #3b352f; }
-.color-sky { background: #cf9226; }
-.color-blue { background: #976705; }
+/* Swatches match the colors the toolbar writes (see index.html data-color). */
+.color-ink { background: var(--ink-strong); }
+.color-sky { background: #63a1f2; }
+.color-blue { background: #2476b8; }
 .color-red { background: #d44c47; }
 .color-green { background: #448361; }
+
+/* Text colors are stored as fixed light-theme values. In dark mode the
+   stylesheet's !important outranks the inline style, so existing notes stay
+   readable: the old default ink follows the theme and the rest are lightened. */
+html[data-theme="dark"] span[style*="#26384a" i] { color: var(--ink) !important; }
+html[data-theme="dark"] span[style*="#63a1f2" i] { color: #8dbcf7 !important; }
+html[data-theme="dark"] span[style*="#2476b8" i] { color: #74aee6 !important; }
+html[data-theme="dark"] span[style*="#d44c47" i] { color: #f08a85 !important; }
+html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
 
 .rendered-text-alignment--center { text-align: center; }
 .rendered-text-alignment--right { text-align: right; }
@@ -17793,7 +17807,8 @@ body.is-navigation-dragging {
   }
 
   /* Enter / Shift+Enter / Backspace hints mean nothing on a touch keyboard. */
-  .block-editor-help {
+  .block-editor-help,
+  .block-editor-help-toggle {
     display: none;
   }
 }

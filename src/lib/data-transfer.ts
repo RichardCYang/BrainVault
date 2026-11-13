@@ -84,6 +84,8 @@ import {
   normalizeAvatarDataUrl,
   supportedProfileLanguages,
   supportedProfileThemes,
+  supportedDefaultPageModes,
+  type SupportedDefaultPageMode,
   type SupportedProfileTheme
 } from "./profile.js";
 import {
@@ -172,6 +174,7 @@ const timestampSchema = z.string().min(1).max(40)
 const exportedAtTimestampSchema = z.string().min(1).max(40)
   .refine((value) => isValidMachineTimestamp(value, exportedAtTimestampPattern), "Backup export timestamp is invalid");
 const profileThemeSchema = z.enum(supportedProfileThemes);
+const defaultPageModeSchema = z.enum(supportedDefaultPageModes);
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);
 const nullableString = (max: number) => z.string().max(max).nullable();
 const backupAvatarSchema = z
@@ -427,7 +430,10 @@ const manifestSchema = z.object({
     preferred_language: preferredLanguageSchema.nullable(),
     default_collection_icon: iconValueSchema.nullable(),
     // Optional only for backups exported before account themes were added.
-    theme: profileThemeSchema.optional()
+    theme: profileThemeSchema.optional(),
+    // Optional for backups exported before the page-open mode preference existed;
+    // restore keeps the destination account's current choice when it is absent.
+    default_page_mode: defaultPageModeSchema.optional()
   }).strict(),
   data: z.object({
     pages: backupArray(pageSchema, dataTransferResourceLimits.maxPages),
@@ -799,6 +805,7 @@ type RawAccountRow = {
   preferred_language: string | null;
   default_collection_icon: string | null;
   theme: SupportedProfileTheme;
+  default_page_mode: SupportedDefaultPageMode;
 };
 
 type RawCustomIconRow = {
@@ -1783,7 +1790,7 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       );
 
       const account = await client.queryOne<RawAccountRow>(
-        `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme
+        `SELECT id, username, name, avatar_data, preferred_language, default_collection_icon, theme, default_page_mode
          FROM users WHERE id = ?`,
         [userId]
       );
@@ -2178,7 +2185,8 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
         avatar_data: snapshot.account.avatar_data,
         preferred_language: preferredLanguageSchema.nullable().parse(snapshot.account.preferred_language),
         default_collection_icon: normalizeIconValue(snapshot.account.default_collection_icon),
-        theme: snapshot.account.theme
+        theme: snapshot.account.theme,
+        default_page_mode: snapshot.account.default_page_mode
       },
       data: {
         pages: snapshot.pages.map((page) => ({
@@ -2831,7 +2839,8 @@ async function importRows(
   const restoredUserUpdate = await client.execute<{ affectedRows: number }>(
     `UPDATE users
      SET name = ?, avatar_data = ?, preferred_language = ?, default_collection_icon = ?,
-         theme = COALESCE(?, theme), attachment_generation = attachment_generation + 1
+         theme = COALESCE(?, theme), default_page_mode = COALESCE(?, default_page_mode),
+         attachment_generation = attachment_generation + 1
      WHERE id = ? AND attachment_generation < ?`,
     [
       manifest.account.name,
@@ -2839,6 +2848,7 @@ async function importRows(
       manifest.account.preferred_language,
       restoreIconValue(manifest.account.default_collection_icon),
       manifest.account.theme ?? null,
+      manifest.account.default_page_mode ?? null,
       userId,
       Number.MAX_SAFE_INTEGER
     ]

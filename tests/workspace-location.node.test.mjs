@@ -54,7 +54,13 @@ test("authenticated navigation synchronizes the URL and boot restores it", () =>
   assert.match(appSource, /async function restoreWorkspaceLocationFromHash/);
   assert.match(appSource, /await restoreWorkspaceLocationFromHash\(\{ fallbackToHome: true \}\);/);
   assert.match(appSource, /result\.outcome === "ready"[\s\S]*renderPages\(\);[\s\S]*await restoreWorkspaceLocationFromHash\(\{ fallbackToHome: true \}\);[\s\S]*renderShell\(\);/);
-  assert.match(appSource, /state\.pageMode = normalizedRequestedPageMode \?\? pageModes\.READ/);
+  // A page opens in the account's chosen mode, and only falls back from write
+  // to read when durable recovery storage is unavailable.
+  assert.match(appSource, /state\.pageMode = normalizedRequestedPageMode \?\? preferredPageMode/);
+  assert.match(
+    appSource,
+    /const preferredPageMode = getPreferredPageMode\(\) === pageModes\.WRITE && isRecoveryStorageWritable\(\)\s*\?\s*pageModes\.WRITE\s*:\s*pageModes\.READ;/
+  );
   const modeUiStart = appSource.indexOf("function syncPageModeUi(");
   assert.notEqual(modeUiStart, -1);
   const modeUiEnd = appSource.indexOf("\nfunction ", modeUiStart);

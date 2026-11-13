@@ -49,7 +49,8 @@ import {
   maxAvatarBytes,
   normalizeAvatarDataUrl,
   supportedProfileLanguages,
-  supportedProfileThemes
+  supportedProfileThemes,
+  supportedDefaultPageModes
 } from "../lib/profile.js";
 import {
   requireAuth,
@@ -85,6 +86,7 @@ const dummyPasswordHash = hashPassword("brainvault-invalid-user-password");
 const syntheticLoginUserId = "usr_auth_timing_padding";
 const preferredLanguageSchema = z.enum(supportedProfileLanguages);
 const profileThemeSchema = z.enum(supportedProfileThemes);
+const defaultPageModeSchema = z.enum(supportedDefaultPageModes);
 
 const registerSchema = z.object({
   username: usernameSchema,
@@ -104,7 +106,8 @@ const profileSchema = z
     avatarData: z.string().max(Math.ceil((maxAvatarBytes * 4) / 3) + 128).nullable().optional(),
     preferredLanguage: preferredLanguageSchema.nullable().optional(),
     defaultCollectionIcon: iconMutationValueSchema.nullable().optional(),
-    theme: profileThemeSchema.optional()
+    theme: profileThemeSchema.optional(),
+    defaultPageMode: defaultPageModeSchema.optional()
   })
   .refine((value) => Object.values(value).some((item) => item !== undefined), {
     message: "At least one profile field is required"
@@ -968,6 +971,10 @@ authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), asy
     if (body.theme !== undefined) {
       fields.push("theme = ?");
       values.push(body.theme);
+    }
+    if (body.defaultPageMode !== undefined) {
+      fields.push("default_page_mode = ?");
+      values.push(body.defaultPageMode);
     }
 
     const user = await transaction(async (client) => {
