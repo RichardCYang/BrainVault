@@ -1195,6 +1195,10 @@ let statusDismissPaused = false;
 let statusActionVisible = false;
 // Long enough to read a sentence, and paused while the pointer or keyboard
 // focus is on the toast. Errors stay until dismissed or replaced (WCAG 2.2.1).
+// Unsent comment text is kept per page for this signed-in session, so moving
+// to another page and back does not throw away a half-written comment or an
+// unsaved comment edit. Signing out clears it.
+const pageCommentDrafts = new Map();
 const statusDismissDelay = 4000;
 const statusActionDismissDelay = 8000;
 const statusErrorDismissDelay = 0;
@@ -3460,6 +3464,7 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   pendingBlockMoveTasks.clear();
   pendingPageDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
+  clearPageCommentDrafts();
   pageModeMutationFences.clear();
   pageWriteOutcomeFences.clear();
   discardNavigationPreferenceSaves();
@@ -6547,7 +6552,7 @@ function openEmojiPicker(target, trigger) {
     .catch((error) => {
       if (renderGeneration !== emojiPickerRenderGeneration) return;
       closeEmojiPicker();
-      setStatus(error?.message ?? "Unable to load emoji data", true);
+      setStatus(error?.message ?? t("emoji.loadError"), true);
     });
 }
 
@@ -8403,7 +8408,7 @@ function hasPendingPageEdits() {
 }
 
 function handleBeforeUnload(event) {
-  if (!hasPendingPageEdits()) return;
+  if (!hasPendingPageEdits() && !hasUnsentPageCommentDraft()) return;
   event.preventDefault();
   event.returnValue = "";
 }
@@ -8423,8 +8428,11 @@ function syncPageSaveIndicator({ force = false, pending = hasPendingPageEdits() 
 }
 
 function syncBeforeUnloadProtection() {
-  const shouldProtect = hasPendingPageEdits();
-  syncPageSaveIndicator({ pending: shouldProtect });
+  const pending = hasPendingPageEdits();
+  syncPageSaveIndicator({ pending });
+  // An unsent comment is not a page edit, so it guards the tab without
+  // changing the page save indicator.
+  const shouldProtect = pending || hasUnsentPageCommentDraft();
   if (shouldProtect === beforeUnloadProtectionActive) return;
   beforeUnloadProtectionActive = shouldProtect;
   if (shouldProtect) window.addEventListener("beforeunload", handleBeforeUnload);
@@ -12044,7 +12052,45 @@ function setPageCommentsMessage(message = "", isError = false) {
   elements.pageCommentsMessage.classList.toggle("is-error", isError);
 }
 
+function getPageCommentEditDraft() {
+  const comments = state.pageComments;
+  if (!comments.editingId) return null;
+  const original = comments.entries.find((entry) => entry.id === comments.editingId);
+  // A restored edit waits here until its comment has loaded again.
+  if (!original ? !comments.editingDraft.trim() : comments.editingDraft === original.body) return null;
+  return { id: comments.editingId, body: comments.editingDraft, version: comments.editingVersion };
+}
+
+function hasUnsentPageCommentDraft() {
+  if (!state.user) return false;
+  return Boolean(
+    elements.pageCommentsInput.value.trim()
+      || getPageCommentEditDraft()
+      || [...pageCommentDrafts.keys()].some((pageId) => pageId !== state.pageComments.pageId)
+  );
+}
+
+function stashPageCommentDraft() {
+  const pageId = state.pageComments.pageId;
+  if (!pageId) return;
+  const body = elements.pageCommentsInput.value;
+  const edit = getPageCommentEditDraft();
+  if (body.trim() || edit) pageCommentDrafts.set(pageId, { body, edit });
+  else pageCommentDrafts.delete(pageId);
+}
+
+function clearPageCommentDrafts() {
+  pageCommentDrafts.clear();
+  state.pageComments.pageId = null;
+  state.pageComments.editingId = null;
+  state.pageComments.editingDraft = "";
+  state.pageComments.editingVersion = null;
+  elements.pageCommentsInput.value = "";
+  syncBeforeUnloadProtection();
+}
+
 function resetPageComments(pageId = null) {
+  stashPageCommentDraft();
   state.pageComments.requestId += 1;
   state.pageComments.pageId = pageId;
   state.pageComments.entries = [];
@@ -12061,7 +12107,18 @@ function resetPageComments(pageId = null) {
   state.pageComments.pendingCreateTask = null;
   state.pageComments.message = "";
   state.pageComments.messageIsError = false;
-  elements.pageCommentsInput.value = "";
+  const draft = pageId ? pageCommentDrafts.get(pageId) : null;
+  pageCommentDrafts.delete(pageId);
+  elements.pageCommentsInput.value = draft?.body ?? "";
+  if (draft) {
+    // Reopen the panel so the restored text is in view.
+    state.pageComments.expanded = true;
+    if (draft.edit) {
+      state.pageComments.editingId = draft.edit.id;
+      state.pageComments.editingDraft = draft.edit.body;
+      state.pageComments.editingVersion = draft.edit.version;
+    }
+  }
   renderPageComments();
 }
 
@@ -12233,6 +12290,7 @@ function renderPageComments() {
   elements.pageCommentsInput.disabled = busy || pageUnavailable;
   elements.pageCommentsSubmit.disabled = busy || pageUnavailable || !elements.pageCommentsInput.value.trim();
   elements.pageCommentsSubmit.textContent = commentState?.submitting ? t("comments.submitting") : t("comments.submit");
+  syncBeforeUnloadProtection();
 }
 
 // Comments are not part of the live collaboration document, so an open
@@ -12288,6 +12346,13 @@ async function refreshPageCommentsInBackground() {
       // The whole thread fits in one page: replace it, which also picks up
       // edits and deletions made by other people.
       if (count === state.pageComments.totalCount && serialize(incoming) === serialize(state.pageComments.entries)) return;
+      const arrived = count - state.pageComments.totalCount;
+      if (arrived > 0) {
+        // The list itself is not a live region (it would re-read every comment),
+        // so new arrivals are announced once through the status line.
+        state.pageComments.message = t("comments.newArrived", { count: formatNumber(arrived) });
+        state.pageComments.messageIsError = false;
+      }
       state.pageComments.entries = incoming;
       state.pageComments.totalCount = count;
       state.pageComments.nextCursor = null;
@@ -12360,6 +12425,16 @@ async function loadPageComments(
     state.pageComments.totalCount = Number.isSafeInteger(data?.count) && data.count >= 0
       ? data.count : state.pageComments.entries.length;
     state.pageComments.nextCursor = typeof data?.nextCursor === "string" ? data.nextCursor : null;
+    if (
+      !append
+      && state.pageComments.editingId
+      && !state.pageComments.entries.some((entry) => entry.id === state.pageComments.editingId)
+    ) {
+      // The comment a restored edit belonged to is gone, so the edit cannot apply.
+      state.pageComments.editingId = null;
+      state.pageComments.editingDraft = "";
+      state.pageComments.editingVersion = null;
+    }
     state.pageComments.loading = false;
     state.pageComments.initialized = true;
     state.pageComments.message = "";
@@ -22882,14 +22957,18 @@ let logoutConfirming = false;
 async function requestLogout() {
   if (logoutConfirming) return;
   const hasUnsavedSettings = state.accountSettingsOpen && hasUnsavedAccountSettingsChanges();
+  const hasUnsentComment = !hasUnsavedSettings && hasUnsentPageCommentDraft();
+  const discardsWork = hasUnsavedSettings || hasUnsentComment;
   logoutConfirming = true;
   let confirmed = false;
   try {
     confirmed = await showConfirmDialog({
-      title: hasUnsavedSettings ? t("dialog.discardChangesTitle") : t("account.signOutConfirmTitle"),
-      message: hasUnsavedSettings ? t("account.signOutUnsavedConfirm") : t("account.signOutConfirm"),
+      title: discardsWork ? t("dialog.discardChangesTitle") : t("account.signOutConfirmTitle"),
+      message: hasUnsavedSettings
+        ? t("account.signOutUnsavedConfirm")
+        : hasUnsentComment ? t("account.signOutUnsentCommentConfirm") : t("account.signOutConfirm"),
       confirmLabel: t("dialog.signOut"),
-      danger: hasUnsavedSettings
+      danger: discardsWork
     });
   } finally {
     logoutConfirming = false;
@@ -23271,6 +23350,7 @@ function announcePageCommentLength(length) {
 elements.pageCommentsInput.addEventListener("input", () => {
   elements.pageCommentsLength.textContent = `${formatNumber(elements.pageCommentsInput.value.length)} / ${formatNumber(2000)}`;
   announcePageCommentLength(elements.pageCommentsInput.value.length);
+  syncBeforeUnloadProtection();
   elements.pageCommentsSubmit.disabled = Boolean(
     state.pageComments.loading
       || state.pageComments.submitting
@@ -23291,6 +23371,7 @@ elements.pageCommentsList.addEventListener("input", (event) => {
   const textarea = event.target.closest("textarea[data-comment-edit-input]");
   if (!textarea || state.pageComments.editingId !== textarea.dataset.commentEditInput) return;
   state.pageComments.editingDraft = textarea.value;
+  syncBeforeUnloadProtection();
   const form = textarea.closest("form[data-comment-edit-id]");
   const submit = form?.querySelector('button[type="submit"]');
   if (submit) submit.disabled = Boolean(state.pageComments.busyCommentId || !textarea.value.trim());

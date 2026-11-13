@@ -80,6 +80,8 @@ BrainVault/
 
 Translations live in `public/i18n.js`. Static HTML uses `data-i18n*` attributes, while dynamic interface messages use the `t()` helper from the same module.
 
+A key missing from a language falls back to English, so a partly translated screen shows two languages at once. Add every new string to all seven languages in the same change, and keep each language's `{placeholder}` names identical to the English text.
+
 The supported language identifiers are `en`, `ja`, `ko`, `fr`, `de`, `es`, and `pt`. Browser-language detection and user preference behavior are described in [Features](../../features/2026-07-30/features.md#languages).
 
 ## Preview capture

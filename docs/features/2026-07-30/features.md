@@ -12,7 +12,7 @@ Archiving takes effect immediately and shows an **Undo** action, because an arch
 
 Quick Find updates results as you type. While the next query loads, the previous results stay on screen in a dimmed state instead of clearing on every keystroke. Matching text is highlighted, block results name their block type, and Enter opens the first result. From a result, `↑` on the first one returns to the search field, and typing goes back into the field so the query can be refined.
 
-Page comments appear below the content. While the comment panel is open, new comments from other people load automatically every 20 seconds and when you return to the tab, without disturbing a comment you are writing. The character counter is announced to screen readers as you approach and reach the 2,000-character limit.
+Page comments appear below the content. While the comment panel is open, new comments from other people load automatically every 20 seconds and when you return to the tab, without disturbing a comment you are writing. The character counter is announced to screen readers as you approach and reach the 2,000-character limit. A comment you have not posted, or an unsaved edit to one of your comments, is kept for each page while you move around the workspace and comes back when you return; closing the tab or logging out warns before it is discarded, and logging out clears every kept draft. New comments from other people are announced to screen readers once, instead of the whole thread being read again.
 
 ### Page cover images
 
