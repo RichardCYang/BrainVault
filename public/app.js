@@ -3588,9 +3588,7 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   elements.accountTotpSetup.disabled = false;
   elements.accountTotpVerify.disabled = false;
   elements.accountTotpDisable.disabled = false;
-  elements.accountTotpIpBlockPassword.value = "";
-  elements.accountTotpIpUnblockPassword.value = "";
-  elements.accountCountryLoginPassword.value = "";
+  clearSecurityPasswordInputs();
   setAccountPasskeyRegistering(false);
 }
 
@@ -4088,7 +4086,6 @@ async function saveTotpIpBlockPolicy() {
     acceptRotatedAuthenticationSession();
     applyTotpIpBlockPolicyResponse(data);
     state.totpIpBlockPolicy.loaded = true;
-    elements.accountTotpIpBlockPassword.value = "";
     state.blockHistory.loadedMonths = null;
     setAccountMessage(t("account.totpIpBlockSaved"));
   } catch (error) {
@@ -4215,7 +4212,6 @@ async function unblockPermanentTotpIp(ipAddress) {
       body: { currentPassword, ...(stepUpToken ? { stepUpToken } : {}) }
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpIpBlocks, operation)) return;
-    elements.accountTotpIpUnblockPassword.value = "";
     state.totpIpBlocks.blocks = state.totpIpBlocks.blocks.filter((block) => block.ipAddress !== ipAddress);
     state.totpIpBlocks.loaded = true;
     setAccountMessage(t("account.totpIpUnblocked", { ip: ipAddress }));
@@ -4367,7 +4363,6 @@ async function saveCountryLoginPolicy() {
       ? data.currentCountryCode.toUpperCase()
       : null;
     state.countryLoginPolicy.loaded = true;
-    elements.accountCountryLoginPassword.value = "";
     state.blockHistory.loadedMonths = null;
     setAccountMessage(t("account.countryLoginSaved"));
   } catch (error) {
@@ -4565,7 +4560,6 @@ function renderPasskeyList() {
           });
           if (!state.accountSettingsOpen || getAccountAvatarTargetKey(state.user) !== targetKey) return;
           acceptRotatedAuthenticationSession();
-          elements.accountMfaPassword.value = "";
           await loadMfaSettings({ showLoading: false });
           setAccountMessage(t("mfa.passkeyRenamed"));
         } catch (error) {
@@ -4595,7 +4589,6 @@ function renderPasskeyList() {
           });
           if (!state.accountSettingsOpen || getAccountAvatarTargetKey(state.user) !== targetKey) return;
           acceptRotatedAuthenticationSession();
-          elements.accountMfaPassword.value = "";
           await loadMfaSettings({ showLoading: false });
           setAccountMessage(t("mfa.passkeyRemoved"));
         } catch (error) {
@@ -4674,6 +4667,36 @@ function syncSearchClearButton() {
   elements.searchClear.hidden = !elements.searchInput.value;
 }
 
+// Block types are shown with the same names as the slash menu, never as the
+// stored enum (MARKDOWN, KANBAN, ...).
+function getSearchResultTypeLabel(type) {
+  if (typeof type !== "string" || !type) return "";
+  const key = `slash.${type}.label`;
+  const label = t(key);
+  return label === key ? "" : label;
+}
+
+// Marks each occurrence of the query so it is clear why a result matched.
+function appendSearchHighlightedText(element, text, query) {
+  const value = String(text ?? "");
+  const needle = String(query ?? "").trim();
+  if (!needle) {
+    element.textContent = value;
+    return;
+  }
+  const pattern = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+  let lastIndex = 0;
+  for (const match of value.matchAll(pattern)) {
+    if (!match[0]) break;
+    if (match.index > lastIndex) element.append(value.slice(lastIndex, match.index));
+    const mark = document.createElement("mark");
+    mark.textContent = match[0];
+    element.append(mark);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < value.length) element.append(value.slice(lastIndex));
+}
+
 function makeSearchResultItem(result, index) {
   const item = document.createElement("div");
   item.className = "search-result-entry";
@@ -4696,19 +4719,25 @@ function makeSearchResultItem(result, index) {
   const copy = document.createElement("span");
   copy.className = "search-result-copy";
 
+  const query = state.searchResultsQuery;
   const title = document.createElement("strong");
-  title.textContent = result.kind === "page" ? result.title : result.pageTitle;
+  appendSearchHighlightedText(
+    title,
+    (result.kind === "page" ? result.title : result.pageTitle) || t("newDocumentTitle"),
+    query
+  );
 
   const meta = document.createElement("small");
+  const typeLabel = getSearchResultTypeLabel(result.type);
   meta.textContent = result.kind === "page"
     ? t("search.pageResult")
-    : `${t("search.blockResult")}${result.type ? ` · ${result.type}` : ""}`;
+    : `${t("search.blockResult")}${typeLabel ? ` · ${typeLabel}` : ""}`;
 
   copy.append(title, meta);
   if (result.kind === "block" && result.snippet) {
     const snippet = document.createElement("span");
     snippet.className = "search-result-snippet";
-    snippet.textContent = result.snippet;
+    appendSearchHighlightedText(snippet, result.snippet, query);
     copy.append(snippet);
   }
 
@@ -4929,9 +4958,12 @@ function handleWorkspaceSearchShortcut(event) {
     && (
       state.accountSettingsOpen
       || state.sharePageOpen
+      || state.shareCollectionOpen
       || Boolean(state.emojiPickerTarget)
-      || elements.pageCoverDialog.open
-      || elements.pageVersionHistoryDialog.open
+      // Any modal <dialog> (archive, move, cover, history, confirm) owns the
+      // top layer and makes everything else inert, so search would open
+      // hidden behind it and swallow the next Escape.
+      || Boolean(document.querySelector("dialog[open]"))
     )
   ) return;
 
@@ -5009,6 +5041,30 @@ async function openSearchResult(index) {
   }
 }
 
+// Each security change in Settings confirms the current password. The fields
+// share one entry until Settings closes or the password changes, so it is
+// typed once instead of once per section.
+function getSecurityPasswordInputs() {
+  return [
+    elements.accountMfaPassword,
+    elements.accountTotpIpBlockPassword,
+    elements.accountCountryLoginPassword,
+    elements.accountTotpIpUnblockPassword
+  ];
+}
+
+function clearSecurityPasswordInputs() {
+  for (const input of getSecurityPasswordInputs()) input.value = "";
+}
+
+for (const input of getSecurityPasswordInputs()) {
+  input.addEventListener("input", () => {
+    for (const other of getSecurityPasswordInputs()) {
+      if (other !== input) other.value = input.value;
+    }
+  });
+}
+
 function fillAccountSettings() {
   if (!state.user) return;
   state.pendingAvatarData = state.user.avatarData ?? null;
@@ -5026,8 +5082,7 @@ function fillAccountSettings() {
   syncAccountProfileControls();
   elements.accountPasswordForm.reset();
   resetDataImportSelection();
-  elements.accountMfaPassword.value = "";
-  elements.accountCountryLoginPassword.value = "";
+  clearSecurityPasswordInputs();
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
   populateLoginHistoryMonths();
@@ -5097,8 +5152,7 @@ function closeAccountSettings({ restoreFocus = true, force = false } = {}) {
   setAccountMessage();
   elements.accountAvatarInput.value = "";
   elements.accountPasswordForm.reset();
-  elements.accountMfaPassword.value = "";
-  elements.accountCountryLoginPassword.value = "";
+  clearSecurityPasswordInputs();
   elements.accountPasskeyRegisterForm.reset();
   hideTotpSetup();
   syncMobileSidebarAccessibility();
@@ -15933,6 +15987,12 @@ function openBlockContextMenu(row, handle, { focusFirst = false } = {}) {
     "hidden",
     !(row.classList.contains("save-error") || row.dataset.draftConflict === "true")
   );
+  // Name the item after what it does in that situation rather than a generic
+  // "Save block", which reads as if autosave were off.
+  const blockSaveLabel = elements.blockSaveMenuItem.querySelector("[data-i18n]");
+  if (blockSaveLabel) {
+    blockSaveLabel.textContent = t(row.dataset.draftConflict === "true" ? "status.keepLocalDraft" : "page.saveRetry");
+  }
   // Dragging is not the only way to reorder (WCAG 2.5.7): the same move is
   // offered here and as Ctrl/Cmd+Shift+Arrow from inside the block.
   const reorderAvailability = getBlockStepMoveAvailability(row);
@@ -17126,9 +17186,12 @@ function applyInlineFormat(format, value = "") {
     selectStart = selection.start + 2;
     selectEnd = selectStart + selected.length;
   } else if (format === "link") {
-    replacement = `[${selected}](https://)`;
-    selectStart = selection.start + selected.length + 3;
-    selectEnd = selectStart + "https://".length;
+    // A pasted URL fills the target, so the caret lands after the finished
+    // link; otherwise the placeholder target is selected for typing.
+    const href = getPastedLinkUrl(value);
+    replacement = `[${selected}](${href ?? "https://"})`;
+    selectStart = href ? selection.start + replacement.length : selection.start + selected.length + 3;
+    selectEnd = href ? selectStart : selectStart + "https://".length;
   } else if (format === "color") {
     // Recoloring replaces the color around the selection instead of nesting a
     // new span inside it, and the default color removes the span entirely, so
@@ -17694,6 +17757,58 @@ function requestAttachmentUpload(row, slashContext = null) {
     { once: true }
   );
   input.click();
+}
+
+// Dropped or pasted files become attachment blocks below the block they land
+// on, in their original order: each one is inserted after the one before it.
+async function uploadFilesAfterRow(row, files) {
+  let anchor = row;
+  for (let index = 0; index < files.length; index += 1) {
+    const data = await uploadAttachmentFromRow(anchor, files[index]);
+    if (!data) return;
+    const next = data.block?.id ? findRenderedBlockRow(data.block.id) : null;
+    if (!next) {
+      const remaining = files.length - index - 1;
+      if (remaining > 0) setStatus(t("status.attachmentsNotUploaded", { count: formatNumber(remaining) }), true);
+      return;
+    }
+    anchor = next;
+  }
+}
+
+function dataTransferHasFiles(dataTransfer) {
+  return Boolean(dataTransfer && Array.from(dataTransfer.types ?? []).includes("Files"));
+}
+
+// The block a file drop applies to: the row under the pointer, or the last
+// top-level block when the file lands elsewhere on the open page.
+function getFileDropTargetRow(target) {
+  if (state.workspaceView !== "page" || !state.selectedPage || !(target instanceof Element)) return null;
+  if (!elements.pageView.contains(target)) return null;
+  const row = elements.blockList.contains(target) ? target.closest(".editor-block-row") : null;
+  if (row && elements.blockList.contains(row)) return row;
+  return [...elements.blockList.children].filter((child) => child.classList.contains("editor-block-row")).at(-1) ?? null;
+}
+
+let fileDropTargetRow = null;
+
+function markFileDropTarget(row) {
+  if (fileDropTargetRow === row) return;
+  fileDropTargetRow?.classList.remove("is-file-drop-target");
+  fileDropTargetRow = row;
+  row?.classList.add("is-file-drop-target");
+}
+
+function getPastedLinkUrl(text) {
+  const value = String(text ?? "").trim();
+  if (!/^https?:\/\/[^\s<>"]+$/i.test(value) || value.length > 2048) return null;
+  try {
+    new URL(value);
+  } catch {
+    return null;
+  }
+  // Parentheses would end the Markdown link target early.
+  return value.replace(/\(/g, "%28").replace(/\)/g, "%29");
 }
 
 function createInitialBlockMetadata(type) {
@@ -21662,7 +21777,8 @@ elements.accountPasswordForm.addEventListener("submit", async (event) => {
     // under the previous credential generation, even though the account ID is unchanged.
     acceptRotatedAuthenticationSession();
     elements.accountPasswordForm.reset();
-    elements.accountMfaPassword.value = "";
+    // The old password no longer works, so no field may keep it.
+    clearSecurityPasswordInputs();
     hideTotpSetup();
     await loadMfaSettings({ showLoading: false });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.password, operation)) return;
@@ -21738,7 +21854,6 @@ elements.accountTotpVerifyForm.addEventListener("submit", async (event) => {
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpVerify, operation)) return;
     acceptRotatedAuthenticationSession();
-    elements.accountMfaPassword.value = "";
     hideTotpSetup();
     await loadMfaSettings({ showLoading: false });
     if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpVerify, operation)) {
@@ -21787,7 +21902,6 @@ elements.accountTotpDisable.addEventListener("click", async (event) => {
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpDisable, operation)) return;
     acceptRotatedAuthenticationSession();
-    elements.accountMfaPassword.value = "";
     hideTotpSetup();
     await loadMfaSettings({ showLoading: false });
     if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.totpDisable, operation)) {
@@ -21842,7 +21956,6 @@ elements.accountPasskeyRegisterForm.addEventListener("submit", async (event) => 
     });
     if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) return;
     acceptRotatedAuthenticationSession();
-    elements.accountMfaPassword.value = "";
     elements.accountPasskeyRegisterForm.reset();
     await loadMfaSettings({ showLoading: false });
     if (isCurrentAccountSecurityOperation(accountSecurityOperationGuards.passkeyRegister, operation)) {
@@ -22253,6 +22366,18 @@ elements.homeNewPageButton.addEventListener("click", async () => {
 
 elements.searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  // Results already shown for this exact query: Enter opens the top one, as
+  // in other quick-find dialogs. Otherwise it searches right away.
+  const query = elements.searchInput.value.trim();
+  if (
+    query
+    && !state.searchLoading
+    && state.searchResultsQuery === query
+    && state.searchResults.length
+  ) {
+    void openSearchResult(0);
+    return;
+  }
   void performWorkspaceSearch();
 });
 
@@ -23887,6 +24012,60 @@ elements.blockList.addEventListener("drop", (event) => {
 elements.blockList.addEventListener("dragend", () => {
   clearKanbanDropTargets();
   activeKanbanCardDrag = null;
+});
+
+// Pasting an image or file adds it as an attachment, and pasting a URL over
+// selected text links that text, as in other block editors.
+elements.blockList.addEventListener("paste", (event) => {
+  if (event.defaultPrevented) return;
+  const textarea = event.target instanceof Element ? event.target.closest('textarea[name="markdown"]') : null;
+  const row = textarea ? getBlockRow(textarea) : null;
+  if (!row || !event.clipboardData) return;
+  const files = Array.from(event.clipboardData.files ?? []);
+  const text = event.clipboardData.getData("text/plain") ?? "";
+
+  if (files.length && !text.trim()) {
+    event.preventDefault();
+    if (!requireWritablePage()) return;
+    uploadFilesAfterRow(row, files).catch((error) => setStatus(error.message, true));
+    return;
+  }
+
+  if (
+    textarea.selectionStart !== textarea.selectionEnd
+    && !["CODE", "MATH", "MERMAID", "VIDEO"].includes(row.dataset.blockType)
+    && getPastedLinkUrl(text)
+    && requireWritablePage({ announce: false })
+  ) {
+    event.preventDefault();
+    state.activeInlineBlockId = row.dataset.blockId;
+    state.activeInlineSelection = getTextareaSelection(textarea);
+    applyInlineFormat("link", text);
+  }
+});
+
+// Without these, a file dropped anywhere on the app makes the browser leave
+// it to open the file. On an open page the drop becomes an attachment.
+window.addEventListener("dragover", (event) => {
+  if (!dataTransferHasFiles(event.dataTransfer) || event.defaultPrevented) return;
+  event.preventDefault();
+  const row = requireWritablePage({ announce: false }) ? getFileDropTargetRow(event.target) : null;
+  event.dataTransfer.dropEffect = row ? "copy" : "none";
+  markFileDropTarget(row);
+});
+
+window.addEventListener("dragleave", (event) => {
+  if (!event.relatedTarget) markFileDropTarget(null);
+});
+
+window.addEventListener("drop", (event) => {
+  if (!dataTransferHasFiles(event.dataTransfer) || event.defaultPrevented) return;
+  event.preventDefault();
+  markFileDropTarget(null);
+  const row = getFileDropTargetRow(event.target);
+  if (!row || !requireWritablePage()) return;
+  const files = Array.from(event.dataTransfer.files ?? []);
+  if (files.length) uploadFilesAfterRow(row, files).catch((error) => setStatus(error.message, true));
 });
 
 elements.blockList.addEventListener("beforeinput", (event) => {

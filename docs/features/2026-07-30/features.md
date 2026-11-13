@@ -10,7 +10,7 @@ Pages open in read mode by default, so opening a page cannot change it by accide
 
 Archiving takes effect immediately and shows an **Undo** action, because an archived page can always be restored. Permanent deletion still asks first, names how many nested pages it will remove, and suggests archiving instead. When a delegated collection administrator opens a collection menu, the unavailable permanent delete item explains in place that only the workspace owner can delete a collection root.
 
-Quick Find updates results as you type. While the next query loads, the previous results stay on screen in a dimmed state instead of clearing on every keystroke.
+Quick Find updates results as you type. While the next query loads, the previous results stay on screen in a dimmed state instead of clearing on every keystroke. Matching text is highlighted, block results name their block type, and Enter opens the first result.
 
 Page comments appear below the content. While the comment panel is open, new comments from other people load automatically every 20 seconds and when you return to the tab, without disturbing a comment you are writing. The character counter is announced to screen readers as you approach and reach the 2,000-character limit.
 
@@ -139,7 +139,9 @@ The original URL remains in `markdown` so search, collaboration, version history
 
 ## Attachment blocks
 
-Type `/file`, choose **Attachment**, and select a file. When the current block contains only the slash command, it is replaced in place; otherwise the attachment is inserted below it. The card shows the original filename, media type, size, and an authenticated download button.
+Type `/file`, choose **Attachment**, and select a file. When the current block contains only the slash command, it is replaced in place; otherwise the attachment is inserted below it. Files can also be dropped onto a block or pasted from the clipboard; each one becomes an attachment below that block, in order. The card shows the original filename, media type, size, and an authenticated download button.
+
+Pasting a web address while text is selected turns the selection into a link to that address.
 
 Uploaded bytes are stored under `ATTACHMENT_UPLOAD_DIR`, which defaults to `uploads/`. The default maximum file size is 25 MB and can be changed with `MAX_ATTACHMENT_SIZE_MB`. Committed attachment storage is capped per account by `ATTACHMENT_STORAGE_MAX_MB`, which defaults to 2048 MB, plus a fixed limit of 5,000 files; both limits are also enforced when restoring a backup.
 

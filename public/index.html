@@ -423,7 +423,7 @@
                 data-i18n-title="emoji.changePage"
               >📄</button>
               <div class="page-title-row">
-                <textarea id="page-title" class="page-title-input" rows="1" maxlength="160" aria-label="Page title" data-i18n-aria-label="page.titleAria"></textarea>
+                <textarea id="page-title" class="page-title-input" rows="1" maxlength="160" aria-label="Page title" data-i18n-aria-label="page.titleAria" placeholder="Untitled" data-i18n-placeholder="newDocumentTitle"></textarea>
               </div>
               <div id="page-kicker" class="kicker page-updated-meta"></div>
             </div>
@@ -477,12 +477,14 @@
             <div class="section-title-row block-editor-header">
               <div>
                 <h2 id="document-editor-heading" data-i18n="page.content">Page content</h2>
-                <p id="block-editor-help" class="block-editor-help" data-i18n-html="page.editorHelp"><kbd>Enter</kbd> splits into a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break (<kbd>Enter</kbd> in code; <kbd>Ctrl/⌘</kbd> + <kbd>Enter</kbd> leaves it) · <kbd>Backspace</kbd> at the start joins the block above · <kbd>↑</kbd> <kbd>↓</kbd> move between blocks · <kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>↑</kbd> <kbd>↓</kbd> reorders</p>
-                <button id="block-editor-help-toggle" type="button" class="text-button block-editor-help-toggle" aria-controls="block-editor-help" aria-expanded="true">Hide tips</button>
               </div>
               <span id="block-count" class="muted"></span>
             </div>
             <div id="block-list" class="block-list block-row-editor" aria-label="Unified block document editor" data-i18n-aria-label="page.editorAria"></div>
+            <div class="block-editor-tips">
+              <p id="block-editor-help" class="block-editor-help" data-i18n-html="page.editorHelp"><kbd>Enter</kbd> splits into a new block · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a line break (<kbd>Enter</kbd> in code; <kbd>Ctrl/⌘</kbd> + <kbd>Enter</kbd> leaves it) · <kbd>Backspace</kbd> at the start joins the block above · <kbd>↑</kbd> <kbd>↓</kbd> move between blocks · <kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>↑</kbd> <kbd>↓</kbd> reorders</p>
+              <button id="block-editor-help-toggle" type="button" class="text-button block-editor-help-toggle" aria-controls="block-editor-help" aria-expanded="true">Hide tips</button>
+            </div>
           </section>
 
           <section id="page-comments" class="page-comments" aria-labelledby="page-comments-summary-label">
@@ -546,11 +548,11 @@
           <button id="page-cover-dialog-close" class="page-cover-dialog-close" type="button" data-i18n-aria-label="cover.close" aria-label="Close cover picker"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
         </header>
         <div class="page-cover-default-grid" data-i18n-aria-label="cover.defaultsAria" aria-label="Default cover images">
-          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg1.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg1.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOption">Default cover</span></button>
-          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg2.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg2.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOption">Default cover</span></button>
-          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg3.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg3.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOption">Default cover</span></button>
-          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg4.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg4.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOption">Default cover</span></button>
-          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg5.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg5.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOption">Default cover</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg1.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg1.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOptionNumbered" data-i18n-number="1">Default cover 1</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg2.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg2.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOptionNumbered" data-i18n-number="2">Default cover 2</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg3.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg3.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOptionNumbered" data-i18n-number="3">Default cover 3</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg4.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg4.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOptionNumbered" data-i18n-number="4">Default cover 4</span></button>
+          <button type="button" class="page-cover-option" data-cover-url="/img/default_cover/coverimg5.png"><img data-cover-preview-src="/img/default_cover/thumbnails/coverimg5.webp" alt="" loading="lazy" decoding="async" /><span data-i18n="cover.defaultOptionNumbered" data-i18n-number="5">Default cover 5</span></button>
         </div>
         <div class="page-cover-custom-row">
           <div>
@@ -733,7 +735,6 @@
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"></path></svg>
               </button>
             </div>
-            <button class="search-dialog-submit" type="submit" data-i18n="search.button">Search</button>
           </form>
 
           <p id="search-dialog-help" class="search-dialog-help" data-i18n="search.help">Search page titles and block content.</p>

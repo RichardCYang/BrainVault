@@ -6836,6 +6836,59 @@ for (const [language, addition] of Object.entries(logoutAndViewTranslationAdditi
   }
 }
 
+const uiStandardsTranslationAdditions = {
+  en: {
+    status: { attachmentsNotUploaded: "{count} more file(s) were not uploaded. Add them again." },
+    cover: { defaultOptionNumbered: "Default cover {number}" },
+    search: { help: "Search page titles and block content. Press Enter to open the first result." },
+    mfa: { currentPasswordHint: "Enter it once. Every security change in Settings uses it until you close Settings." }
+  },
+  ja: {
+    status: { attachmentsNotUploaded: "残りの {count} 件のファイルはアップロードされませんでした。もう一度追加してください。" },
+    cover: { defaultOptionNumbered: "標準カバー {number}" },
+    search: { help: "ページタイトルとブロックの内容を検索します。Enter で最初の結果を開きます。" },
+    mfa: { currentPasswordHint: "一度入力すると、設定を閉じるまですべてのセキュリティ変更に使われます。" }
+  },
+  ko: {
+    status: { attachmentsNotUploaded: "나머지 파일 {count}개는 업로드되지 않았습니다. 다시 추가해 주세요." },
+    cover: { defaultOptionNumbered: "기본 커버 {number}" },
+    search: { help: "페이지 제목과 블록 내용을 검색합니다. Enter를 누르면 첫 번째 결과가 열립니다." },
+    mfa: { currentPasswordHint: "한 번 입력하면 설정을 닫을 때까지 모든 보안 변경에 사용됩니다." }
+  },
+  fr: {
+    status: { attachmentsNotUploaded: "{count} autre(s) fichier(s) n’ont pas été envoyés. Ajoutez-les à nouveau." },
+    cover: { defaultOptionNumbered: "Couverture par défaut {number}" },
+    search: { help: "Recherchez dans les titres de page et le contenu des blocs. Appuyez sur Entrée pour ouvrir le premier résultat." },
+    mfa: { currentPasswordHint: "Saisissez-le une fois : il sert à chaque modification de sécurité jusqu’à la fermeture des paramètres." }
+  },
+  de: {
+    status: { attachmentsNotUploaded: "{count} weitere Datei(en) wurden nicht hochgeladen. Fügen Sie sie erneut hinzu." },
+    cover: { defaultOptionNumbered: "Standardtitelbild {number}" },
+    search: { help: "Durchsucht Seitentitel und Blockinhalte. Mit der Eingabetaste öffnen Sie das erste Ergebnis." },
+    mfa: { currentPasswordHint: "Einmal eingeben: Es gilt für alle Sicherheitsänderungen, bis Sie die Einstellungen schließen." }
+  },
+  es: {
+    status: { attachmentsNotUploaded: "No se subieron {count} archivo(s) más. Vuelve a añadirlos." },
+    cover: { defaultOptionNumbered: "Portada predeterminada {number}" },
+    search: { help: "Busca en los títulos de página y el contenido de los bloques. Pulsa Intro para abrir el primer resultado." },
+    mfa: { currentPasswordHint: "Escríbela una vez: se usa en cada cambio de seguridad hasta que cierres la configuración." }
+  },
+  pt: {
+    status: { attachmentsNotUploaded: "Mais {count} arquivo(s) não foram enviados. Adicione-os novamente." },
+    cover: { defaultOptionNumbered: "Capa padrão {number}" },
+    search: { help: "Pesquise títulos de páginas e conteúdo de blocos. Pressione Enter para abrir o primeiro resultado." },
+    mfa: { currentPasswordHint: "Digite uma vez: ela vale para todas as alterações de segurança até você fechar as configurações." }
+  }
+};
+
+for (const [language, addition] of Object.entries(uiStandardsTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;
@@ -7024,7 +7077,9 @@ export function applyDocumentTranslations(root = globalThis.document) {
   if (!root?.querySelectorAll) return;
 
   root.querySelectorAll("[data-i18n]").forEach((element) => {
-    element.textContent = t(element.dataset.i18n);
+    // data-i18n-number fills a {number} placeholder, e.g. "Default cover 2".
+    const variables = element.dataset.i18nNumber === undefined ? {} : { number: element.dataset.i18nNumber };
+    element.textContent = t(element.dataset.i18n, variables);
   });
   root.querySelectorAll("[data-i18n-html]").forEach((element) => {
     element.innerHTML = t(element.dataset.i18nHtml);

@@ -1715,15 +1715,38 @@ button.page-view-path-segment:focus-visible {
   font-weight: 650;
 }
 
-.block-editor-help {
-  margin: 0.2rem 0 0;
-  color: var(--muted-light);
-  font-size: 0.78rem;
-  line-height: 1.5;
+/* Visible shortcut tips under the content while writing; the toggle collapses
+   them to a single "Show tips" link instead of hiding a focusable control. */
+.block-editor-tips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.6rem;
+  margin-top: 1.5rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
 }
 
-.block-editor-help-toggle {
-  margin: 0.1rem 0 0 -0.38rem;
+.page-view.is-read-only .block-editor-tips {
+  display: none;
+}
+
+/* A dragged file is added below this block when dropped. */
+.block-list .editor-block-row.is-file-drop-target {
+  box-shadow: 0 2px 0 0 var(--focus);
+}
+
+.block-editor-help {
+  flex: 1 1 24rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.block-editor-tips .block-editor-help-toggle {
+  margin: 0 0 0 -0.38rem;
+  font-size: 0.78rem;
 }
 
 kbd {
@@ -9256,7 +9279,7 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
 
 .search-dialog-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.65rem;
   align-items: center;
 }
@@ -9330,12 +9353,6 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
 .search-dialog-clear:focus-visible {
   background: var(--hover);
   color: var(--ink-strong);
-}
-
-.search-dialog-submit {
-  min-height: 2.75rem;
-  padding-inline: 1.15rem;
-  white-space: nowrap;
 }
 
 .search-dialog-help {
@@ -9446,6 +9463,12 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
   color: var(--muted);
   font-size: 0.75rem;
   font-weight: 650;
+}
+
+.search-result-copy mark {
+  border-radius: 2px;
+  background: var(--search-match, rgba(232, 182, 92, 0.38));
+  color: inherit;
 }
 
 .search-result-snippet {
@@ -9888,14 +9911,6 @@ body.search-dialog-open {
 
   .search-dialog-body {
     padding: 1rem;
-  }
-
-  .search-dialog-form {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .search-dialog-submit {
-    width: 100%;
   }
 
   .account-settings-body {
@@ -17952,8 +17967,7 @@ body.is-navigation-dragging {
   }
 
   /* Enter / Shift+Enter / Backspace hints mean nothing on a touch keyboard. */
-  .block-editor-help,
-  .block-editor-help-toggle {
+  .block-editor-tips {
     display: none;
   }
 }
@@ -19712,5 +19726,48 @@ body.auth-mode {
   .account-settings-nav .account-settings-logout:hover {
     background: rgba(210, 66, 66, 0.08);
     color: var(--danger);
+  }
+}
+
+/* iOS Safari zooms the page when a focused field is smaller than 16px and
+   does not zoom back. Touch layouts keep compact fields at 16px instead. */
+@media (hover: none) and (pointer: coarse) {
+  .auth-card input,
+  .form-field input,
+  .form-field select,
+  .form-field textarea,
+  .app-dialog-field input,
+  .block-move-field input,
+  .block-move-field select,
+  .emoji-search-label input,
+  .emoji-custom-field input,
+  .page-comments-form textarea,
+  .page-comment-edit-form textarea,
+  .table-cell-input,
+  .database-search-input,
+  .database-value-input,
+  .database-value-input.is-compact,
+  .database-value-select,
+  .database-value-select.is-compact,
+  .kanban-card-emoji-input,
+  .bookmark-list-columns-select,
+  .bookmark-max-items-input,
+  .code-language-select,
+  .gantt-scale-select,
+  .gantt-status-select,
+  .gantt-task-input,
+  .timetable-input,
+  .timetable-date-input,
+  .timetable-time-input,
+  .treeview-note-title-input,
+  .ai-chat-answer-input,
+  .ai-chat-model-input,
+  .ai-chat-question-input,
+  .ai-chat-time-input,
+  .editor-block-row[data-block-type="CODE"] .block-row-input,
+  .editor-block-row[data-block-type="MATH"] .block-row-input,
+  .editor-block-row[data-block-type="MERMAID"] .block-row-input,
+  .editor-block-row[data-block-type="VIDEO"] .youtube-video-url-input {
+    font-size: 16px !important;
   }
 }
