@@ -311,6 +311,7 @@ export const translationCatalogs = {
       movePage: "Move to another page",
       deletePage: "Delete permanently",
       deleteCollection: "Delete collection permanently",
+      copyLink: "Copy link",
       archivePage: "Archive"
     },
     collection: {
@@ -407,6 +408,7 @@ export const translationCatalogs = {
       actionsAriaGeneric: "Page actions",
       actionsAria: "Actions for page “{title}”",
       exportPdf: "Export PDF",
+      copyLink: "Copy link",
       exportPdfTitle: "Export the current page as a PDF",
       save: "Save",
       archive: "Archive",
@@ -999,6 +1001,7 @@ export const translationCatalogs = {
       writeModeEnabled: "Write mode is on. You can now edit this page.",
       readOnlyBlocked: "This page is read-only. Switch to write mode to edit it.",
       pageArchived: "Page archived.",
+      linkCopied: "Link copied.",
       blockDeleted: "Block deleted.",
       attachmentUploading: "Uploading {name}...",
       attachmentUploaded: "Attached {name}.",
@@ -1019,6 +1022,7 @@ export const translationCatalogs = {
     },
     errors: {
       pdfExportFailed: "Could not open the PDF export dialog. Try again in a browser that supports printing.",
+      linkCopyFailed: "Could not copy the link. Copy it from the address bar instead.",
       currentBlockOrder: "Could not find the current block order.",
       readOnlyPage: "This page is read-only.",
       network: "Could not connect to the server. Check your network and try again.",
@@ -1173,6 +1177,7 @@ export const translationCatalogs = {
       movePage: "別のページへ移動",
       deletePage: "完全に削除",
       deleteCollection: "コレクションを完全に削除",
+      copyLink: "リンクをコピー",
       archivePage: "アーカイブ"
     },
     collection: {
@@ -1207,6 +1212,7 @@ export const translationCatalogs = {
       actionsAriaGeneric: "ページ操作",
       actionsAria: "「{title}」のページ操作",
       exportPdf: "PDFに書き出す",
+      copyLink: "リンクをコピー",
       exportPdfTitle: "現在のページをPDFとして書き出す",
       save: "保存",
       archive: "アーカイブ",
@@ -1470,6 +1476,7 @@ export const translationCatalogs = {
       writeModeEnabled: "編集モードに切り替えました。これでページを編集できます。",
       readOnlyBlocked: "このページは読み取り専用です。編集するには編集モードに切り替えてください。",
       pageArchived: "ページをアーカイブしました。",
+      linkCopied: "リンクをコピーしました。",
       blockDeleted: "ブロックを削除しました。",
       attachmentUploading: "{name}をアップロードしています...",
       attachmentUploaded: "{name}を添付しました。",
@@ -1480,6 +1487,7 @@ export const translationCatalogs = {
     },
     errors: {
       pdfExportFailed: "PDF書き出しダイアログを開けませんでした。印刷に対応したブラウザーで再度お試しください。",
+      linkCopyFailed: "リンクをコピーできませんでした。アドレスバーからコピーしてください。",
       currentBlockOrder: "現在のブロック順序を確認できません。",
       readOnlyPage: "このページは読み取り専用です。",
       network: "サーバーに接続できません。ネットワークを確認して再度お試しください。",
@@ -1626,6 +1634,7 @@ export const translationCatalogs = {
       movePage: "다른 페이지로 이동하기",
       deletePage: "영구 삭제",
       deleteCollection: "컬렉션 영구 삭제",
+      copyLink: "링크 복사",
       archivePage: "보관하기"
     },
     collection: {
@@ -1722,6 +1731,7 @@ export const translationCatalogs = {
       actionsAriaGeneric: "페이지 작업",
       actionsAria: "“{title}” 페이지 작업",
       exportPdf: "PDF 내보내기",
+      copyLink: "링크 복사",
       exportPdfTitle: "현재 페이지를 PDF로 내보내기",
       save: "저장",
       archive: "보관하기",
@@ -2293,6 +2303,7 @@ export const translationCatalogs = {
       writeModeEnabled: "쓰기 모드로 전환했습니다. 이제 페이지를 편집할 수 있습니다.",
       readOnlyBlocked: "읽기 전용 페이지입니다. 편집하려면 쓰기 모드로 전환하세요.",
       pageArchived: "문서를 보관했습니다.",
+      linkCopied: "링크를 복사했습니다.",
       blockDeleted: "블록을 삭제했습니다.",
       attachmentUploading: "{name} 업로드 중...",
       attachmentUploaded: "{name} 파일을 첨부했습니다.",
@@ -2313,6 +2324,7 @@ export const translationCatalogs = {
     },
     errors: {
       pdfExportFailed: "PDF 내보내기 창을 열지 못했습니다. 인쇄를 지원하는 브라우저에서 다시 시도하세요.",
+      linkCopyFailed: "링크를 복사하지 못했습니다. 주소창에서 직접 복사하세요.",
       currentBlockOrder: "현재 블록의 순서를 찾을 수 없습니다.",
       readOnlyPage: "이 페이지는 읽기 전용입니다.",
       network: "서버에 연결할 수 없습니다. 네트워크를 확인한 뒤 다시 시도하세요.",
@@ -2465,6 +2477,7 @@ export const translationCatalogs = {
       movePage: "Déplacer vers une autre page",
       deletePage: "Supprimer définitivement",
       deleteCollection: "Supprimer définitivement la collection",
+      copyLink: "Copier le lien",
       archivePage: "Archiver"
     },
     collection: {
@@ -2499,6 +2512,7 @@ export const translationCatalogs = {
       actionsAriaGeneric: "Actions de la page",
       actionsAria: "Actions pour la page « {title} »",
       exportPdf: "Exporter en PDF",
+      copyLink: "Copier le lien",
       exportPdfTitle: "Exporter la page actuelle au format PDF",
       save: "Enregistrer",
       archive: "Archiver",
@@ -2762,6 +2776,7 @@ export const translationCatalogs = {
       writeModeEnabled: "Mode édition activé. Vous pouvez maintenant modifier cette page.",
       readOnlyBlocked: "Cette page est en lecture seule. Passez en mode édition pour la modifier.",
       pageArchived: "Page archivée.",
+      linkCopied: "Lien copié.",
       blockDeleted: "Bloc supprimé.",
       attachmentUploading: "Envoi de {name}...",
       attachmentUploaded: "{name} a été joint.",
@@ -2772,6 +2787,7 @@ export const translationCatalogs = {
     },
     errors: {
       pdfExportFailed: "Impossible d’ouvrir la boîte de dialogue d’export PDF. Réessayez dans un navigateur prenant en charge l’impression.",
+      linkCopyFailed: "Impossible de copier le lien. Copiez-le depuis la barre d’adresse.",
       currentBlockOrder: "Impossible de déterminer l’ordre actuel du bloc.",
       readOnlyPage: "Cette page est en lecture seule.",
       network: "Connexion au serveur impossible. Vérifiez votre réseau et réessayez.",
@@ -2889,6 +2905,7 @@ export const translationCatalogs = {
       movePage: "Auf eine andere Seite verschieben",
       deletePage: "Endgültig löschen",
       deleteCollection: "Sammlung endgültig löschen",
+      copyLink: "Link kopieren",
       archivePage: "Archivieren"
     },
     collection: {
@@ -2923,6 +2940,7 @@ export const translationCatalogs = {
       actionsAriaGeneric: "Seitenaktionen",
       actionsAria: "Aktionen für die Seite „{title}“",
       exportPdf: "PDF exportieren",
+      copyLink: "Link kopieren",
       exportPdfTitle: "Aktuelle Seite als PDF exportieren",
       save: "Speichern",
       archive: "Archivieren",
@@ -3186,6 +3204,7 @@ export const translationCatalogs = {
       writeModeEnabled: "Bearbeitungsmodus aktiviert. Du kannst diese Seite jetzt bearbeiten.",
       readOnlyBlocked: "Diese Seite ist schreibgeschützt. Wechsle in den Bearbeitungsmodus, um sie zu bearbeiten.",
       pageArchived: "Seite archiviert.",
+      linkCopied: "Link kopiert.",
       blockDeleted: "Block gelöscht.",
       attachmentUploading: "{name} wird hochgeladen...",
       attachmentUploaded: "{name} wurde angehängt.",
@@ -3196,6 +3215,7 @@ export const translationCatalogs = {
     },
     errors: {
       pdfExportFailed: "Der PDF-Exportdialog konnte nicht geöffnet werden. Versuche es in einem Browser mit Druckunterstützung erneut.",
+      linkCopyFailed: "Der Link konnte nicht kopiert werden. Kopiere ihn stattdessen aus der Adressleiste.",
       currentBlockOrder: "Die aktuelle Blockreihenfolge konnte nicht ermittelt werden.",
       readOnlyPage: "Diese Seite ist schreibgeschützt.",
       network: "Keine Verbindung zum Server. Prüfe dein Netzwerk und versuche es erneut.",
@@ -3313,6 +3333,7 @@ export const translationCatalogs = {
       movePage: "Mover a otra página",
       deletePage: "Eliminar definitivamente",
       deleteCollection: "Eliminar la colección definitivamente",
+      copyLink: "Copiar enlace",
       archivePage: "Archivar"
     },
     collection: {
@@ -3347,6 +3368,7 @@ export const translationCatalogs = {
       actionsAriaGeneric: "Acciones de página",
       actionsAria: "Acciones para la página «{title}»",
       exportPdf: "Exportar PDF",
+      copyLink: "Copiar enlace",
       exportPdfTitle: "Exportar la página actual como PDF",
       save: "Guardar",
       archive: "Archivar",
@@ -3610,6 +3632,7 @@ export const translationCatalogs = {
       writeModeEnabled: "Modo edición activado. Ya puedes editar esta página.",
       readOnlyBlocked: "Esta página es de solo lectura. Cambia al modo edición para editarla.",
       pageArchived: "Página archivada.",
+      linkCopied: "Enlace copiado.",
       blockDeleted: "Bloque eliminado.",
       attachmentUploading: "Subiendo {name}...",
       attachmentUploaded: "Se adjuntó {name}.",
@@ -3620,6 +3643,7 @@ export const translationCatalogs = {
     },
     errors: {
       pdfExportFailed: "No se pudo abrir el cuadro de exportación a PDF. Inténtalo de nuevo en un navegador compatible con impresión.",
+      linkCopyFailed: "No se pudo copiar el enlace. Cópialo desde la barra de direcciones.",
       currentBlockOrder: "No se pudo determinar el orden actual del bloque.",
       readOnlyPage: "Esta página es de solo lectura.",
       network: "No se pudo conectar con el servidor. Revisa la red e inténtalo de nuevo.",
@@ -3737,6 +3761,7 @@ export const translationCatalogs = {
       movePage: "Mover para outra página",
       deletePage: "Excluir permanentemente",
       deleteCollection: "Excluir a coleção permanentemente",
+      copyLink: "Copiar link",
       archivePage: "Arquivar"
     },
     collection: {
@@ -3771,6 +3796,7 @@ export const translationCatalogs = {
       actionsAriaGeneric: "Ações da página",
       actionsAria: "Ações para a página “{title}”",
       exportPdf: "Exportar PDF",
+      copyLink: "Copiar link",
       exportPdfTitle: "Exportar a página atual como PDF",
       save: "Salvar",
       archive: "Arquivar",
@@ -4034,6 +4060,7 @@ export const translationCatalogs = {
       writeModeEnabled: "Modo de edição ativado. Agora você pode editar esta página.",
       readOnlyBlocked: "Esta página é somente leitura. Mude para o modo de edição para editá-la.",
       pageArchived: "Página arquivada.",
+      linkCopied: "Link copiado.",
       blockDeleted: "Bloco excluído.",
       attachmentUploading: "Enviando {name}...",
       attachmentUploaded: "{name} foi anexado.",
@@ -4044,6 +4071,7 @@ export const translationCatalogs = {
     },
     errors: {
       pdfExportFailed: "Não foi possível abrir a caixa de exportação em PDF. Tente novamente em um navegador compatível com impressão.",
+      linkCopyFailed: "Não foi possível copiar o link. Copie-o pela barra de endereço.",
       currentBlockOrder: "Não foi possível determinar a ordem atual do bloco.",
       readOnlyPage: "Esta página é somente leitura.",
       network: "Não foi possível conectar ao servidor. Verifique a rede e tente novamente.",

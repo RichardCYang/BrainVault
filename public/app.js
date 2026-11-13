@@ -1451,6 +1451,7 @@ const elements = {
   collaborationPresence: $("#collaboration-presence"),
   sharePageButton: $("#share-page-button"),
   exportPdfButton: $("#export-pdf-button"),
+  copyPageLinkButton: $("#copy-page-link-button"),
   savePageButton: $("#save-page-button"),
   blockSaveMenuItem: $("#block-save-menu-item"),
   archivePageButton: $("#archive-page-button"),
@@ -1947,6 +1948,10 @@ function setStatus(message, isError = false, { dismissAfter, action } = {}) {
     clearStatus();
     return;
   }
+  // Errors interrupt assistive technology; routine notices wait their turn.
+  // The politeness is set before the content changes so it applies to this message.
+  elements.status.setAttribute("role", isError ? "alert" : "status");
+  elements.status.setAttribute("aria-live", isError ? "assertive" : "polite");
 
   const messageElement = document.createElement("span");
   messageElement.className = "status-message";
@@ -3405,6 +3410,7 @@ function renderShell() {
   elements.workspacePanel.classList.toggle("hidden", !authenticated);
   if (authenticated) updateUserIdentityUi();
   syncMobileSidebarAccessibility();
+  syncDocumentTitle();
 }
 
 function resetAuthenticationSessionState({ render = true } = {}) {
@@ -4746,8 +4752,45 @@ function getSearchDialogFocusableElements() {
   });
 }
 
+// Ctrl/Cmd+K can open search from anywhere, so closing it returns the caret to
+// where the person was working instead of always jumping to the sidebar.
+let searchDialogReturnFocus = null;
+
+function captureFocusReturnTarget() {
+  const element = document.activeElement;
+  if (!(element instanceof HTMLElement) || element === document.body) return null;
+  const selection = (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement)
+    && typeof element.selectionStart === "number"
+    ? { start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection }
+    : null;
+  return { element, selection };
+}
+
+function canRestoreFocusTo(element) {
+  return element instanceof HTMLElement
+    && element.isConnected
+    && !element.disabled
+    && !element.closest("[inert], .hidden, [aria-hidden='true']")
+    && element.getClientRects().length > 0;
+}
+
+function restoreCapturedFocus(target) {
+  if (!target || !canRestoreFocusTo(target.element)) return false;
+  target.element.focus({ preventScroll: true });
+  if (document.activeElement !== target.element) return false;
+  if (target.selection) {
+    try {
+      target.element.setSelectionRange(target.selection.start, target.selection.end, target.selection.direction ?? "none");
+    } catch {
+      // Some input types (such as email) do not expose a selection.
+    }
+  }
+  return true;
+}
+
 function openSearchDialog() {
   if (!state.user || state.searchDialogOpen) return;
+  searchDialogReturnFocus = captureFocusReturnTarget();
   closeMobileSidebar();
   state.searchDialogOpen = true;
   elements.searchLayer.classList.remove("hidden");
@@ -4779,7 +4822,13 @@ function closeSearchDialog({ restoreFocus = true } = {}) {
   syncWorkspaceShellInert();
   renderSearchDialog();
   syncMobileSidebarAccessibility();
-  if (restoreFocus && state.user) elements.sidebarSearchShortcut.focus();
+  const returnFocus = searchDialogReturnFocus;
+  searchDialogReturnFocus = null;
+  if (!restoreFocus || !state.user) return;
+  if (restoreCapturedFocus(returnFocus)) return;
+  // The sidebar is inert while collapsed on mobile; use its visible toggle instead.
+  if (canRestoreFocusTo(elements.sidebarSearchShortcut)) elements.sidebarSearchShortcut.focus();
+  else if (canRestoreFocusTo(elements.mobileSidebarToggle)) elements.mobileSidebarToggle.focus();
 }
 
 function getSearchResultButtons() {
@@ -18858,6 +18907,31 @@ function updatePageCoverPositionFromPointer(event) {
   setPageCoverPreviewPosition(x, y);
 }
 
+// The browser tab, history list, and bookmarks show the open item's name so
+// several BrainVault tabs stay distinguishable.
+function getDocumentTitleLabel() {
+  if (!state.authenticated || !state.user) return "";
+  if (state.workspaceView === "page" && state.selectedPage) {
+    const liveTitle = elements.pageTitle.value.trim();
+    return liveTitle || String(state.selectedPage.title ?? "").trim() || t("archive.untitled");
+  }
+  if (state.workspaceView === "collection") {
+    const collectionId = state.activeCollectionId;
+    const candidate = collectionId === defaultCollectionKey ? null : getPageSummaryById(collectionId);
+    const collection = isCollectionPage(candidate) ? candidate : null;
+    return String(collection ? collection.title : getDefaultCollectionName()).trim() || t("archive.untitled");
+  }
+  return t("workspace.home");
+}
+
+function syncDocumentTitle() {
+  // PDF export temporarily owns the title so the saved file gets a clean name.
+  if (document.body.classList.contains("pdf-export-mode")) return;
+  const label = getDocumentTitleLabel().replace(/\s+/g, " ").slice(0, 120);
+  const nextTitle = label ? `${label} - BrainVault` : "BrainVault";
+  if (document.title !== nextTitle) document.title = nextTitle;
+}
+
 function renderSelectedPage() {
   closeBlockContextMenu();
   closePageActionsMenu();
@@ -18891,6 +18965,7 @@ function renderSelectedPage() {
   elements.pageView.classList.toggle("hidden", !hasPage);
   renderSubpageIndex(hasPage ? page : null);
   syncWorkspaceNavigationSelection();
+  if (!hasPage) syncDocumentTitle();
 
   if (isCollection) {
     delete elements.blockList.dataset.pageId;
@@ -18912,6 +18987,7 @@ function renderSelectedPage() {
   elements.pageKicker.textContent = formatDate(page.updatedAt);
   renderIconValue(elements.pageIconButton, page.icon, "📄");
   elements.pageTitle.value = page.title;
+  syncDocumentTitle();
   renderPageComments();
   if (!elements.pageTitle.classList.contains("recovery-admission-pending")) {
     pageTitleLastDurableValue = page.title;
@@ -18999,6 +19075,7 @@ function syncPageTitleSummaryPresentation(pageId, title) {
   if (state.workspaceView === "collection" && state.activeCollectionId === pageId) {
     elements.collectionViewTitle.textContent = title;
   }
+  syncDocumentTitle();
 }
 
 function repositionRenderedNavigationItem(pageId) {
@@ -21877,6 +21954,45 @@ function getNavigationItemFromEvent(event) {
   return event.target.closest("[data-page-id], [data-collection-id]");
 }
 
+function getAbsoluteWorkspaceUrl(location) {
+  return `${window.location.origin}${window.location.pathname}${window.location.search}${serializeWorkspaceLocation(location)}`;
+}
+
+function copyTextWithSelectionFallback(text) {
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  field.style.pointerEvents = "none";
+  document.body.append(field);
+  field.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  field.remove();
+  return copied;
+}
+
+async function copyWorkspaceLink(location) {
+  const url = getAbsoluteWorkspaceUrl(location);
+  let copied = false;
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    } catch {
+      copied = false;
+    }
+  }
+  if (!copied) copied = copyTextWithSelectionFallback(url);
+  setStatus(t(copied ? "status.linkCopied" : "errors.linkCopyFailed"), !copied);
+  return copied;
+}
+
 function openWorkspaceItemInNewTab(item) {
   window.open(getWorkspaceItemUrl(item), "_blank", "noopener");
 }
@@ -22612,6 +22728,7 @@ elements.pageTitle.addEventListener("input", (event) => {
     return;
   }
   schedulePageTitleSave({ allowConflictPrompt: !event.isComposing });
+  syncDocumentTitle();
   updateCollaborationAwareness(elements.pageTitle);
   scheduleRemoteCollaborationCaretRender();
 });
@@ -22633,6 +22750,9 @@ elements.pageTitle.addEventListener("blur", () => {
   window.setTimeout(() => updateCollaborationAwareness(document.activeElement));
 });
 
+elements.pageTitle.addEventListener("keydown", (event) => {
+  void handlePageTitleKeydown(event);
+});
 elements.pageTitle.addEventListener("focus", () => updateCollaborationAwareness(elements.pageTitle));
 elements.pageTitle.addEventListener("keyup", () => updateCollaborationAwareness(elements.pageTitle));
 elements.pageTitle.addEventListener("mouseup", () => updateCollaborationAwareness(elements.pageTitle));
@@ -22697,6 +22817,12 @@ elements.pageVersionHistoryDialog.addEventListener("close", () => {
   state.pageVersionHistory.detailRequestId += 1;
   state.pageVersionHistory.resetting = false;
   state.pageVersionHistory.pageId = null;
+});
+
+elements.copyPageLinkButton.addEventListener("click", () => {
+  const pageId = state.selectedPage?.id;
+  closePageActionsMenu({ restoreFocus: true });
+  if (pageId) void copyWorkspaceLink({ view: "page", pageId });
 });
 
 elements.exportPdfButton.addEventListener("click", () => {
@@ -23659,6 +23785,32 @@ function focusAdjacentTextBlock(row, direction) {
   return false;
 }
 
+function focusFirstTextBlock() {
+  const firstRow = elements.blockList.querySelector(".editor-block-row");
+  if (!firstRow) return false;
+  const textarea = getBlockTextarea(firstRow);
+  if (textarea && !textarea.disabled && textarea.getClientRects().length) {
+    textarea.focus();
+    textarea.setSelectionRange(0, 0);
+    return true;
+  }
+  return focusAdjacentTextBlock(firstRow, 1);
+}
+
+// Above the first text block the caret continues into the page title.
+function focusPageTitleFromBody() {
+  const title = elements.pageTitle;
+  if (!title || title.disabled || !title.getClientRects().length) return false;
+  title.focus();
+  const end = title.value.length;
+  title.setSelectionRange(end, end);
+  return true;
+}
+
+function moveCaretOutOfBlock(row, direction) {
+  return focusAdjacentTextBlock(row, direction) || (direction < 0 && focusPageTitleFromBody());
+}
+
 function handleBlockCaretArrowKey(event, textarea, row) {
   const direction = event.key === "ArrowUp" ? -1 : 1;
   const start = textarea.selectionStart;
@@ -23666,7 +23818,7 @@ function handleBlockCaretArrowKey(event, textarea, row) {
   if (start !== end) return;
   const atEdge = direction < 0 ? start === 0 : end === textarea.value.length;
   if (atEdge) {
-    if (focusAdjacentTextBlock(row, direction)) event.preventDefault();
+    if (moveCaretOutOfBlock(row, direction)) event.preventDefault();
     return;
   }
   // Wrapped lines are invisible to the value, so let the browser move first and
@@ -23676,8 +23828,47 @@ function handleBlockCaretArrowKey(event, textarea, row) {
       document.activeElement === textarea
       && textarea.selectionStart === start
       && textarea.selectionEnd === end
-    ) focusAdjacentTextBlock(row, direction);
+    ) moveCaretOutOfBlock(row, direction);
   }, 0);
+}
+
+// Enter or ArrowDown in the title continues into the body, as in other block
+// editors. Enter reuses an empty first paragraph or opens one at the top.
+async function handlePageTitleKeydown(event) {
+  if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (event.key !== "Enter" && event.key !== "ArrowDown") return;
+  if (state.workspaceView !== "page" || !state.selectedPage) return;
+
+  if (event.key === "ArrowDown") {
+    if (focusFirstTextBlock()) event.preventDefault();
+    return;
+  }
+
+  event.preventDefault();
+  if (isPageReadOnly()) {
+    focusFirstTextBlock();
+    return;
+  }
+  const firstRow = elements.blockList.querySelector(".editor-block-row");
+  const firstTextarea = getBlockTextarea(firstRow);
+  if (
+    firstRow
+    && firstRow.dataset.blockType === "MARKDOWN"
+    && firstTextarea
+    && !firstTextarea.disabled
+    && firstTextarea.value === ""
+  ) {
+    firstTextarea.focus();
+    return;
+  }
+  try {
+    const created = firstRow
+      ? await insertBlockRelative(firstRow, "before", { announce: false })
+      : await appendBlock(null, { announce: false });
+    if (created?.block?.id) placeCaretInBlock(created.block.id, 0);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
 }
 
 const kanbanKeyboardMoves = Object.freeze({
@@ -24551,6 +24742,17 @@ elements.navigationContextMenu.addEventListener("click", async (event) => {
     }
     if (button.dataset.action === "archive-navigation-page") {
       await archiveNavigationPage();
+      return;
+    }
+    if (button.dataset.action === "copy-navigation-link") {
+      const target = state.activeNavigationMenuTarget;
+      if (!target) return;
+      closeNavigationContextMenu({ restoreFocus: true });
+      await copyWorkspaceLink(
+        target.kind === "collection"
+          ? { view: "collection", collectionId: target.id }
+          : { view: "page", pageId: target.id }
+      );
       return;
     }
     if (button.dataset.action === "delete-navigation-item") await deleteNavigationTarget();
