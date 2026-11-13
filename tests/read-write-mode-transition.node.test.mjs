@@ -88,6 +88,11 @@ function createHarness(
       calls.opened += 1;
     },
     setStatus(message, isError = false) { statuses.push({ message, isError }); },
+    // Mirrors app.js: mode changes are announced to assistive technology, and
+    // the non-persistent storage caveat is raised as a visible notice.
+    announcePageModeChange(mode) {
+      if (mode === pageModes.WRITE && !persistent) context.setStatus("status.sessionRecoveryStorageActive");
+    },
     t(key) { return key; }
   };
   vm.createContext(context);

@@ -1230,8 +1230,15 @@ button.page-view-path-segment:focus-visible {
   font-weight: 560;
 }
 
+/* The title is a one-row textarea so long titles wrap instead of being
+   clipped; script keeps its height matched to the content. */
 .page-title-input {
+  display: block;
   min-height: auto;
+  overflow: hidden;
+  resize: none;
+  overflow-wrap: anywhere;
+  field-sizing: content;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1733,6 +1740,12 @@ kbd {
   display: grid;
   gap: 0;
   margin-bottom: 0.65rem;
+}
+
+/* Each block's type/date popover floats above the row. Give the first row room
+   so its popover does not butt against the page toolbar (Share/Done/Saved). */
+.page-view:not(.is-read-only) .block-list {
+  padding-top: 0.75rem;
 }
 
 .block-row-editor {
@@ -3260,6 +3273,17 @@ body.is-kanban-column-dragging {
   gap: 0.24rem;
 }
 
+.kanban-card-read-icon {
+  display: none;
+}
+
+.page-view.is-read-only .kanban-card-read-icon:not(:empty) {
+  display: block;
+  padding: 0.15rem 0.1rem 0;
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
 .kanban-card-drag-handle {
   position: absolute;
   top: 0.58rem;
@@ -3287,6 +3311,11 @@ body.is-kanban-column-dragging {
   background: var(--hover);
   color: var(--muted);
   outline: none;
+}
+
+/* Keyboard focus needs more than the hover tint to be visible. */
+.kanban-card-drag-handle:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus);
 }
 
 .kanban-card-style-menu {
@@ -4495,6 +4524,18 @@ body.is-kanban-column-dragging {
 
 .page-view.is-read-only .editor-block-row:hover {
   background: transparent;
+}
+
+/* In read mode a property value is not a control: drop the dropdown arrow and
+   the browser's dimmed disabled text so it reads as a plain value chip. */
+.page-view.is-read-only .database-value-select:disabled,
+.page-view.is-read-only .gantt-status-select:disabled {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: none;
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+  cursor: default;
 }
 
 .page-view.is-read-only .editor-block-row:hover,
@@ -13181,6 +13222,10 @@ button.danger {
   outline: none;
 }
 
+.ai-chat-remove-turn:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
 .ai-chat-message {
   display: grid;
   gap: 0.38rem;
@@ -18765,6 +18810,12 @@ html[data-theme="dark"] {
     height: 2.75rem;
   }
 
+  /* Reserve room for the 2.75rem drawer close button so it no longer covers
+     the workspace switcher's chevron. */
+  .app-mode .account-settings-trigger {
+    padding-right: 3.5rem;
+  }
+
   .page-toolbar .button-row button,
   .page-mode-badge,
   .collaboration-indicator {
@@ -18862,6 +18913,58 @@ html[data-theme="dark"] {
 
   body.app-mode.desktop-sidebar-collapsed .desktop-sidebar-toggle svg {
     transform: rotate(180deg);
+  }
+}
+
+/* Sidebar width handle: drag, arrow keys, or double-click to reset. */
+.sidebar-resize-handle {
+  display: none;
+}
+
+@media (min-width: 761px) {
+  body.app-mode:not(.desktop-sidebar-collapsed) .sidebar-resize-handle {
+    position: fixed;
+    z-index: 95;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--desktop-sidebar-width) - 3px);
+    display: block;
+    width: 6px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .sidebar-resize-handle::after {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 2px;
+    background: transparent;
+    content: "";
+    transition: background-color 120ms ease;
+  }
+
+  .sidebar-resize-handle:hover::after,
+  .sidebar-resize-handle:focus-visible::after,
+  body.sidebar-resizing .sidebar-resize-handle::after {
+    background: var(--focus);
+  }
+
+  .sidebar-resize-handle:focus-visible {
+    outline: none;
+  }
+
+  body.sidebar-resizing,
+  body.sidebar-resizing * {
+    cursor: col-resize !important;
+    user-select: none;
+  }
+
+  body.sidebar-resizing .shell,
+  body.sidebar-resizing .sidebar,
+  body.sidebar-resizing .desktop-sidebar-toggle {
+    transition: none !important;
   }
 }
 

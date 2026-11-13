@@ -16,7 +16,7 @@ export const translationCatalogs = {
   en: {
     meta: { description: "BrainVault - a notes app built with Markdown blocks" },
     language: { label: "Language" },
-    sidebar: { aria: "BrainVault sidebar", homeAria: "BrainVault home", openAria: "Open navigation", closeAria: "Close navigation", skipToContent: "Skip to main content" },
+    sidebar: { aria: "BrainVault sidebar", homeAria: "BrainVault home", openAria: "Open navigation", closeAria: "Close navigation", skipToContent: "Skip to main content", resizeAria: "Resize sidebar", resizeTitle: "Drag to resize · Double-click to reset" },
     brand: { eyebrow: "Private workspace" },
     auth: {
       loginTitle: "Log in",
@@ -1106,7 +1106,7 @@ export const translationCatalogs = {
   ja: {
     meta: { description: "BrainVault - Markdownブロックを使ったノートアプリ" },
     language: { label: "言語" },
-    sidebar: { aria: "BrainVault サイドバー", homeAria: "BrainVault ホーム", openAria: "ナビゲーションを開く", closeAria: "ナビゲーションを閉じる", skipToContent: "メインコンテンツへ移動" },
+    sidebar: { aria: "BrainVault サイドバー", homeAria: "BrainVault ホーム", openAria: "ナビゲーションを開く", closeAria: "ナビゲーションを閉じる", skipToContent: "メインコンテンツへ移動", resizeAria: "サイドバーの幅を調整", resizeTitle: "ドラッグで幅を調整 · ダブルクリックで元に戻す" },
     brand: { eyebrow: "プライベートワークスペース" },
     auth: {
       loginTitle: "ログイン",
@@ -1534,7 +1534,7 @@ export const translationCatalogs = {
   ko: {
     meta: { description: "BrainVault - 마크다운 블록 기반 노트앱" },
     language: { label: "언어" },
-    sidebar: { aria: "BrainVault 사이드바", homeAria: "BrainVault 홈", openAria: "탐색 메뉴 열기", closeAria: "탐색 메뉴 닫기", skipToContent: "본문으로 건너뛰기" },
+    sidebar: { aria: "BrainVault 사이드바", homeAria: "BrainVault 홈", openAria: "탐색 메뉴 열기", closeAria: "탐색 메뉴 닫기", skipToContent: "본문으로 건너뛰기", resizeAria: "사이드바 너비 조절", resizeTitle: "드래그하여 너비 조절 · 더블클릭하면 원래대로" },
     brand: { eyebrow: "개인 워크스페이스" },
     auth: {
       loginTitle: "로그인",
@@ -2406,7 +2406,7 @@ export const translationCatalogs = {
   fr: {
     meta: { description: "BrainVault - une application de notes basée sur des blocs Markdown" },
     language: { label: "Langue" },
-    sidebar: { aria: "Barre latérale BrainVault", homeAria: "Accueil BrainVault", openAria: "Ouvrir la navigation", closeAria: "Fermer la navigation", skipToContent: "Aller au contenu principal" },
+    sidebar: { aria: "Barre latérale BrainVault", homeAria: "Accueil BrainVault", openAria: "Ouvrir la navigation", closeAria: "Fermer la navigation", skipToContent: "Aller au contenu principal", resizeAria: "Redimensionner la barre latérale", resizeTitle: "Faites glisser pour redimensionner · Double-cliquez pour réinitialiser" },
     brand: { eyebrow: "Espace de travail privé" },
     auth: {
       loginTitle: "Se connecter",
@@ -2834,7 +2834,7 @@ export const translationCatalogs = {
   de: {
     meta: { description: "BrainVault – eine Notiz-App auf Basis von Markdown-Blöcken" },
     language: { label: "Sprache" },
-    sidebar: { aria: "BrainVault-Seitenleiste", homeAria: "BrainVault-Startseite", openAria: "Navigation öffnen", closeAria: "Navigation schließen", skipToContent: "Zum Hauptinhalt springen" },
+    sidebar: { aria: "BrainVault-Seitenleiste", homeAria: "BrainVault-Startseite", openAria: "Navigation öffnen", closeAria: "Navigation schließen", skipToContent: "Zum Hauptinhalt springen", resizeAria: "Seitenleistenbreite ändern", resizeTitle: "Zum Ändern ziehen · Doppelklick zum Zurücksetzen" },
     brand: { eyebrow: "Privater Arbeitsbereich" },
     auth: {
       loginTitle: "Anmelden",
@@ -3262,7 +3262,7 @@ export const translationCatalogs = {
   es: {
     meta: { description: "BrainVault: una aplicación de notas basada en bloques Markdown" },
     language: { label: "Idioma" },
-    sidebar: { aria: "Barra lateral de BrainVault", homeAria: "Inicio de BrainVault", openAria: "Abrir la navegación", closeAria: "Cerrar la navegación", skipToContent: "Saltar al contenido principal" },
+    sidebar: { aria: "Barra lateral de BrainVault", homeAria: "Inicio de BrainVault", openAria: "Abrir la navegación", closeAria: "Cerrar la navegación", skipToContent: "Saltar al contenido principal", resizeAria: "Cambiar el ancho de la barra lateral", resizeTitle: "Arrastra para cambiar el ancho · Doble clic para restablecer" },
     brand: { eyebrow: "Espacio de trabajo privado" },
     auth: {
       loginTitle: "Iniciar sesión",
@@ -3690,7 +3690,7 @@ export const translationCatalogs = {
   pt: {
     meta: { description: "BrainVault — um aplicativo de notas baseado em blocos Markdown" },
     language: { label: "Idioma" },
-    sidebar: { aria: "Barra lateral do BrainVault", homeAria: "Início do BrainVault", openAria: "Abrir a navegação", closeAria: "Fechar a navegação", skipToContent: "Ir para o conteúdo principal" },
+    sidebar: { aria: "Barra lateral do BrainVault", homeAria: "Início do BrainVault", openAria: "Abrir a navegação", closeAria: "Fechar a navegação", skipToContent: "Ir para o conteúdo principal", resizeAria: "Redimensionar a barra lateral", resizeTitle: "Arraste para redimensionar · Clique duas vezes para redefinir" },
     brand: { eyebrow: "Espaço de trabalho privado" },
     auth: {
       loginTitle: "Entrar",
@@ -6692,10 +6692,24 @@ function getPath(source, key) {
   return key.split(".").reduce((value, segment) => value?.[segment], source);
 }
 
+// Shortcut hints are written once as "Ctrl/⌘"; show only the key this
+// device actually uses ("⌘" on Apple platforms, "Ctrl" elsewhere).
+const primaryModifierLabel = (() => {
+  const navigatorObject = globalThis.navigator;
+  const platform = navigatorObject?.userAgentData?.platform ?? navigatorObject?.platform ?? navigatorObject?.userAgent ?? "";
+  return /mac|iphone|ipad|ipod/i.test(String(platform)) ? "⌘" : "Ctrl";
+})();
+
+export function formatShortcutModifiers(text) {
+  return typeof text === "string" ? text.replaceAll("Ctrl/⌘", primaryModifierLabel) : text;
+}
+
 export function t(key, variables = {}) {
   const value = getPath(translationCatalogs[currentLanguage], key) ?? getPath(translationCatalogs.en, key) ?? key;
   if (typeof value !== "string") return key;
-  return value.replace(/\{(\w+)\}/g, (match, name) => (variables[name] === undefined ? match : String(variables[name])));
+  return formatShortcutModifiers(
+    value.replace(/\{(\w+)\}/g, (match, name) => (variables[name] === undefined ? match : String(variables[name])))
+  );
 }
 
 export function getLanguage() {
@@ -6837,6 +6851,12 @@ export function applyDocumentTranslations(root = globalThis.document) {
   });
   root.querySelectorAll("[data-i18n-content]").forEach((element) => {
     element.setAttribute("content", t(element.dataset.i18nContent));
+  });
+  // Untranslated shortcut chips (e.g. the sidebar's "Ctrl/⌘ K") still name one key.
+  root.querySelectorAll("kbd:not([data-i18n])").forEach((element) => {
+    if (element.children.length === 0 && element.textContent.includes("Ctrl/⌘")) {
+      element.textContent = formatShortcutModifiers(element.textContent);
+    }
   });
 
   if (typeof document !== "undefined") {

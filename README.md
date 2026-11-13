@@ -13,7 +13,7 @@ BrainVault is a self-hosted block-based notes app built with Node.js, Express, T
 - Deleting a text block offers an undo action instead of a confirmation prompt
 - Rich text, Markdown, syntax-highlighted code, callouts, bookmarks, videos, attachments, AI chat blocks, formulas, and Mermaid diagrams
 - Pages open in read mode by default and switch to editing with an explicit **Edit** button, so a stray click or keystroke cannot change a note; accounts that prefer it can open pages in write mode from **Settings → Preferences**. An autosave indicator, `Ctrl/Cmd + S`, and browser Back/Forward navigation are supported
-- Page collections that can be renamed and reordered by dragging their sidebar rows, nested pages, custom icons and covers, one-click archiving with an undo action and an archive view for restoring pages, permanent deletion that states how many nested pages it removes, version history, PDF export, and ZIP backup/restore
+- Page collections that can be renamed and reordered by dragging their sidebar rows, a sidebar that can be resized by dragging its edge, nested pages, custom icons and covers, one-click archiving with an undo action and an archive view for restoring pages, permanent deletion that states how many nested pages it removes, version history, PDF export, and ZIP backup/restore
 - Light, dark, and match-system themes
 - Page sharing and collection sharing with Yjs-based live collaboration, plus page comments that load new replies automatically while the comment panel is open
 - Crash-recovery support for browser drafts and collaborative edits, with a **Keep my version** action for resolving a recovered draft before you continue typing

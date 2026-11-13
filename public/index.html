@@ -35,6 +35,7 @@
   <body class="auth-mode boot-mode">
     <a class="skip-link" href="#main-content" data-i18n="sidebar.skipToContent">Skip to main content</a>
     <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div id="page-mode-announcer" class="visually-hidden" aria-live="polite"></div>
 
     <div class="shell">
       <aside id="app-sidebar" class="sidebar" aria-label="BrainVault sidebar" data-i18n-aria-label="sidebar.aria" tabindex="-1">
@@ -239,6 +240,19 @@
         </section>
       </aside>
 
+      <div
+        id="sidebar-resize-handle"
+        class="sidebar-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-controls="app-sidebar"
+        aria-label="Resize sidebar"
+        title="Drag to resize · Double-click to reset"
+        data-i18n-aria-label="sidebar.resizeAria"
+        data-i18n-title="sidebar.resizeTitle"
+        tabindex="0"
+      ></div>
+
       <button
         id="desktop-sidebar-toggle"
         class="desktop-sidebar-toggle"
@@ -409,7 +423,7 @@
                 data-i18n-title="emoji.changePage"
               >📄</button>
               <div class="page-title-row">
-                <input id="page-title" class="page-title-input" type="text" maxlength="160" aria-label="Page title" data-i18n-aria-label="page.titleAria" />
+                <textarea id="page-title" class="page-title-input" rows="1" maxlength="160" aria-label="Page title" data-i18n-aria-label="page.titleAria"></textarea>
               </div>
               <div id="page-kicker" class="kicker page-updated-meta"></div>
             </div>
@@ -1398,7 +1412,7 @@
       >
         <span id="page-mode-toggle-icon" class="page-mode-toggle-icon" aria-hidden="true">◉</span>
         <span class="page-mode-toggle-copy">
-          <strong id="page-mode-toggle-label" data-i18n="page.readMode">Read mode</strong>
+          <strong id="page-mode-toggle-label" data-i18n="page.writeMode">Write mode</strong>
           <small id="page-mode-toggle-description" data-i18n="page.readModeDescription">This page is read-only.</small>
         </span>
         <span class="page-mode-switch" aria-hidden="true"><span></span></span>

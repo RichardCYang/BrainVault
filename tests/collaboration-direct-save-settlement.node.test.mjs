@@ -93,6 +93,7 @@ function harness() {
     },
     handleDurableRecoveryStorageWriteError: (error) => recoveryFailures.push(error),
     updateInputValuePreservingSelection: (input, value) => { input.value = value; },
+    syncPageTitleHeight: () => {},
     getRejectedLocalMutationMessage: (error) => error.message,
     recordBlockEditorHistory: (_target, value) => histories.push({ kind: "block", value: value.markdown }),
     recordPageTitleEditorHistory: (value) => histories.push({ kind: "title", value }),

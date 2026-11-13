@@ -1235,6 +1235,7 @@ const elements = {
   mobileSidebarClose: $("#mobile-sidebar-close"),
   mobileSidebarBackdrop: $("#mobile-sidebar-backdrop"),
   desktopSidebarToggle: $("#desktop-sidebar-toggle"),
+  sidebarResizeHandle: $("#sidebar-resize-handle"),
   languageSelect: $("#language-select"),
   themeSelect: $("#theme-select"),
   defaultPageModeSelect: $("#default-page-mode-select"),
@@ -1395,6 +1396,7 @@ const elements = {
   pageActionsButton: $("#page-actions-button"),
   pageActionsMenu: $("#page-actions-menu"),
   pageModeToggle: $("#page-mode-toggle"),
+  pageModeAnnouncer: $("#page-mode-announcer"),
   pageModeToggleIcon: $("#page-mode-toggle-icon"),
   pageModeToggleLabel: $("#page-mode-toggle-label"),
   pageModeToggleDescription: $("#page-mode-toggle-description"),
@@ -6815,6 +6817,8 @@ function renderDocumentNode(page, groups, depth = 0, refreshOrder = false) {
   const label = document.createElement("span");
   label.className = "doc-label";
   label.textContent = page.title;
+  // Names are truncated with an ellipsis; the tooltip shows the full title.
+  button.title = page.title;
 
   let toggleButton = null;
   if (children.length && childrenId) {
@@ -7403,6 +7407,40 @@ async function drainRecoveryStorageFailure() {
   return recoveryStorageFailureDrainPromise;
 }
 
+// The Edit/Done button already shows the mode visually, so a mode change is
+// only spoken to assistive technology instead of raising a toast every time.
+function announcePageModeChange(mode) {
+  const announcer = elements.pageModeAnnouncer;
+  if (announcer) {
+    announcer.textContent = "";
+    const key = mode === pageModes.READ ? "status.readModeEnabled" : "status.writeModeEnabled";
+    window.setTimeout(() => { announcer.textContent = t(key); }, 50);
+  }
+  if (mode === pageModes.WRITE && !recoveryStoragePersistence.isPersistent()) {
+    showSessionRecoveryStorageNoticeOnce();
+  }
+}
+
+// Most browsers decline persistent storage for ordinary sites, so this caveat
+// would otherwise appear on every switch to editing. Show it once per tab.
+const sessionRecoveryNoticeKey = "brainvault.sessionRecoveryNoticeShown";
+let sessionRecoveryNoticeShown = false;
+
+function showSessionRecoveryStorageNoticeOnce() {
+  if (sessionRecoveryNoticeShown) return;
+  try {
+    if (window.sessionStorage.getItem(sessionRecoveryNoticeKey) === "1") {
+      sessionRecoveryNoticeShown = true;
+      return;
+    }
+    window.sessionStorage.setItem(sessionRecoveryNoticeKey, "1");
+  } catch {
+    // Storage may be blocked; the in-memory flag still limits repeats.
+  }
+  sessionRecoveryNoticeShown = true;
+  setStatus(t("status.sessionRecoveryStorageActive"));
+}
+
 async function handleRecoveryStoragePersistenceChange(nextState) {
   // Persistent storage protects browser recovery records from eviction, but it is
   // not a prerequisite for a strict IndexedDB transaction. Private/incognito
@@ -7415,7 +7453,7 @@ async function handleRecoveryStoragePersistenceChange(nextState) {
     && isRecoveryStorageWritable()
     && state.user
   ) {
-    setStatus(t("status.sessionRecoveryStorageActive"));
+    showSessionRecoveryStorageNoticeOnce();
   }
 }
 
@@ -7981,7 +8019,9 @@ function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
   const readOnly = isPageReadOnly();
   const interactionLocked = isPageInteractionLocked();
   const controlsReadOnly = readOnly || interactionLocked;
-  const modeLabelKey = readOnly ? "page.readMode" : "page.writeMode";
+  // The menu switch shows whether editing is on, so its label always names
+  // write mode; "Read mode" beside an off switch read as the opposite state.
+  const modeLabelKey = "page.writeMode";
   const modeDescriptionKey = readOnly ? "page.readModeDescription" : "page.writeModeDescription";
   const manager = canManagePage();
   const canEdit = canEditPage();
@@ -8904,11 +8944,7 @@ async function setPageMode(nextMode, { announce = true } = {}) {
   // effective UI remained read-only until writable recovery storage was ready.
   if (state.pageMode === normalizedMode) {
     syncPageModeUi();
-    if (announce && normalizedMode === pageModes.WRITE) {
-      setStatus(t(recoveryStoragePersistence.isPersistent()
-        ? "status.writeModeEnabled"
-        : "status.sessionRecoveryStorageActive"));
-    }
+    if (announce && normalizedMode === pageModes.WRITE) announcePageModeChange(normalizedMode);
     return;
   }
 
@@ -8942,14 +8978,7 @@ async function setPageMode(nextMode, { announce = true } = {}) {
       if (!isPageModeIntentCurrent()) return;
     }
 
-    if (announce && isPageModeIntentCurrent()) {
-      const statusKey = normalizedMode === pageModes.READ
-        ? "status.readModeEnabled"
-        : recoveryStoragePersistence.isPersistent()
-          ? "status.writeModeEnabled"
-          : "status.sessionRecoveryStorageActive";
-      setStatus(t(statusKey));
-    }
+    if (announce && isPageModeIntentCurrent()) announcePageModeChange(normalizedMode);
   } finally {
     state.pageModeChanging = false;
     syncPageModeUi();
@@ -11267,6 +11296,20 @@ function updateInputValuePreservingSelection(input, value) {
   if (active && Number.isInteger(start) && Number.isInteger(end)) {
     input.setSelectionRange(Math.min(start, value.length), Math.min(end, value.length));
   }
+  if (input === elements.pageTitle) syncPageTitleHeight();
+}
+
+// The page title wraps like a heading; keep its textarea as tall as its text.
+function syncPageTitleHeight() {
+  autoGrowTextarea(elements.pageTitle);
+}
+
+// A title is a single line of text. Newlines arrive only through paste or drop
+// (Enter is handled separately), so fold them into spaces.
+function normalizePageTitleLineBreaks() {
+  const title = elements.pageTitle;
+  if (!/[\r\n]/.test(title.value)) return;
+  updateInputValuePreservingSelection(title, title.value.replace(/\s*[\r\n]+\s*/g, " "));
 }
 
 function updatePageCollaborationSummary(pageId, collaboration) {
@@ -13286,7 +13329,38 @@ function updateBlockInState(updatedBlock, blocks = state.selectedPage?.blocks ??
   return false;
 }
 
+// A textarea's content height depends on its width. Entering write mode,
+// toggling the sidebar or resizing the window changes widths without an input
+// event, which used to leave rows clipped, so re-fit whenever a width changes.
+const autoGrowObservedWidths = new WeakMap();
+const autoGrowResizeObserver = typeof ResizeObserver === "function"
+  ? new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const textarea = entry.target;
+      if (!textarea.isConnected) {
+        // Removal reports a zero size; stop observing so old rows can be freed.
+        autoGrowResizeObserver.unobserve(textarea);
+        autoGrowObservedWidths.delete(textarea);
+        continue;
+      }
+      const width = entry.contentRect.width;
+      if (autoGrowObservedWidths.get(textarea) === width) continue;
+      autoGrowObservedWidths.set(textarea, width);
+      if (width > 0) fitTextareaHeight(textarea);
+    }
+  })
+  : null;
+
 function autoGrowTextarea(textarea) {
+  if (!textarea) return;
+  if (autoGrowResizeObserver && textarea.isConnected && !autoGrowObservedWidths.has(textarea)) {
+    autoGrowObservedWidths.set(textarea, -1);
+    autoGrowResizeObserver.observe(textarea);
+  }
+  fitTextareaHeight(textarea);
+}
+
+function fitTextareaHeight(textarea) {
   textarea.style.height = "auto";
   const isPlainTextBlock = Boolean(
     textarea.classList.contains("block-row-input")
@@ -13666,7 +13740,13 @@ function createKanbanEditor(row, boardValue) {
       );
       deleteCard.classList.add("kanban-card-delete");
 
-      cardTop.append(dragHandle, styleMenu, cardTitle, deleteCard);
+      // The icon picker is hidden in read mode; this keeps the chosen icon visible.
+      const readIcon = document.createElement("span");
+      readIcon.className = "kanban-card-read-icon";
+      readIcon.setAttribute("aria-hidden", "true");
+      readIcon.textContent = card.icon || "";
+
+      cardTop.append(dragHandle, styleMenu, readIcon, cardTitle, deleteCard);
 
       const description = document.createElement("textarea");
       description.className = "kanban-card-description";
@@ -19064,6 +19144,7 @@ function renderSelectedPage() {
   elements.pageKicker.textContent = formatDate(page.updatedAt);
   renderIconValue(elements.pageIconButton, page.icon, "📄");
   elements.pageTitle.value = page.title;
+  syncPageTitleHeight();
   syncDocumentTitle();
   renderPageComments();
   if (!elements.pageTitle.classList.contains("recovery-admission-pending")) {
@@ -19114,6 +19195,7 @@ function syncPageTitleSummaryPresentation(pageId, title) {
   const pageEntry = navigationPageRenderEntries.get(pageId);
   if (pageEntry) {
     pageEntry.label.textContent = title;
+    pageEntry.button.title = title;
     if (pageEntry.toggleButton) {
       pageEntry.toggleButton.dataset.pageChildrenToggleTitle = title;
       const expanded = pageEntry.toggleButton.getAttribute("aria-expanded") === "true";
@@ -19284,6 +19366,7 @@ async function savePageTitleNow({
     if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
     const previousTitle = state.selectedPage.title ?? "";
     elements.pageTitle.value = title;
+    syncPageTitleHeight();
     let mutation;
     try {
       mutation = session.setTitle(title);
@@ -19313,6 +19396,7 @@ async function savePageTitleNow({
         handleDurableRecoveryStorageWriteError(error, { operation: "collaboration-title-recovery" });
       } else {
         elements.pageTitle.value = state.selectedPage?.title ?? previousTitle;
+        syncPageTitleHeight();
       }
       setStatus(getRejectedLocalMutationMessage(error), true);
       syncBeforeUnloadProtection();
@@ -20716,6 +20800,98 @@ elements.sidebarSettingsShortcut.addEventListener("click", () => openAccountSett
 elements.mobileHomeBrandButton.addEventListener("click", openHomeFromBrand);
 elements.mobileSidebarToggle.addEventListener("click", toggleMobileSidebar);
 elements.desktopSidebarToggle.addEventListener("click", toggleDesktopSidebar);
+
+// Long page names are truncated in a fixed-width sidebar, so the width can be
+// dragged (or set with the arrow keys) and is remembered in this browser.
+const sidebarWidthStorageKey = "brainvault.sidebarWidth";
+const sidebarWidthDefault = 240;
+const sidebarWidthMin = 200;
+const sidebarWidthMax = 480;
+const sidebarWidthKeyboardStep = 16;
+
+function clampSidebarWidth(width) {
+  const viewportMax = Math.max(sidebarWidthMin, Math.floor(window.innerWidth * 0.5));
+  return Math.round(Math.min(Math.max(width, sidebarWidthMin), sidebarWidthMax, viewportMax));
+}
+
+function getSidebarWidth() {
+  const value = Number.parseFloat(document.body.style.getPropertyValue("--desktop-sidebar-width"));
+  return Number.isFinite(value) ? value : sidebarWidthDefault;
+}
+
+function applySidebarWidth(width, { persist = false } = {}) {
+  const handle = elements.sidebarResizeHandle;
+  if (width === null) {
+    document.body.style.removeProperty("--desktop-sidebar-width");
+  } else {
+    document.body.style.setProperty("--desktop-sidebar-width", `${clampSidebarWidth(width)}px`);
+  }
+  const current = getSidebarWidth();
+  handle?.setAttribute("aria-valuemin", String(sidebarWidthMin));
+  handle?.setAttribute("aria-valuemax", String(sidebarWidthMax));
+  handle?.setAttribute("aria-valuenow", String(current));
+  if (!persist) return;
+  try {
+    if (width === null) window.localStorage.removeItem(sidebarWidthStorageKey);
+    else window.localStorage.setItem(sidebarWidthStorageKey, String(current));
+  } catch {
+    // Storage can be unavailable; the width still applies for this visit.
+  }
+}
+
+function restoreSidebarWidth() {
+  let stored = null;
+  try {
+    stored = Number.parseFloat(window.localStorage.getItem(sidebarWidthStorageKey) ?? "");
+  } catch {
+    stored = null;
+  }
+  applySidebarWidth(Number.isFinite(stored) ? stored : null);
+}
+
+if (elements.sidebarResizeHandle) {
+  const handle = elements.sidebarResizeHandle;
+  restoreSidebarWidth();
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add("sidebar-resizing");
+    const finish = () => {
+      document.body.classList.remove("sidebar-resizing");
+      handle.removeEventListener("pointermove", move);
+      applySidebarWidth(getSidebarWidth(), { persist: true });
+    };
+    const move = (moveEvent) => applySidebarWidth(moveEvent.clientX);
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", finish, { once: true });
+    handle.addEventListener("pointercancel", finish, { once: true });
+  });
+
+  handle.addEventListener("dblclick", () => applySidebarWidth(null, { persist: true }));
+
+  handle.addEventListener("keydown", (event) => {
+    let next = null;
+    if (event.key === "ArrowLeft") next = getSidebarWidth() - sidebarWidthKeyboardStep;
+    else if (event.key === "ArrowRight") next = getSidebarWidth() + sidebarWidthKeyboardStep;
+    else if (event.key === "Home") next = sidebarWidthMin;
+    else if (event.key === "End") next = sidebarWidthMax;
+    else if (event.key === "Enter") {
+      event.preventDefault();
+      applySidebarWidth(null, { persist: true });
+      return;
+    }
+    if (next === null) return;
+    event.preventDefault();
+    applySidebarWidth(next, { persist: true });
+  });
+
+  // Keep a remembered width inside the viewport when the window shrinks.
+  window.addEventListener("resize", () => {
+    if (document.body.style.getPropertyValue("--desktop-sidebar-width")) applySidebarWidth(getSidebarWidth());
+  });
+}
 elements.mobileSidebarClose.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
 elements.mobileSidebarBackdrop.addEventListener("click", () => closeMobileSidebar({ restoreFocus: true }));
 document.addEventListener("keydown", handleMobileSidebarKeydown);
@@ -22882,6 +23058,11 @@ elements.pageTitle.addEventListener("beforeinput", (event) => {
     event.preventDefault();
     return;
   }
+  // The title wraps visually but stays one line; Enter moves into the body.
+  if (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph") {
+    event.preventDefault();
+    return;
+  }
   const direction = getEditorHistoryInputDirection(event);
   if (!direction) return;
   if (performEditorHistoryCommand(direction, event.target)) event.preventDefault();
@@ -22899,6 +23080,8 @@ elements.pageTitle.addEventListener("input", (event) => {
     );
     return;
   }
+  if (!event.isComposing) normalizePageTitleLineBreaks();
+  syncPageTitleHeight();
   schedulePageTitleSave({ allowConflictPrompt: !event.isComposing });
   syncDocumentTitle();
   updateCollaborationAwareness(elements.pageTitle);
@@ -22910,6 +23093,7 @@ elements.pageTitle.addEventListener("blur", () => {
   const wasBlank = !elements.pageTitle.value.trim();
   if (wasBlank) {
     elements.pageTitle.value = t("newDocumentTitle");
+    syncPageTitleHeight();
     // Direct-mode blank input intentionally skipped draft/autosave work while the
     // field was focused. Blur is the explicit commit boundary, so establish the
     // normal durable draft + conflict checks before issuing the save.
@@ -23654,6 +23838,8 @@ elements.blockList.addEventListener("input", (event) => {
     if (kanbanField.classList.contains("kanban-card-emoji-input")) {
       const preview = kanbanField.closest(".kanban-card-style-menu")?.querySelector(".kanban-card-icon-preview");
       if (preview) preview.textContent = normalizeKanbanIcon(kanbanField.value) || "▦";
+      const readIcon = kanbanField.closest(".kanban-card")?.querySelector(".kanban-card-read-icon");
+      if (readIcon) readIcon.textContent = normalizeKanbanIcon(kanbanField.value);
     }
     const row = getBlockRow(kanbanField);
     if (row) scheduleBlockSave(row, { allowConflictPrompt: !event.isComposing });
@@ -24012,6 +24198,11 @@ async function handlePageTitleKeydown(event) {
   if (state.workspaceView !== "page" || !state.selectedPage) return;
 
   if (event.key === "ArrowDown") {
+    // A wrapped title has several visual lines; only leave it from the last.
+    const title = elements.pageTitle;
+    const lineHeight = Number.parseFloat(getComputedStyle(title).lineHeight) || 0;
+    const wraps = lineHeight > 0 && title.scrollHeight > lineHeight * 1.5;
+    if (wraps && title.selectionEnd < title.value.length) return;
     if (focusFirstTextBlock()) event.preventDefault();
     return;
   }

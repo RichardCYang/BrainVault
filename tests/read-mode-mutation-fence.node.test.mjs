@@ -90,7 +90,8 @@ function loadCreateAndModeHarness() {
     },
     renderSelectedPage() {},
     async openPage() {},
-    setStatus() {}
+    setStatus() {},
+    announcePageModeChange() {}
   };
 
   vm.createContext(context);
