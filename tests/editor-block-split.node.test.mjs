@@ -47,6 +47,11 @@ function createSplitHarness({ markdown = "hello world", type = "MARKDOWN", laten
   ctx.splittableTextBlockTypes = new Set(["MARKDOWN", "HEADING_1", "TODO", "QUOTE"]);
   ctx.getBlockTextarea = (row) => row?.textarea ?? null;
   ctx.autoGrowTextarea = () => {};
+  // Structural undo is covered by editor-structural-history; here a split only
+  // has to be recorded once, after it has settled.
+  ctx.recordedSplits = [];
+  ctx.withBlockEditorHistorySuppressed = (task) => task();
+  ctx.recordBlockSplitEditorHistory = (upperId, lowerId) => ctx.recordedSplits.push([upperId, lowerId]);
   // Typing marks the row dirty and its payload follows the textarea.
   ctx.scheduleBlockSave = (row) => {
     row.payload.markdown = row.textarea.value;
@@ -100,6 +105,8 @@ test("Enter in the middle moves the text after the caret into the new block", as
   assert.equal(document.activeElement, createdRow(ctx).textarea);
   assert.equal(createdRow(ctx).textarea.selectionStart, 0);
   assert.equal(ctx.metrics.statuses.length, 0, "a routine Enter raises no notice");
+  const createdId = [...ctx.rows.keys()].find((id) => id !== "a");
+  assert.deepEqual(ctx.recordedSplits, [["a", createdId]], "the settled split is one undo step");
 });
 
 test("Enter at the end still creates one empty block with a single request", async () => {
@@ -181,7 +188,8 @@ test("Enter in a multi-line editor types a newline; Ctrl/Cmd+Enter leaves it", (
 });
 
 test("keyboard reordering reuses the fenced drag commit and a numeric pointer id", () => {
-  const move = functionSource("moveBlockRowByStep");
+  assert.match(functionSource("moveBlockRowByStep"), /return moveBlockRowToIndex\(row, availability\.index \+ step, \{ keepSelection \}\)/);
+  const move = functionSource("moveBlockRowToIndex");
   assert.match(move, /await finishBlockDrag\(\{ pointerId, preventDefault\(\) \{\} \}\)/);
   assert.match(appSource, /const keyboardBlockMovePointerId = -2;/);
   const navigationMove = functionSource("moveNavigationItemByStep");
@@ -189,7 +197,7 @@ test("keyboard reordering reuses the fenced drag commit and a numeric pointer id
 });
 
 test("joining blocks saves the combined text before the lower block is removed", () => {
-  const merge = functionSource("mergeBlockIntoPrevious");
+  const merge = functionSource("mergeBlockRowsIntoPrevious");
   const saveTarget = merge.indexOf("await saveBlockRow(target");
   const empty = merge.indexOf('replaceBlockTextareaValue(row, textarea, "")');
   const remove = merge.indexOf("await deleteEmptyBlock(row)");

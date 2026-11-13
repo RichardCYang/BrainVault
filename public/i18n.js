@@ -6889,6 +6889,53 @@ for (const [language, addition] of Object.entries(uiStandardsTranslationAddition
   }
 }
 
+// Structural undo, read-mode to-dos, the mode shortcut, and the home screen.
+const editorUndoAndHomeTranslationAdditions = {
+  en: {
+    status: { historyStepFailed: "That step could not be undone. Check your connection and try again." },
+    page: { modeShortcutTitle: "{action} (Ctrl/⌘+Shift+E)" },
+    home: { hideQuickStart: "Hide", showQuickStart: "Show quick start", showMoreRecent: "Show {count} more" }
+  },
+  ja: {
+    status: { historyStepFailed: "この操作を元に戻せませんでした。接続を確認して、もう一度お試しください。" },
+    page: { modeShortcutTitle: "{action} (Ctrl/⌘+Shift+E)" },
+    home: { hideQuickStart: "非表示", showQuickStart: "クイックスタートを表示", showMoreRecent: "さらに {count} 件を表示" }
+  },
+  ko: {
+    status: { historyStepFailed: "이 작업을 되돌리지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요." },
+    page: { modeShortcutTitle: "{action} (Ctrl/⌘+Shift+E)" },
+    home: { hideQuickStart: "숨기기", showQuickStart: "빠른 시작 보기", showMoreRecent: "{count}개 더 보기" }
+  },
+  fr: {
+    status: { historyStepFailed: "Cette étape n’a pas pu être annulée. Vérifiez votre connexion et réessayez." },
+    page: { modeShortcutTitle: "{action} (Ctrl/⌘+Shift+E)" },
+    home: { hideQuickStart: "Masquer", showQuickStart: "Afficher le démarrage rapide", showMoreRecent: "Afficher {count} de plus" }
+  },
+  de: {
+    status: { historyStepFailed: "Dieser Schritt konnte nicht rückgängig gemacht werden. Prüfen Sie die Verbindung und versuchen Sie es erneut." },
+    page: { modeShortcutTitle: "{action} (Ctrl/⌘+Shift+E)" },
+    home: { hideQuickStart: "Ausblenden", showQuickStart: "Schnellstart anzeigen", showMoreRecent: "{count} weitere anzeigen" }
+  },
+  es: {
+    status: { historyStepFailed: "No se pudo deshacer este paso. Comprueba la conexión e inténtalo de nuevo." },
+    page: { modeShortcutTitle: "{action} (Ctrl/⌘+Shift+E)" },
+    home: { hideQuickStart: "Ocultar", showQuickStart: "Mostrar inicio rápido", showMoreRecent: "Mostrar {count} más" }
+  },
+  pt: {
+    status: { historyStepFailed: "Não foi possível desfazer esta etapa. Verifique a conexão e tente novamente." },
+    page: { modeShortcutTitle: "{action} (Ctrl/⌘+Shift+E)" },
+    home: { hideQuickStart: "Ocultar", showQuickStart: "Mostrar início rápido", showMoreRecent: "Mostrar mais {count}" }
+  }
+};
+
+for (const [language, addition] of Object.entries(editorUndoAndHomeTranslationAdditions)) {
+  const catalog = translationCatalogs[language];
+  if (!catalog) continue;
+  for (const [section, entries] of Object.entries(addition)) {
+    catalog[section] = { ...catalog[section], ...entries };
+  }
+}
+
 function readStorage(key) {
   try {
     return globalThis.localStorage?.getItem(key) ?? null;

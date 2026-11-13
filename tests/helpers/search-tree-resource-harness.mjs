@@ -25,13 +25,14 @@ export function makeKeyboard(mode = 'current', { count = 30, disabled = [], hidd
     getClientRects() { metrics.rectReads++; return this.hidden ? [] : [{}]; }
   });
   const input = makeElement('input'), close = makeElement('close');
+  Object.assign(input, { value: '', setSelectionRange() {} });
   const buttons = Array.from({length: count}, (_, i) => {
     const el = makeElement(`result-${i}`); el.disabled = disabled.includes(i); el.hidden = hidden.includes(i); return el;
   });
   const dialog = makeElement('dialog');
   dialog.querySelectorAll = () => { metrics.focusableQueries++; return noFocusables ? [] : [input, close, ...buttons]; };
   const elements = { searchInput: input, searchDialog: dialog,
-    searchResults: { querySelectorAll() { metrics.queries++; return buttons; } } };
+    searchResults: { querySelectorAll() { metrics.queries++; return buttons; }, contains(node) { return buttons.includes(node); } } };
   const state = { searchDialogOpen: open };
   let closes = 0;
   const handler = new Function('document', 'elements', 'state', 'closeSearchDialog', 'mobileSidebarFocusableSelector',

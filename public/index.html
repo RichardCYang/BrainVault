@@ -347,16 +347,21 @@
                 <span id="home-document-count" class="muted"></span>
               </div>
               <div id="home-document-list" class="home-list"></div>
+              <button id="home-document-more" type="button" class="text-button home-list-more hidden"></button>
             </section>
 
-            <section class="card home-card" aria-labelledby="home-guide-heading">
+            <section id="home-guide-card" class="card home-card" aria-labelledby="home-guide-heading">
               <div class="section-title-row">
                 <h3 id="home-guide-heading" data-i18n="home.quickStart">Quick start</h3>
-                <span class="muted" data-i18n="home.steps">3 steps</span>
+                <span class="home-card-actions">
+                  <span class="muted" data-i18n="home.steps">3 steps</span>
+                  <button id="home-guide-hide" type="button" class="text-button home-card-action" data-i18n="home.hideQuickStart">Hide</button>
+                </span>
               </div>
               <div id="home-collection-list" class="home-list"></div>
             </section>
           </div>
+          <button id="home-guide-show" type="button" class="text-button home-guide-show hidden" data-i18n="home.showQuickStart">Show quick start</button>
         </section>
 
         <section id="collection-view" class="collection-view hidden" aria-labelledby="collection-view-title">
@@ -439,6 +444,7 @@
                 type="button"
                 class="page-mode-badge"
                 title="Switch to write mode"
+                aria-keyshortcuts="Control+Shift+E Meta+Shift+E"
               >
                 <span id="page-mode-badge-icon" class="page-mode-badge-icon" aria-hidden="true">✎</span>
                 <span id="page-mode-badge-label" data-i18n="page.startEditing">Edit</span>
@@ -1332,7 +1338,7 @@
       </section>
     </div>
 
-    <div id="slash-menu" class="slash-menu hidden" role="menu" aria-label="Choose block type" data-i18n-aria-label="menu.slashAria"></div>
+    <div id="slash-menu" class="slash-menu hidden" role="listbox" aria-label="Choose block type" data-i18n-aria-label="menu.slashAria"></div>
     <div
       id="navigation-context-menu"
       class="navigation-context-menu hidden"

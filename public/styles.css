@@ -979,6 +979,38 @@ textarea {
   padding: 0 0.18rem;
 }
 
+.home-grid.home-grid--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.home-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.home-card-action,
+.home-list-more,
+.home-guide-show {
+  min-height: 1.5rem;
+  font-size: 0.8rem;
+}
+
+.home-list-more {
+  margin: 0.5rem 0.18rem 0;
+}
+
+.home-guide-show {
+  justify-self: start;
+  margin-top: 0.75rem;
+}
+
+/* Editors can tick a to-do while reading; the server-rendered box becomes a
+   real control for them. */
+.rendered-todo input.read-mode-todo-toggle:not(:disabled) {
+  cursor: pointer;
+}
+
 .home-card h3 {
   margin-bottom: 0;
   color: var(--ink-strong);
@@ -5032,7 +5064,6 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   text-align: left;
 }
 
-.slash-menu-item:hover,
 .slash-menu-item.active {
   background: var(--active);
   color: var(--ink-strong);
@@ -5058,7 +5089,6 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   pointer-events: none;
 }
 
-.slash-menu-item:hover .slash-menu-icon,
 .slash-menu-item.active .slash-menu-icon {
   border-color: var(--line-strong);
   color: var(--ink-strong);
@@ -11157,6 +11187,10 @@ body.search-dialog-open {
   .app-mode .home-grid {
     grid-template-columns: minmax(0, 1.12fr) minmax(19rem, 0.88fr);
     gap: 1.15rem;
+  }
+
+  .app-mode .home-grid.home-grid--single {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .app-mode .home-card {

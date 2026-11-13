@@ -14,9 +14,11 @@ export function extractFunction(source, name) {
   if (!match) throw new Error(`Cannot extract ${name}`);
   return match[0];
 }
+// Helpers the current snapshot path calls that the baseline excerpt predates.
+const currentOnlyAppParts = ["getChangedEditorHistoryBlockKeys", "getBlockEditorHistoryKey", "getBlockEditorHistoryBaseline"];
 export function getAppParts(mode = "current") {
   return mode === "baseline" ? { ...baseline.app } : Object.fromEntries(
-    Object.keys(baseline.app).map(name => [name, extractFunction(currentSources.app, name)])
+    [...Object.keys(baseline.app), ...currentOnlyAppParts].map(name => [name, extractFunction(currentSources.app, name)])
   );
 }
 export function makeAppHarness(mode = "current", { instrument = false } = {}) {
@@ -37,7 +39,14 @@ export function makeAppHarness(mode = "current", { instrument = false } = {}) {
     const isCollaborativePage = () => collaborative;
     const getPageSummaryLookup = pages => new Map(pages.map(page => [page.id, page]));
     const syncBeforeUnloadProtection = () => events.push("beforeunload");
-    const pageEditorHistory = { clear: pageId => events.push(["clearHistory", pageId]) };
+    // The baseline cleared the whole history at a peer update; the current code
+    // forgets only the changed fields. Both mark the same history boundary in
+    // the event trace, and the forgotten keys are kept for their own checks.
+    const historyForgets = [];
+    const pageEditorHistory = {
+      clear: pageId => events.push(["clearHistory", pageId]),
+      forget: (pageId, keys) => { historyForgets.push([pageId, [...keys]]); events.push(["clearHistory", pageId]); }
+    };
     const updateInputValuePreservingSelection = (input, title) => { input.value = title; events.push(["title", title]); };
     const renderPageHeader = page => events.push(["header", page.id]);
     const syncPageTitleSummaryPresentation = (id, title) => events.push(["summary", id, title]);
@@ -48,7 +57,7 @@ export function makeAppHarness(mode = "current", { instrument = false } = {}) {
     const requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
     ${Object.values(parts).join("\n")}
     return {
-      state, events, metrics, elements, build: buildCollaborationBlockTree, apply: applyCollaborationSnapshot,
+      state, events, metrics, elements, historyForgets, build: buildCollaborationBlockTree, apply: applyCollaborationSnapshot,
       signature: getCollaborationBlockSignature, flatten: flattenBlocks,
       setCollaborative(value) { collaborative = value; },
       setRenderError(error) { renderError = error; },

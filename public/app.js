@@ -1384,6 +1384,10 @@ const elements = {
   homeDocumentList: $("#home-document-list"),
   homeDocumentCount: $("#home-document-count"),
   homeCollectionList: $("#home-collection-list"),
+  homeDocumentMore: $("#home-document-more"),
+  homeGuideCard: $("#home-guide-card"),
+  homeGuideHide: $("#home-guide-hide"),
+  homeGuideShow: $("#home-guide-show"),
   collectionView: $("#collection-view"),
   collectionIconButton: $("#collection-icon-button"),
   collectionViewTitle: $("#collection-view-title"),
@@ -4895,6 +4899,24 @@ function handleSearchDialogKeydown(event) {
     return;
   }
 
+  // Typing while a result has focus goes back into the search field, as in
+  // other quick-find lists, so the query can be refined without a click.
+  if (
+    event.target !== elements.searchInput
+    && elements.searchResults.contains(event.target)
+    && !event.isComposing
+    && !event.ctrlKey
+    && !event.metaKey
+    && !event.altKey
+    && (event.key.length === 1 || event.key === "Backspace")
+    && event.key !== " "
+  ) {
+    elements.searchInput.focus();
+    const end = elements.searchInput.value.length;
+    elements.searchInput.setSelectionRange(end, end);
+    return;
+  }
+
   const navigatesResults = event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End";
   // Typing/IME/modifier keys do not navigate results. Tab only needs the dialog
   // focus trap, so avoid a redundant result scan and geometry reads there too.
@@ -4907,6 +4929,14 @@ function handleSearchDialogKeydown(event) {
   }
 
   const focusedResultIndex = resultButtons.indexOf(document.activeElement);
+  if (focusedResultIndex === 0 && event.key === "ArrowUp") {
+    // Up from the first result returns to the query instead of wrapping.
+    event.preventDefault();
+    elements.searchInput.focus();
+    const end = elements.searchInput.value.length;
+    elements.searchInput.setSelectionRange(end, end);
+    return;
+  }
   if (focusedResultIndex >= 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
     event.preventDefault();
     const direction = event.key === "ArrowDown" ? 1 : -1;
@@ -7390,6 +7420,63 @@ function makeHomeDocumentButton(page) {
   return row;
 }
 
+// The home list starts short and grows on request, so a large workspace still
+// opens quickly while every page stays reachable from here.
+const homeRecentPageStep = 16;
+let homeRecentPageLimit = 8;
+
+elements.homeDocumentMore.addEventListener("click", () => {
+  const firstNewIndex = homeRecentPageLimit;
+  homeRecentPageLimit += homeRecentPageStep;
+  renderHome();
+  const items = elements.homeDocumentList.querySelectorAll(".home-document-item");
+  const target = elements.homeDocumentMore.classList.contains("hidden")
+    ? items[firstNewIndex] ?? items[items.length - 1]
+    : elements.homeDocumentMore;
+  target?.focus();
+});
+
+// Quick start helps once; afterwards the reader can fold it away. Like the
+// editor tips, this is a per-browser convenience, not account data.
+const homeGuideHiddenStorageKey = "brainvault:home-guide-hidden";
+let homeGuideHiddenFallback = false;
+
+function isHomeGuideHidden() {
+  try {
+    return localStorage.getItem(homeGuideHiddenStorageKey) === "1";
+  } catch {
+    return homeGuideHiddenFallback;
+  }
+}
+
+function setHomeGuideHidden(hidden) {
+  homeGuideHiddenFallback = hidden;
+  try {
+    if (hidden) localStorage.setItem(homeGuideHiddenStorageKey, "1");
+    else localStorage.removeItem(homeGuideHiddenStorageKey);
+  } catch {
+    // Storage can be unavailable; the choice then lasts for this tab only.
+  }
+  syncHomeGuideVisibility();
+}
+
+function syncHomeGuideVisibility() {
+  const hidden = isHomeGuideHidden();
+  elements.homeGuideCard.classList.toggle("hidden", hidden);
+  elements.homeGuideShow.classList.toggle("hidden", !hidden);
+  elements.homeGuideCard.closest(".home-grid")?.classList.toggle("home-grid--single", hidden);
+}
+
+elements.homeGuideHide.addEventListener("click", () => {
+  setHomeGuideHidden(true);
+  elements.homeGuideShow.focus();
+});
+
+elements.homeGuideShow.addEventListener("click", () => {
+  setHomeGuideHidden(false);
+  elements.homeGuideHide.focus();
+});
+
 function makeHomeGuideRow(titleText, metaText) {
   const row = document.createElement("div");
   row.className = "home-row home-guide-row";
@@ -7948,13 +8035,17 @@ function isPageInteractionLocked() {
   );
 }
 
+// Ticking a to-do while reading saves that one checkbox without switching the
+// page to write mode. The allowance lasts only for that save.
+let readModeTodoWriteDepth = 0;
+
 function canPersistSelectedPage() {
   const recoveryDrainAllowed = recoveryStorageFailureDrainInFlight && state.pageModeChanging;
   const recoveryWritable = isRecoveryStorageWritable();
   return Boolean(
     state.selectedPage
     && state.workspaceView === "page"
-    && state.pageMode === pageModes.WRITE
+    && (state.pageMode === pageModes.WRITE || readModeTodoWriteDepth > 0)
     && canEditPage(state.selectedPage)
     && (recoveryWritable || recoveryDrainAllowed)
   );
@@ -8056,10 +8147,62 @@ function setControlReadModeTabStop(control, removed) {
   }
 }
 
+function canToggleTodoInReadMode() {
+  return Boolean(
+    state.selectedPage
+    && state.workspaceView === "page"
+    && state.pageMode === pageModes.READ
+    && canEditPage(state.selectedPage)
+    && isRecoveryStorageWritable()
+    && !isPageInteractionLocked()
+    && !(isCollaborativePage() && !isCollaborationReady())
+  );
+}
+
+// The read view shows the server-rendered checkbox. People who can edit the
+// page can tick it there, as in other note apps; everyone else sees it disabled.
+function syncReadModeTodoToggle(row) {
+  if (row?.dataset.blockType !== "TODO") return;
+  const rendered = row.querySelector('.block-rendered-preview .rendered-todo > input[type="checkbox"]');
+  if (!rendered) return;
+  const source = row.querySelector('input[name="checked"]');
+  rendered.classList.add("read-mode-todo-toggle");
+  if (source) rendered.checked = source.checked;
+  rendered.disabled = !canToggleTodoInReadMode();
+  rendered.setAttribute("aria-label", t("block.completed"));
+}
+
+async function toggleTodoFromReadMode(rendered) {
+  const row = getBlockRow(rendered);
+  const source = row?.querySelector('input[name="checked"]');
+  if (!row || !source || row.dataset.blockType !== "TODO") return;
+  const nextChecked = rendered.checked;
+  if (!canToggleTodoInReadMode()) {
+    rendered.checked = source.checked;
+    reportReadOnlyBlocked();
+    return;
+  }
+  const previousChecked = source.checked;
+  readModeTodoWriteDepth += 1;
+  try {
+    source.checked = nextChecked;
+    if (!markBlockDirty(row)) {
+      source.checked = previousChecked;
+      return;
+    }
+    await saveBlockRow(row, { quiet: true });
+  } finally {
+    readModeTodoWriteDepth -= 1;
+    const current = findRenderedBlockRow(row.dataset.blockId);
+    if (current) syncReadModeTodoToggle(current);
+  }
+}
+
 function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageInteractionLocked()) {
   if (!row) return;
   row.classList.toggle("is-read-only", readOnly);
   row.setAttribute("aria-readonly", String(readOnly));
+  syncReadModeTodoToggle(row);
 
   // Only reading removes tab stops; a brief edit lock in write mode must not
   // reshuffle focus order under the writer.
@@ -8192,7 +8335,7 @@ function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
   // The visible "Edit"/"Done" text is the accessible name, so voice control
   // users can say what they see; the longer wording stays as a description.
   elements.pageModeBadge.removeAttribute("aria-label");
-  elements.pageModeBadge.title = t(modeActionAriaKey);
+  elements.pageModeBadge.title = t("page.modeShortcutTitle", { action: t(modeActionAriaKey) });
   elements.pageModeBadgeIcon.textContent = readOnly ? "✎" : "✓";
   elements.pageModeBadgeLabel.textContent = t(readOnly ? "page.startEditing" : "page.finishEditing");
   syncPageCoverControls();
@@ -11160,10 +11303,16 @@ function renderHome() {
   if (!state.allPages.length) {
     elements.homeDocumentList.append(makeEmptyMessage(t("empty.noDocumentsHome")));
   } else {
-    for (const page of takeMostRecent(state.allPages, 8)) {
+    for (const page of takeMostRecent(state.allPages, homeRecentPageLimit)) {
       elements.homeDocumentList.append(makeHomeDocumentButton(page));
     }
   }
+  const hiddenRecentCount = Math.max(0, state.allPages.length - homeRecentPageLimit);
+  elements.homeDocumentMore.classList.toggle("hidden", hiddenRecentCount === 0);
+  elements.homeDocumentMore.textContent = hiddenRecentCount
+    ? t("home.showMoreRecent", { count: formatNumber(Math.min(hiddenRecentCount, homeRecentPageStep)) })
+    : "";
+  syncHomeGuideVisibility();
 
   elements.homeCollectionList.append(
     makeHomeGuideRow(t("home.guide1Title"), t("home.guide1Description")),
@@ -11459,6 +11608,7 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
     ? null
     : getCollaborationBlockSignature(nextBlocks);
   const nextTitle = requirePageTitleWithinLimit(snapshot.title);
+  const previousBlocks = state.selectedPage.blocks ?? [];
 
   state.selectedPage.title = nextTitle;
   state.selectedPage.blocks = nextBlocks;
@@ -11477,8 +11627,11 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
   const titleChanged = previousTitle !== nextTitle;
   if (source !== "local" && (blocksChanged || titleChanged)) {
     // Never replay a local whole-field snapshot across a peer update. That could
-    // overwrite newer collaborative content, so remote changes form a hard history boundary.
-    pageEditorHistory.clear(state.selectedPage.id);
+    // overwrite newer collaborative content, so every field a peer changed loses
+    // its local steps. Fields nobody else touched stay undoable.
+    const changedKeys = blocksChanged ? getChangedEditorHistoryBlockKeys(previousBlocks, nextBlocks) : [];
+    if (titleChanged) changedKeys.push("title");
+    pageEditorHistory.forget(state.selectedPage.id, changedKeys);
   }
   if (!blocksChanged) {
     if (titleChanged) {
@@ -14541,6 +14694,7 @@ function updateRenderedBlockPreview(row, block) {
   }
   renderServerBlockHtml(preview, block.htmlCache ?? "", { allowAiControls: block.type === "AI_CHAT" });
   if (!block.htmlCache) preview.textContent = block.markdown ?? "";
+  syncReadModeTodoToggle(row);
   hydrateMathExpressions(preview);
   hydrateHighlightedCodeBlocks(preview);
   hydrateAccordionIcons(preview);
@@ -15487,6 +15641,22 @@ function getBlockEditorHistoryKey(blockId) {
   return `block:${blockId}`;
 }
 
+function getChangedEditorHistoryBlockKeys(previousBlocks, nextBlocks) {
+  const describe = (blocks) => new Map(
+    flattenBlocks(blocks ?? []).map((block) => [block.id, JSON.stringify(getBlockEditorHistoryBaseline(block))])
+  );
+  const previous = describe(previousBlocks);
+  const next = describe(nextBlocks);
+  const changed = [];
+  for (const [blockId, value] of previous) {
+    if (next.get(blockId) !== value) changed.push(getBlockEditorHistoryKey(blockId));
+  }
+  for (const blockId of next.keys()) {
+    if (!previous.has(blockId)) changed.push(getBlockEditorHistoryKey(blockId));
+  }
+  return changed;
+}
+
 function getBlockEditorHistoryBaseline(block) {
   return {
     type: block?.type ?? "MARKDOWN",
@@ -15510,7 +15680,7 @@ function getBlockEditorHistoryCaptureGroup(row) {
 }
 
 function recordBlockEditorHistory(row, payload = null, baselineBlock = null) {
-  if (applyingEditorHistory || !state.selectedPage?.id || !row?.dataset.blockId) return false;
+  if (isBlockEditorHistorySuppressed() || !state.selectedPage?.id || !row?.dataset.blockId) return false;
   if (row.dataset.blockType === "ATTACHMENT") return false;
   const block = baselineBlock ?? getBlockById(row.dataset.blockId);
   if (!block) return false;
@@ -15553,7 +15723,10 @@ function copyBlockEditorHistoryRowState(source, target) {
 function isEditorHistoryTarget(target) {
   if (!(target instanceof Element)) return false;
   if (target === elements.pageTitle) return true;
-  return elements.blockList.contains(target) && Boolean(target.closest(".editor-block-row"));
+  if (elements.blockList.contains(target)) return true;
+  // After a block is removed or moved, focus can be left on the page itself.
+  // Undo there should still reach the editor, as long as no other field has it.
+  return target === document.body || target === elements.pageView || target === elements.blockList;
 }
 
 function getEditorHistoryKeyboardDirection(event) {
@@ -15589,8 +15762,10 @@ function applyEditorHistoryEntry(entry, direction) {
   }
 
   if (entry.meta.kind !== "block" || typeof entry.meta.blockId !== "string") return "stale";
-  const row = findRenderedBlockRow(entry.meta.blockId);
-  const current = getBlockById(entry.meta.blockId);
+  // A block put back by undo has a new id; older steps follow it there.
+  const blockId = resolveEditorHistoryBlockId(entry.meta.blockId);
+  const row = findRenderedBlockRow(blockId);
+  const current = getBlockById(blockId);
   if (!row || !current) return "stale";
   if (row.dataset.draftConflict === "true" || row.dataset.deleting === "true") return "blocked";
   if (!jsonValuesMatch(buildBlockPayload(row), expected)) return "stale";
@@ -15605,22 +15780,33 @@ function applyEditorHistoryEntry(entry, direction) {
     restoreBlockRowFromDurableState(replacement);
     return "blocked";
   }
+  if (blockId !== entry.meta.blockId) {
+    pageEditorHistory.rebase(state.selectedPage.id, getBlockEditorHistoryKey(blockId), nextValue);
+  }
   restoreCollaborationEditorFocus(focus);
   updateCollaborationAwareness(document.activeElement);
   scheduleRemoteCollaborationCaretRender();
   return "applied";
 }
 
-function performEditorHistoryCommand(direction, target = document.activeElement) {
-  if (!isEditorHistoryTarget(target) || !state.selectedPage?.id || state.workspaceView !== "page") return false;
+function performEditorHistoryCommand(direction, target = document.activeElement, { force = false } = {}) {
+  if ((!force && !isEditorHistoryTarget(target)) || !state.selectedPage?.id || state.workspaceView !== "page") return false;
   const pageId = state.selectedPage.id;
   pageEditorHistory.setPage(pageId);
+  // A structural step is still being applied; let it finish first.
+  if (structuralEditorHistoryRun) return true;
   let hadHistoryEntry = false;
 
   for (let attempts = 0; attempts < 80; attempts += 1) {
     const entry = pageEditorHistory.peek(pageId, direction);
     if (!entry) return hadHistoryEntry;
     hadHistoryEntry = true;
+
+    if (entry.structural) {
+      if (!requireWritablePage({ announce: false })) return true;
+      runStructuralEditorHistoryEntry(pageId, entry, direction);
+      return true;
+    }
 
     pageEditorHistory.stopCapturing();
     applyingEditorHistory = true;
@@ -15640,6 +15826,231 @@ function performEditorHistoryCommand(direction, target = document.activeElement)
     return true;
   }
   return hadHistoryEntry;
+}
+
+// Structural undo: splitting, joining, removing, re-adding, and moving blocks.
+// Each step re-runs the same durable editor command a person would, after
+// checking that the blocks still look exactly as the step left them. Anything
+// else (a collaborator's change, a failed save) makes the step unavailable
+// instead of guessing.
+let structuralEditorHistoryRun = null;
+let structuralEditorHistoryReplayDepth = 0;
+let blockEditorHistorySuppressedDepth = 0;
+const editorHistoryBlockAliases = new Map();
+let editorHistoryAliasPageId = null;
+
+function isBlockEditorHistorySuppressed() {
+  return applyingEditorHistory || blockEditorHistorySuppressedDepth > 0 || structuralEditorHistoryReplayDepth > 0;
+}
+
+// A structural command changes block text on its own (the tail leaves the
+// upper block, for example). Those writes are part of the one structural step,
+// so they are not recorded as separate text edits.
+async function withBlockEditorHistorySuppressed(task) {
+  blockEditorHistorySuppressedDepth += 1;
+  try {
+    return await task();
+  } finally {
+    blockEditorHistorySuppressedDepth -= 1;
+  }
+}
+
+function syncEditorHistoryAliasPage() {
+  const pageId = state.selectedPage?.id ?? null;
+  if (editorHistoryAliasPageId === pageId) return;
+  editorHistoryBlockAliases.clear();
+  editorHistoryAliasPageId = pageId;
+}
+
+function resolveEditorHistoryBlockId(blockId) {
+  syncEditorHistoryAliasPage();
+  let current = blockId;
+  const seen = new Set();
+  while (editorHistoryBlockAliases.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = editorHistoryBlockAliases.get(current);
+  }
+  return current;
+}
+
+function aliasEditorHistoryBlock(previousId, nextId) {
+  syncEditorHistoryAliasPage();
+  if (!previousId || !nextId || previousId === nextId) return;
+  editorHistoryBlockAliases.set(resolveEditorHistoryBlockId(previousId), nextId);
+}
+
+function rebaseBlockEditorHistory(blockId) {
+  const pageId = state.selectedPage?.id;
+  const row = blockId ? findRenderedBlockRow(blockId) : null;
+  if (!pageId || !row) return;
+  pageEditorHistory.rebase(pageId, getBlockEditorHistoryKey(blockId), buildBlockPayload(row));
+}
+
+function recordStructuralEditorHistory(meta, blockIds = []) {
+  if (applyingEditorHistory || structuralEditorHistoryReplayDepth > 0 || !state.selectedPage?.id) return null;
+  if (state.workspaceView !== "page") return null;
+  for (const blockId of blockIds) rebaseBlockEditorHistory(blockId);
+  return pageEditorHistory.push({ pageId: state.selectedPage.id, meta: { kind: "structure", ...meta } });
+}
+
+function getEditorHistoryBlockText(blockId) {
+  const row = blockId ? findRenderedBlockRow(blockId) : null;
+  const textarea = getBlockTextarea(row);
+  return row && textarea ? { row, textarea, value: textarea.value } : null;
+}
+
+// Joins `lowerId` back onto `upperId`. Both must still hold exactly the text
+// the step recorded and sit next to each other.
+async function joinBlocksForEditorHistory(meta) {
+  const upper = getEditorHistoryBlockText(resolveEditorHistoryBlockId(meta.upperId));
+  const lower = getEditorHistoryBlockText(resolveEditorHistoryBlockId(meta.lowerId));
+  if (!upper || !lower || upper.value !== meta.head || lower.value !== meta.tail) return { status: "stale" };
+  const upperId = upper.row.dataset.blockId;
+  const lowerId = lower.row.dataset.blockId;
+  if (getBlockMergeTarget(lower.row) !== upper.row) {
+    // Enter at the end of a code, math, or other non-text block only added an
+    // empty block below it. Undo removes that block; there is nothing to join.
+    const rows = [...elements.blockList.querySelectorAll(".editor-block-row")];
+    if (meta.tail !== "" || rows[rows.indexOf(upper.row) + 1] !== lower.row) return { status: "stale" };
+    await deleteEmptyBlock(lower.row, { announce: false });
+    if (findRenderedBlockRow(lowerId)) return { status: "failed" };
+    rebaseBlockEditorHistory(upperId);
+    placeCaretInBlock(upperId, meta.head.length);
+    return { status: "applied" };
+  }
+  await mergeBlockIntoPrevious(lower.row, upper.row);
+  const joined = getEditorHistoryBlockText(upperId);
+  if (findRenderedBlockRow(lowerId) || joined?.value !== meta.head + meta.tail) return { status: "failed" };
+  rebaseBlockEditorHistory(upperId);
+  return { status: "applied" };
+}
+
+// Splits `upperId` again where the step recorded. The lower half becomes a
+// new block, and older steps that named the old lower block follow it.
+async function separateBlocksForEditorHistory(meta) {
+  const upper = getEditorHistoryBlockText(resolveEditorHistoryBlockId(meta.upperId));
+  if (!upper || upper.value !== meta.head + meta.tail) return { status: "stale" };
+  // Only text blocks split mid-text; any block can get an empty one below.
+  if (meta.tail !== "" && !splittableTextBlockTypes.has(upper.row.dataset.blockType ?? "MARKDOWN")) {
+    return { status: "stale" };
+  }
+  const upperId = upper.row.dataset.blockId;
+  const createdId = await runBlockSplit(upper.row, {
+    splitAt: meta.head.length,
+    caret: meta.head.length,
+    queued: [],
+    type: meta.lowerType
+  });
+  const lower = createdId ? getEditorHistoryBlockText(createdId) : null;
+  if (!lower || getEditorHistoryBlockText(upperId)?.value !== meta.head) return { status: "failed" };
+  aliasEditorHistoryBlock(meta.lowerId, createdId);
+  rebaseBlockEditorHistory(upperId);
+  rebaseBlockEditorHistory(createdId);
+  return { status: "applied" };
+}
+
+async function removeBlockForEditorHistory(meta) {
+  const blockId = resolveEditorHistoryBlockId(meta.blockId);
+  const current = getEditorHistoryBlockText(blockId);
+  if (!current) return { status: "stale" };
+  const snapshot = captureBlockDeletionUndo(current.row, blockId);
+  if (!snapshot) return { status: "stale" };
+  if (meta.snapshot && (snapshot.markdown !== meta.snapshot.markdown || snapshot.type !== meta.snapshot.type)) {
+    return { status: "stale" };
+  }
+  await deleteEmptyBlock(current.row, { announce: false });
+  if (findRenderedBlockRow(blockId)) return { status: "failed" };
+  return { status: "applied", meta: { ...meta, snapshot } };
+}
+
+async function restoreBlockForEditorHistory(meta) {
+  if (!meta.snapshot || meta.snapshot.pageId !== state.selectedPage?.id) return { status: "stale" };
+  if (findRenderedBlockRow(resolveEditorHistoryBlockId(meta.blockId))) return { status: "stale" };
+  const createdId = await restoreDeletedBlock(meta.snapshot, { announce: false });
+  if (!createdId) return { status: "failed" };
+  aliasEditorHistoryBlock(meta.blockId, createdId);
+  rebaseBlockEditorHistory(createdId);
+  placeCaretInBlock(createdId, meta.snapshot.markdown.length);
+  return { status: "applied" };
+}
+
+async function moveBlockForEditorHistory(meta, fromIndex, toIndex) {
+  // The previous move is still being saved; the step stays for the next press.
+  if (activeBlockDrag || blockOrderSaving) return { status: "busy" };
+  const row = findRenderedBlockRow(resolveEditorHistoryBlockId(meta.blockId));
+  if (!row || normalizeParentBlockId(row.dataset.parentBlockId) !== meta.parentBlockId) return { status: "stale" };
+  const availability = getBlockStepMoveAvailability(row);
+  if (availability.index !== fromIndex || toIndex < 0 || toIndex >= availability.siblingRows.length) {
+    return { status: "stale" };
+  }
+  const blockId = row.dataset.blockId;
+  await moveBlockRowToIndex(row, toIndex);
+  const moved = findRenderedBlockRow(blockId);
+  if (!moved || getSiblingRows(meta.parentBlockId).indexOf(moved) !== toIndex) return { status: "failed" };
+  return { status: "applied" };
+}
+
+function applyStructuralEditorHistoryEntry(entry, direction) {
+  const meta = entry.meta ?? {};
+  const undo = direction === "undo";
+  // An Enter or Backspace is still settling; wait for it rather than judging
+  // the page by its half-finished state.
+  if (pendingBlockSplits.size || elements.blockList.querySelector('.editor-block-row[data-deleting="true"]')) {
+    return Promise.resolve({ status: "busy" });
+  }
+  switch (meta.op) {
+    case "split":
+      return undo ? joinBlocksForEditorHistory(meta) : separateBlocksForEditorHistory(meta);
+    case "merge":
+      return undo ? separateBlocksForEditorHistory(meta) : joinBlocksForEditorHistory(meta);
+    case "create":
+      return undo ? removeBlockForEditorHistory(meta) : restoreBlockForEditorHistory(meta);
+    case "delete":
+      return undo ? restoreBlockForEditorHistory(meta) : removeBlockForEditorHistory(meta);
+    case "move":
+      return undo
+        ? moveBlockForEditorHistory(meta, meta.to, meta.from)
+        : moveBlockForEditorHistory(meta, meta.from, meta.to);
+    default:
+      return Promise.resolve({ status: "stale" });
+  }
+}
+
+function runStructuralEditorHistoryEntry(pageId, entry, direction) {
+  const run = (async () => {
+    let result;
+    structuralEditorHistoryReplayDepth += 1;
+    try {
+      result = await applyStructuralEditorHistoryEntry(entry, direction);
+    } catch (error) {
+      result = { status: "failed", error };
+    } finally {
+      structuralEditorHistoryReplayDepth -= 1;
+    }
+    if (state.selectedPage?.id !== pageId) return null;
+    if (result?.status === "applied") {
+      pageEditorHistory.commit(pageId, direction, { id: entry.id, meta: result.meta ?? entry.meta });
+      return null;
+    }
+    if (result?.status === "stale") {
+      // The page no longer matches this step, as with a stale text step.
+      // Drop it and continue with the one before.
+      pageEditorHistory.discard(pageId, direction, { id: entry.id });
+      return "continue";
+    }
+    if (result?.status === "busy") return null;
+    // A failed save keeps the step so it can be tried again.
+    setStatus(result?.error?.message ?? t("status.historyStepFailed"), true);
+    return null;
+  })();
+  structuralEditorHistoryRun = run;
+  const settle = () => {
+    if (structuralEditorHistoryRun === run) structuralEditorHistoryRun = null;
+  };
+  void run.then((outcome) => {
+    settle();
+    if (outcome === "continue") performEditorHistoryCommand(direction, document.activeElement, { force: true });
+  }, settle);
 }
 
 function normalizeParentBlockId(value) {
@@ -16124,6 +16535,13 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
     const previousIds = getBlockSiblings(drag.parentBlockId).map((block) => block.id);
     const orderedIds = drag.candidates.map((row) => row.dataset.blockId);
     orderedIds.splice(drag.targetIndex, 0, drag.row.dataset.blockId);
+    const recordMove = () => recordStructuralEditorHistory({
+      op: "move",
+      blockId: drag.row.dataset.blockId,
+      parentBlockId: drag.parentBlockId,
+      from: drag.initialIndex,
+      to: drag.targetIndex
+    });
     if (isCollaborativePage()) {
       if (!reorderBlockSiblingsInState(drag.parentBlockId, orderedIds)) {
         throw new Error(t("errors.currentBlockOrder"));
@@ -16142,6 +16560,7 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
         throw error;
       }
       renderSelectedPage();
+      recordMove();
       setStatus(t("status.blockOrderChanged"));
       return;
     }
@@ -16171,7 +16590,10 @@ async function finishBlockDrag(event, { cancelled = false } = {}) {
       assertCurrentAuthenticatedSessionScope(task.authenticationScope);
       acknowledgeBlockOrderDraft(task);
       pendingBlockOrderTask = null;
-      if (isDragIntentCurrent()) setStatus(t("status.blockOrderChanged"));
+      if (isDragIntentCurrent()) {
+        recordMove();
+        setStatus(t("status.blockOrderChanged"));
+      }
     } catch (error) {
       if (!isCurrentAuthenticatedSessionScope(task.authenticationScope)) {
         if (pendingBlockOrderTask === task) pendingBlockOrderTask = null;
@@ -16208,6 +16630,18 @@ async function moveBlockRowByStep(row, step, { keepSelection = null } = {}) {
   if (!requireWritablePage()) return false;
   const availability = getBlockStepMoveAvailability(row);
   if (availability.index < 0 || !(step < 0 ? availability.up : availability.down)) return false;
+  return moveBlockRowToIndex(row, availability.index + step, { keepSelection });
+}
+
+async function moveBlockRowToIndex(row, targetIndex, { keepSelection = null } = {}) {
+  if (!requireWritablePage()) return false;
+  const availability = getBlockStepMoveAvailability(row);
+  if (
+    availability.index < 0
+    || targetIndex === availability.index
+    || targetIndex < 0
+    || targetIndex >= availability.siblingRows.length
+  ) return false;
   const handle = row.querySelector(".block-handle");
   if (!handle) return false;
 
@@ -16229,7 +16663,7 @@ async function moveBlockRowByStep(row, step, { keepSelection = null } = {}) {
     siblingRows: availability.siblingRows,
     candidates: availability.siblingRows.filter((candidate) => candidate !== row),
     initialIndex: availability.index,
-    targetIndex: availability.index + step,
+    targetIndex,
     groupRows: getBlockGroupRows(row),
     indicator: null
   };
@@ -17085,6 +17519,61 @@ function closeInlineToolbar() {
   state.activeInlineSelection = null;
 }
 
+// The slash menu and the format toolbar are pinned to the caret. Scrolling,
+// a resized window, or the on-screen keyboard moves the caret, so they follow
+// it, and close once it has left the visible area.
+let floatingEditorPopoverFrame = null;
+
+function repositionFloatingEditorPopovers() {
+  if (!elements.slashMenu.classList.contains("hidden")) {
+    const row = state.activeSlashBlockId ? findRenderedBlockRow(state.activeSlashBlockId) : null;
+    const anchor = getBlockTextarea(row) ?? row;
+    if (!row || !isElementInVisibleViewport(anchor)) closeSlashMenu();
+    else positionSlashMenu(row);
+  }
+  if (!elements.inlineToolbar.classList.contains("hidden")) {
+    const textarea = getActiveInlineTextarea();
+    const selection = textarea ? getTextareaSelection(textarea) : null;
+    if (!textarea || !selection || !isElementInVisibleViewport(textarea)) closeInlineToolbar();
+    else positionInlineToolbar(textarea, selection);
+  }
+}
+
+function scheduleFloatingEditorPopoverReposition() {
+  if (floatingEditorPopoverFrame !== null) return;
+  if (elements.slashMenu.classList.contains("hidden") && elements.inlineToolbar.classList.contains("hidden")) return;
+  floatingEditorPopoverFrame = window.requestAnimationFrame(() => {
+    floatingEditorPopoverFrame = null;
+    repositionFloatingEditorPopovers();
+  });
+}
+
+// The part of the page the person can see. On phones the on-screen keyboard
+// shrinks the visual viewport but not window.innerHeight, so menus placed
+// against innerHeight end up under the keyboard.
+function getVisibleViewportRect() {
+  const viewport = window.visualViewport;
+  if (viewport && viewport.width > 0 && viewport.height > 0) {
+    return {
+      left: viewport.offsetLeft,
+      top: viewport.offsetTop,
+      right: viewport.offsetLeft + viewport.width,
+      bottom: viewport.offsetTop + viewport.height
+    };
+  }
+  return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+}
+
+function isElementInVisibleViewport(element) {
+  if (!element?.isConnected) return false;
+  const rect = element.getBoundingClientRect();
+  if (!rect.width && !rect.height) return false;
+  const viewport = getVisibleViewportRect();
+  return rect.bottom > viewport.top && rect.top < viewport.bottom;
+}
+
+const coarsePointerQuery = window.matchMedia?.("(pointer: coarse)") ?? null;
+
 function positionInlineToolbar(textarea, selection) {
   const selectionRect = getTextareaSelectionRect(textarea, selection);
   elements.inlineToolbar.classList.remove("hidden");
@@ -17093,13 +17582,21 @@ function positionInlineToolbar(textarea, selection) {
   elements.inlineToolbar.style.visibility = "hidden";
 
   const toolbarRect = elements.inlineToolbar.getBoundingClientRect();
-  const maxLeft = window.innerWidth - toolbarRect.width - 12;
+  const viewport = getVisibleViewportRect();
+  const minLeft = viewport.left + 12;
+  const maxLeft = viewport.right - toolbarRect.width - 12;
   let left = selectionRect.left + selectionRect.width / 2 - toolbarRect.width / 2;
-  left = Math.max(12, Math.min(left, Math.max(12, maxLeft)));
+  left = Math.max(minLeft, Math.min(left, Math.max(minLeft, maxLeft)));
 
-  let top = selectionRect.top - toolbarRect.height - 10;
-  if (top < 12) top = selectionRect.top + selectionRect.height + 10;
-  top = Math.max(12, Math.min(top, window.innerHeight - toolbarRect.height - 12));
+  const above = selectionRect.top - toolbarRect.height - 10;
+  const below = selectionRect.top + selectionRect.height + 10;
+  // Touch browsers draw their own copy/paste bar above a selection, so the
+  // toolbar goes below it there instead of fighting for the same spot.
+  const preferBelow = Boolean(coarsePointerQuery?.matches);
+  let top = preferBelow ? below : above;
+  if (preferBelow && top + toolbarRect.height > viewport.bottom - 12) top = above;
+  if (!preferBelow && top < viewport.top + 12) top = below;
+  top = Math.max(viewport.top + 12, Math.min(top, viewport.bottom - toolbarRect.height - 12));
 
   elements.inlineToolbar.style.left = `${left}px`;
   elements.inlineToolbar.style.top = `${top}px`;
@@ -17258,14 +17755,48 @@ function getFilteredSlashCommands(query = "") {
   });
 }
 
+// The caret stays in the block while the menu is open, so the textarea points
+// screen readers at the highlighted command (aria-activedescendant).
+let slashMenuOwner = null;
+
+function syncSlashMenuOwner(textarea) {
+  if (slashMenuOwner && slashMenuOwner !== textarea) {
+    slashMenuOwner.removeAttribute("aria-activedescendant");
+    slashMenuOwner.removeAttribute("aria-controls");
+  }
+  slashMenuOwner = textarea ?? null;
+  if (!slashMenuOwner) return;
+  slashMenuOwner.setAttribute("aria-controls", elements.slashMenu.id);
+  const active = elements.slashMenu.querySelector(".slash-menu-item.active");
+  if (active) slashMenuOwner.setAttribute("aria-activedescendant", active.id);
+  else slashMenuOwner.removeAttribute("aria-activedescendant");
+}
+
 function closeSlashMenu() {
   elements.slashMenu.classList.add("hidden");
   elements.slashMenu.replaceChildren();
   elements.slashMenu.style.removeProperty("left");
   elements.slashMenu.style.removeProperty("top");
   elements.slashMenu.style.removeProperty("visibility");
+  syncSlashMenuOwner(null);
   state.activeSlashBlockId = null;
   state.activeSlashIndex = 0;
+}
+
+// Moves the highlight without rebuilding the list, so the scroll position is
+// kept and the highlighted command is always scrolled into view.
+function setActiveSlashIndex(index, { scroll = true } = {}) {
+  const items = [...elements.slashMenu.querySelectorAll(".slash-menu-item")];
+  if (!items.length) return;
+  const nextIndex = Math.min(Math.max(index, 0), items.length - 1);
+  state.activeSlashIndex = nextIndex;
+  items.forEach((item, itemIndex) => {
+    const active = itemIndex === nextIndex;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-selected", String(active));
+  });
+  if (scroll) items[nextIndex].scrollIntoView({ block: "nearest" });
+  if (slashMenuOwner) slashMenuOwner.setAttribute("aria-activedescendant", items[nextIndex].id);
 }
 
 function positionSlashMenu(row) {
@@ -17284,16 +17815,19 @@ function positionSlashMenu(row) {
   const rowRect = row.getBoundingClientRect();
   const viewportPadding = 12;
   const gap = 6;
-  const maxLeft = Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding);
-  const left = Math.min(Math.max(rect.left, viewportPadding), maxLeft);
+  // On phones the on-screen keyboard covers the bottom of the layout viewport;
+  // place the menu inside the part that is actually visible.
+  const viewport = getVisibleViewportRect();
+  const maxLeft = Math.max(viewport.left + viewportPadding, viewport.right - menuRect.width - viewportPadding);
+  const left = Math.min(Math.max(rect.left, viewport.left + viewportPadding), maxLeft);
   let top = rect.top + rect.height + gap;
 
-  if (top + menuRect.height > window.innerHeight - viewportPadding) {
+  if (top + menuRect.height > viewport.bottom - viewportPadding) {
     top = rowRect.top - menuRect.height - gap;
   }
 
-  const maxTop = Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding);
-  top = Math.min(Math.max(top, viewportPadding), maxTop);
+  const maxTop = Math.max(viewport.top + viewportPadding, viewport.bottom - menuRect.height - viewportPadding);
+  top = Math.min(Math.max(top, viewport.top + viewportPadding), maxTop);
 
   elements.slashMenu.style.left = `${left}px`;
   elements.slashMenu.style.top = `${top}px`;
@@ -17320,9 +17854,12 @@ function renderSlashMenu(row, query = "") {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "slash-menu-item";
+    button.id = `slash-menu-item-${item.type.toLowerCase()}`;
+    button.tabIndex = -1;
     button.classList.toggle("active", index === state.activeSlashIndex);
     button.dataset.type = item.type;
-    button.setAttribute("role", "menuitem");
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(index === state.activeSlashIndex));
 
     const icon = createSlashCommandIcon(item.icon);
 
@@ -17342,6 +17879,8 @@ function renderSlashMenu(row, query = "") {
 
   positionSlashMenu(row);
   elements.slashMenu.classList.remove("hidden");
+  syncSlashMenuOwner(getBlockTextarea(row));
+  elements.slashMenu.querySelector(".slash-menu-item.active")?.scrollIntoView({ block: "nearest" });
 }
 
 function updateSlashMenuForTextarea(textarea) {
@@ -18641,7 +19180,7 @@ async function refreshSelectedPageAfterBlockDeletion(
   return true;
 }
 
-async function deleteEmptyBlock(row) {
+async function deleteEmptyBlock(row, { announce = true } = {}) {
   if (!requireWritablePage() || !row?.dataset.blockId || row.dataset.deleting === "true") return;
   if (row.dataset.draftConflict === "true") {
     reportUnresolvedDraftConflict();
@@ -18731,8 +19270,17 @@ async function deleteEmptyBlock(row) {
       setStatus(t("errors.BLOCK_EDIT_CONFLICT"), true);
       return false;
     }
-    setStatus(t("status.emptyBlockDeleted"));
+    if (announce) setStatus(t("status.emptyBlockDeleted"));
   });
+}
+
+// Backspace in an empty block removes it; Ctrl/Cmd+Z puts it back.
+async function deleteEmptyBlockWithHistory(row) {
+  const blockId = row?.dataset.blockId;
+  const snapshot = blockId ? captureBlockDeletionUndo(row, blockId) : null;
+  await deleteEmptyBlock(row);
+  if (!snapshot || !blockId || findRenderedBlockRow(blockId)) return;
+  recordStructuralEditorHistory({ op: "delete", blockId, snapshot });
 }
 
 function focusPendingBlock() {
@@ -23355,6 +23903,33 @@ elements.pageTitle.addEventListener("focus", () => updateCollaborationAwareness(
 elements.pageTitle.addEventListener("keyup", () => updateCollaborationAwareness(elements.pageTitle));
 elements.pageTitle.addEventListener("mouseup", () => updateCollaborationAwareness(elements.pageTitle));
 
+// Ctrl/Cmd+Shift+E switches between reading and writing, like the toolbar
+// button. It is ignored behind dialogs, as the search shortcut is.
+function handlePageModeShortcut(event) {
+  if (
+    event.defaultPrevented
+    || event.isComposing
+    || event.altKey
+    || !event.shiftKey
+    || !(event.ctrlKey || event.metaKey)
+    || event.code !== "KeyE"
+  ) return;
+  if (!state.selectedPage || state.workspaceView !== "page") return;
+  if (
+    state.searchDialogOpen
+    || state.accountSettingsOpen
+    || state.sharePageOpen
+    || state.shareCollectionOpen
+    || Boolean(state.emojiPickerTarget)
+    || Boolean(document.querySelector("dialog[open]"))
+  ) return;
+  if (elements.pageModeBadge.classList.contains("hidden") || elements.pageModeBadge.disabled) return;
+  event.preventDefault();
+  elements.pageModeBadge.click();
+}
+
+document.addEventListener("keydown", handlePageModeShortcut);
+
 elements.pageModeBadge.addEventListener("click", async () => {
   const nextMode = isPageReadOnly() ? pageModes.WRITE : pageModes.READ;
   try {
@@ -24084,7 +24659,7 @@ elements.blockList.addEventListener("beforeinput", (event) => {
   if (!row || row.dataset.deleting === "true" || !isBlockMarkdownEmpty(row, textarea)) return;
 
   event.preventDefault();
-  deleteEmptyBlock(row).catch((error) => {
+  deleteEmptyBlockWithHistory(row).catch((error) => {
     row.dataset.deleting = "false";
     setStatus(error.message, true);
   });
@@ -24182,6 +24757,11 @@ elements.blockList.addEventListener("keyup", (event) => {
 });
 
 elements.blockList.addEventListener("change", (event) => {
+  const readModeTodo = event.target.closest?.(".read-mode-todo-toggle");
+  if (readModeTodo) {
+    toggleTodoFromReadMode(readModeTodo).catch((error) => setStatus(error.message, true));
+    return;
+  }
   if (!requireWritablePage()) {
     const row = getBlockRow(event.target);
     if (row) restoreBlockRowFromDurableState(row);
@@ -24275,17 +24855,18 @@ async function splitBlockAtCaret(row, textarea) {
     scheduleBlockSave(row);
   }
   const splits = splittableTextBlockTypes.has(row.dataset.blockType ?? "MARKDOWN");
-  await runBlockSplit(row, {
+  await withBlockEditorHistorySuppressed(() => runBlockSplit(row, {
     splitAt: splits ? start : textarea.value.length,
     caret: start,
     queued: []
-  });
+  }));
 }
 
-async function runBlockSplit(row, { splitAt, caret, queued }) {
+// Resolves to the id of the new lower block once the split has settled.
+async function runBlockSplit(row, { splitAt, caret, queued, type = undefined }) {
   const sourceId = row?.dataset.blockId;
   const textarea = getBlockTextarea(row);
-  if (!sourceId || !textarea) return;
+  if (!sourceId || !textarea) return null;
 
   const value = textarea.value;
   const head = value.slice(0, splitAt);
@@ -24297,13 +24878,18 @@ async function runBlockSplit(row, { splitAt, caret, queued }) {
     // Save the full text first. The tail is then copied into the new block and
     // only removed from this one afterwards, so a failed create loses nothing.
     await saveBlockRow(row, { quiet: true });
-    created = await insertBlockRelative(row, "after", { markdown: tail, announce: false });
+    created = await insertBlockRelative(row, "after", {
+      markdown: tail,
+      announce: false,
+      ...(type ? { type } : {})
+    });
   } finally {
     if (pendingBlockSplits.get(sourceId) === pending) pendingBlockSplits.delete(sourceId);
   }
   const createdId = created?.block?.id;
-  if (!createdId) return;
+  if (!createdId) return null;
   await settleBlockSplit({ sourceId, createdId, head, pending });
+  return createdId;
 }
 
 // While the new block was being created the caret stayed in the old one, so
@@ -24341,6 +24927,7 @@ async function settleBlockSplit({ sourceId, createdId, head, pending }) {
   } finally {
     if (pendingBlockSplits.get(createdId) === hold) pendingBlockSplits.delete(createdId);
   }
+  recordBlockSplitEditorHistory(sourceId, createdId);
 
   const followUps = [...queued, ...hold.queued].sort((left, right) => left - right);
   if (!followUps.length) return;
@@ -24356,6 +24943,22 @@ async function settleBlockSplit({ sourceId, createdId, head, pending }) {
     caret: Math.max(nextSplit, caretPosition),
     queued: rest
   });
+}
+
+// One undo step joins the two halves again, exactly as they are now.
+function recordBlockSplitEditorHistory(upperId, lowerId) {
+  const upper = getEditorHistoryBlockText(upperId);
+  const lower = getEditorHistoryBlockText(lowerId);
+  if (!upper || !lower) return;
+  if (upper.row.classList.contains("save-error") || lower.row.classList.contains("save-error")) return;
+  recordStructuralEditorHistory({
+    op: "split",
+    upperId,
+    lowerId,
+    head: upper.value,
+    tail: lower.value,
+    lowerType: lower.row.dataset.blockType ?? "MARKDOWN"
+  }, [upperId, lowerId]);
 }
 
 function getBlockMergeTarget(row) {
@@ -24381,6 +24984,18 @@ function getBlockMergeTarget(row) {
 }
 
 async function mergeBlockIntoPrevious(row, target) {
+  const lowerId = row?.dataset.blockId;
+  const upperId = target?.dataset.blockId;
+  const head = getBlockTextarea(target)?.value ?? "";
+  const tail = getBlockTextarea(row)?.value ?? "";
+  const lowerType = row?.dataset.blockType ?? "MARKDOWN";
+  await withBlockEditorHistorySuppressed(() => mergeBlockRowsIntoPrevious(row, target));
+  if (!lowerId || !upperId || findRenderedBlockRow(lowerId)) return;
+  if (getEditorHistoryBlockText(upperId)?.value !== head + tail) return;
+  recordStructuralEditorHistory({ op: "merge", upperId, lowerId, head, tail, lowerType }, [upperId]);
+}
+
+async function mergeBlockRowsIntoPrevious(row, target) {
   const textarea = getBlockTextarea(row);
   const targetTextarea = getBlockTextarea(target);
   if (!textarea || !targetTextarea) return;
@@ -24608,16 +25223,21 @@ function captureBlockDeletionUndo(row, blockId) {
   };
 }
 
-async function restoreDeletedBlock(snapshot) {
-  if (!snapshot?.pageId || state.selectedPage?.id !== snapshot.pageId || !requireWritablePage()) return;
+async function restoreDeletedBlock(snapshot, { announce = true } = {}) {
+  if (!snapshot?.pageId || state.selectedPage?.id !== snapshot.pageId || !requireWritablePage()) return null;
   const options = {
     type: snapshot.type,
     markdown: snapshot.markdown,
     metadata: snapshot.metadata,
     announce: false
   };
-  const previousRow = snapshot.previousSiblingId ? findRenderedBlockRow(snapshot.previousSiblingId) : null;
-  const nextRow = snapshot.nextSiblingId ? findRenderedBlockRow(snapshot.nextSiblingId) : null;
+  // Neighbours that were themselves put back by undo carry new ids.
+  const previousRow = snapshot.previousSiblingId
+    ? findRenderedBlockRow(resolveEditorHistoryBlockId(snapshot.previousSiblingId))
+    : null;
+  const nextRow = snapshot.nextSiblingId
+    ? findRenderedBlockRow(resolveEditorHistoryBlockId(snapshot.nextSiblingId))
+    : null;
   // A top-level block whose neighbours are gone goes back at the top.
   const fallbackRow = !snapshot.parentBlockId ? getSiblingRows(null)[0] ?? null : null;
   let created = null;
@@ -24627,9 +25247,20 @@ async function restoreDeletedBlock(snapshot) {
   else if (!snapshot.parentBlockId) created = await appendBlock(null, options);
   if (!created?.block?.id) {
     setStatus(t("status.blockRestoreUnavailable"), true);
-    return;
+    return null;
   }
-  setStatus(t("status.blockRestored"));
+  if (announce) setStatus(t("status.blockRestored"));
+  return created.block.id;
+}
+
+// The notice's Undo and Ctrl/Cmd+Z share one step, so the block cannot come
+// back twice.
+async function restoreDeletedBlockFromNotice(snapshot, blockId, historyEntryId) {
+  if (findRenderedBlockRow(resolveEditorHistoryBlockId(blockId))) return;
+  const createdId = await withBlockEditorHistorySuppressed(() => restoreDeletedBlock(snapshot));
+  if (!createdId) return;
+  aliasEditorHistoryBlock(blockId, createdId);
+  if (historyEntryId !== null && snapshot.pageId) pageEditorHistory.remove(snapshot.pageId, historyEntryId);
 }
 
 async function handleListBlockEnter(event, textarea, row) {
@@ -24745,16 +25376,29 @@ elements.blockList.addEventListener("keydown", async (event) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       if (items.length) {
-        state.activeSlashIndex =
+        setActiveSlashIndex(
           event.key === "ArrowDown"
             ? (state.activeSlashIndex + 1) % items.length
-            : (state.activeSlashIndex - 1 + items.length) % items.length;
-        renderSlashMenu(row, getSlashContext(textarea)?.query ?? "");
+            : (state.activeSlashIndex - 1 + items.length) % items.length
+        );
       }
       return;
     }
 
-    if (event.key === "Enter" && items.length && !event.isComposing) {
+    if ((event.key === "Home" || event.key === "End") && items.length && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      setActiveSlashIndex(event.key === "Home" ? 0 : items.length - 1);
+      return;
+    }
+
+    if ((event.key === "PageDown" || event.key === "PageUp") && items.length) {
+      event.preventDefault();
+      const step = Math.max(1, Math.floor(elements.slashMenu.clientHeight / (items[0].offsetHeight || 1)) - 1);
+      setActiveSlashIndex(state.activeSlashIndex + (event.key === "PageDown" ? step : -step));
+      return;
+    }
+
+    if ((event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) && items.length && !event.isComposing) {
       event.preventDefault();
       await applySlashCommand(row, items[state.activeSlashIndex].dataset.type);
       return;
@@ -24770,7 +25414,7 @@ elements.blockList.addEventListener("keydown", async (event) => {
   if (event.key === "Backspace" && !event.isComposing && !event.repeat && isBlockMarkdownEmpty(row, textarea)) {
     event.preventDefault();
     try {
-      await deleteEmptyBlock(row);
+      await deleteEmptyBlockWithHistory(row);
     } catch (error) {
       row.dataset.deleting = "false";
       setStatus(error.message, true);
@@ -25164,7 +25808,8 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         await saveBlockRow(row, { quiet: true, resolveConflict: true });
         if (row.dataset.draftConflict === "true") return;
       }
-      await insertBlockRelative(row, placement);
+      const inserted = await insertBlockRelative(row, placement);
+      if (inserted?.block?.id) recordStructuralEditorHistory({ op: "create", blockId: inserted.block.id, snapshot: null });
       return;
     }
 
@@ -25256,12 +25901,16 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
           setStatus(t("errors.BLOCK_EDIT_CONFLICT"), true);
           return;
         }
+        const historyEntryId = undoSnapshot
+          ? recordStructuralEditorHistory({ op: "delete", blockId, snapshot: undoSnapshot })
+          : null;
         setStatus(t("status.blockDeleted"), false, undoSnapshot
           ? {
               action: {
                 label: t("status.undo"),
                 onSelect: () => {
-                  void restoreDeletedBlock(undoSnapshot).catch((error) => setStatus(error.message, true));
+                  void restoreDeletedBlockFromNotice(undoSnapshot, blockId, historyEntryId)
+                    .catch((error) => setStatus(error.message, true));
                 }
               }
             }
@@ -25462,6 +26111,15 @@ elements.slashMenu.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 
+// The pointer and the arrow keys share one highlight.
+elements.slashMenu.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch") return;
+  const item = event.target.closest(".slash-menu-item");
+  if (!item) return;
+  const index = [...elements.slashMenu.querySelectorAll(".slash-menu-item")].indexOf(item);
+  if (index >= 0 && index !== state.activeSlashIndex) setActiveSlashIndex(index, { scroll: false });
+});
+
 elements.slashMenu.addEventListener("click", async (event) => {
   if (!requireWritablePage()) return;
   const item = event.target.closest(".slash-menu-item");
@@ -25557,8 +26215,9 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("resize", () => {
-  closeSlashMenu();
-  closeInlineToolbar();
+  // Phones resize the window when the address bar or keyboard moves; closing
+  // the caret menus there would make them vanish mid-typing.
+  scheduleFloatingEditorPopoverReposition();
   closeBlockContextMenu();
   closeNavigationContextMenu();
   closePageActionsMenu();
@@ -25571,11 +26230,15 @@ document.addEventListener("scroll", (event) => {
   if (!target?.closest("#navigation-context-menu")) closeNavigationContextMenu();
   if (!target?.closest("#page-actions-menu")) closePageActionsMenu();
   if (!target?.closest(".kanban-card-style-menu")) closeKanbanCardStyleMenus();
+  if (!target?.closest("#slash-menu") && !target?.closest("#inline-toolbar")) scheduleFloatingEditorPopoverReposition();
 }, { capture: true, passive: true });
+window.visualViewport?.addEventListener("resize", scheduleFloatingEditorPopoverReposition);
+window.visualViewport?.addEventListener("scroll", scheduleFloatingEditorPopoverReposition);
 window.addEventListener("scroll", () => {
   closeBlockContextMenu();
   closeNavigationContextMenu();
   closePageActionsMenu();
+  scheduleFloatingEditorPopoverReposition();
 }, { passive: true });
 
 boot();

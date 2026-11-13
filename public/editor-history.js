@@ -46,6 +46,7 @@ export function createEditorHistory({
   let baselines = new Map();
   let retainedBytes = 0;
   let captureEpoch = 0;
+  let nextEntryId = 1;
 
   const resetState = (pageId = null) => {
     activePageId = pageId ?? null;
@@ -180,35 +181,112 @@ export function createEditorHistory({
       return entry ? cloneHistoryValue(entry) : null;
     },
 
-    commit(pageId, direction) {
+    commit(pageId, direction, { id = null, meta } = {}) {
       ensurePage(pageId);
+      const from = direction === "redo" ? redoStack : undoStack;
+      const to = direction === "redo" ? undoStack : redoStack;
+      const index = id === null ? from.length - 1 : from.findIndex((candidate) => candidate.id === id);
+      if (index < 0) return false;
+      const [entry] = from.splice(index, 1);
+      if (meta !== undefined) entry.meta = cloneHistoryValue(meta);
+      if (index !== from.length) {
+        // Newer edits landed while an asynchronous step was applied. That step
+        // is done, but replaying it out of order later would be wrong.
+        retainedBytes -= entry.bytes;
+        captureEpoch += 1;
+        return true;
+      }
+      to.push(entry);
       // Entries own private snapshots; peek() clones before exposing them.
       // Reuse those snapshots as baselines just as record() does, rather than
       // deep-cloning an unchanged block on every undo/redo transition.
-      if (direction === "redo") {
-        const entry = redoStack.pop();
-        if (!entry) return false;
-        undoStack.push(entry);
-        baselines.set(entry.key, entry.after);
-      } else {
-        const entry = undoStack.pop();
-        if (!entry) return false;
-        redoStack.push(entry);
-        baselines.set(entry.key, entry.before);
-      }
+      if (!entry.structural) baselines.set(entry.key, direction === "redo" ? entry.after : entry.before);
       captureEpoch += 1;
       return true;
     },
 
-    discard(pageId, direction) {
+    discard(pageId, direction, { id = null } = {}) {
       ensurePage(pageId);
       const stack = direction === "redo" ? redoStack : undoStack;
-      const entry = stack.pop();
-      if (!entry) return false;
+      const index = id === null ? stack.length - 1 : stack.findIndex((candidate) => candidate.id === id);
+      if (index < 0) return false;
+      const [entry] = stack.splice(index, 1);
       retainedBytes -= entry.bytes;
-      baselines.delete(entry.key);
+      if (!entry.structural) baselines.delete(entry.key);
       captureEpoch += 1;
       return true;
+    },
+
+    /**
+     * Records a step that changes the page structure (a block created, removed,
+     * split, joined, or moved). It has no before/after value: the caller applies
+     * it and validates the page itself, and may replace `meta` on commit.
+     */
+    push({ pageId, meta = null, now = Date.now() }) {
+      ensurePage(pageId);
+      const timestamp = Number.isFinite(now) ? Number(now) : Date.now();
+      // Only structural steps carry an id: they finish asynchronously and are
+      // committed by id. Text steps keep their original shape.
+      const id = nextEntryId++;
+      const entry = buildEntry({ key: `structure:${id}`, before: null, after: null, meta, captureGroup: null, timestamp });
+      entry.id = id;
+      entry.structural = true;
+      clearRedo();
+      if (!Number.isFinite(entry.bytes) || entry.bytes > byteLimit) {
+        captureEpoch += 1;
+        return null;
+      }
+      undoStack.push(entry);
+      retainedBytes += entry.bytes;
+      captureEpoch += 1;
+      trimUndo();
+      return entry.id;
+    },
+
+    /** Moves a field's baseline to a value reached without a recorded step. */
+    rebase(pageId, key, value) {
+      ensurePage(pageId);
+      if (!key) return false;
+      baselines.set(key, cloneHistoryValue(value));
+      captureEpoch += 1;
+      return true;
+    },
+
+    /**
+     * Drops every step for the given fields and their baselines. Used when a
+     * collaborator changed them: replaying a local snapshot there could
+     * overwrite their newer content, while other fields stay undoable.
+     */
+    forget(pageId, keys) {
+      ensurePage(pageId);
+      const keySet = new Set(keys ?? []);
+      if (!keySet.size) return 0;
+      let removed = 0;
+      const keep = (entry) => {
+        if (entry.structural || !keySet.has(entry.key)) return true;
+        retainedBytes -= entry.bytes;
+        removed += 1;
+        return false;
+      };
+      undoStack = undoStack.filter(keep);
+      redoStack = redoStack.filter(keep);
+      for (const key of keySet) baselines.delete(key);
+      captureEpoch += 1;
+      return removed;
+    },
+
+    /** Removes one step by id from either stack, e.g. after it was undone elsewhere. */
+    remove(pageId, id) {
+      ensurePage(pageId);
+      for (const stack of [undoStack, redoStack]) {
+        const index = stack.findIndex((entry) => entry.id === id);
+        if (index < 0) continue;
+        const [entry] = stack.splice(index, 1);
+        retainedBytes -= entry.bytes;
+        captureEpoch += 1;
+        return true;
+      }
+      return false;
     },
 
     getState(pageId = activePageId) {

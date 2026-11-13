@@ -120,6 +120,19 @@ for (const source of ["local", "remote", "recovery", undefined]) {
     assert.equal(after.state.applyingCollaborationSnapshot, false);
   });
 }
+test("a peer update forgets local undo steps only for the fields it changed", () => {
+  const { roots, flat } = makeBlocks(5);
+  const h = makeAppHarness(); setPage(h, structuredClone(roots));
+  const blocks = structuredClone(flat);
+  blocks[1].markdown = "peer edit";
+  h.apply({ title: "Peer title", blocks }); h.flushFrames();
+  assert.deepEqual(h.historyForgets, [["page_1", [`block:${flat[1].id}`, "title"]]]);
+
+  const added = makeAppHarness(); setPage(added, structuredClone(roots));
+  added.apply({ title: "Title", blocks: [...structuredClone(flat), { id: "peer_new", sortOrder: 9, markdown: "x" }] }); added.flushFrames();
+  assert.deepEqual(added.historyForgets, [["page_1", ["block:peer_new"]]]);
+});
+
 for (const kind of ["unchanged", "title-only", "shared-page-array", "invalid-title", "render-error", "home", "noncollaborative", "no-page"]) {
   test(`snapshot boundary and rendering regression: ${kind}`, () => {
     const { roots, flat } = makeBlocks(5);

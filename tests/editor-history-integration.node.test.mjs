@@ -42,7 +42,10 @@ test("block history coalesces only text edits from the same editor field", () =>
 
 test("collaboration and stale-state guards prevent overwriting newer content", () => {
   assert.match(source, /source !== "local" && \(blocksChanged \|\| titleChanged\)/);
-  assert.match(source, /pageEditorHistory\.clear\(state\.selectedPage\.id\)/);
+  // A peer update drops the local steps of exactly the fields it changed.
+  assert.match(source, /getChangedEditorHistoryBlockKeys\(previousBlocks, nextBlocks\)/);
+  assert.match(source, /if \(titleChanged\) changedKeys\.push\("title"\)/);
+  assert.match(source, /pageEditorHistory\.forget\(state\.selectedPage\.id, changedKeys\)/);
   assert.match(source, /!jsonValuesMatch\(buildBlockPayload\(row\), expected\).*"stale"/s);
   assert.match(source, /row\.dataset\.draftConflict === "true" \|\| row\.dataset\.deleting === "true"/);
 });

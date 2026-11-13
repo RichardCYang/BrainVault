@@ -7,18 +7,45 @@ for (const [path, entry] of Object.entries(baseline.files)) test(`retained origi
   assert.equal(createHash('sha256').update(entry.source).digest('hex'),entry.sha256);
 });
 const passiveKeys = ['a','한','Process','Unidentified','Dead','Backspace','Delete','Enter',' ','Shift','Control','Alt','Meta','CapsLock','ArrowLeft','ArrowRight','PageUp','PageDown','F5'];
+// Two deliberate changes from the original, both while a result has focus:
+// typing a character (or Backspace) returns to the search field so the query
+// can be refined, and ArrowUp on the first result returns there instead of
+// wrapping to the last one. Everything else must behave exactly as before.
+function expectedSearchKeyResult(original, { config, key, focus, isComposing }) {
+  if (focus !== 'buttons' || config.open === false) return original;
+  const typed = !isComposing && key !== ' ' && (key.length === 1 || key === 'Backspace');
+  if (typed) return { ...original, focused: 'input', prevented: false };
+  const visible = Array.from({ length: config.count }, (_, i) => i)
+    .filter(i => !(config.disabled ?? []).includes(i) && !(config.hidden ?? []).includes(i));
+  if (key === 'ArrowUp' && visible.indexOf(config.count - 1) === 0) return { ...original, focused: 'input', prevented: true };
+  return original;
+}
 for (const count of [0,1,30,50]) test(`search key semantics match the original with ${count} results`, () => {
   const configs = [{count}, {count, disabled:[0,2], hidden:[1,3]}, {count,open:false}, {count,noFocusables:true}];
   for (const config of configs) for (const key of [...passiveKeys,'ArrowDown','ArrowUp','Home','End','Tab','Escape']) {
     for (const focus of ['input','close','dialog',...(count?['buttons']:[])]) for (const shiftKey of [false,true]) {
+      const isComposing = key === 'Process';
       const results = ['baseline','current'].map(mode => {
         const h = makeKeyboard(mode,config);
         (focus === 'buttons' ? h.buttons.at(-1) : h[focus]).focus();
-        return h.key(key,{shiftKey,isComposing:key==='Process'});
+        return h.key(key,{shiftKey,isComposing});
       });
-      assert.deepEqual(results[1],results[0],JSON.stringify({config,key,focus,shiftKey}));
+      const expected = expectedSearchKeyResult(results[0], { config, key, focus, isComposing });
+      assert.deepEqual(results[1],expected,JSON.stringify({config,key,focus,shiftKey}));
     }
   }
+});
+
+test('typing on a focused result returns to the query; ArrowUp on the first result does too', () => {
+  const h = makeKeyboard('current', { count: 5 });
+  h.buttons[2].focus();
+  assert.equal(h.key('x').focused, 'input');
+  h.buttons[0].focus();
+  const up = h.key('ArrowUp');
+  assert.equal(up.focused, 'input');
+  assert.equal(up.prevented, true);
+  h.buttons[1].focus();
+  assert.equal(h.key('ArrowUp').focused, 'result-0');
 });
 test('ordinary/IME/modifier input performs no result scan or geometry lookup',()=>{
   for(const mode of ['baseline','current']) {
@@ -35,10 +62,13 @@ test('Tab preserves the focus trap without redundantly scanning search results',
   assert.equal(after.metrics.queries,0);assert.equal(after.metrics.focusableQueries,1);
   assert.equal(before.metrics.rectReads-after.metrics.rectReads,30);
 });
-test('navigation uses fresh DOM visibility/disabled state and wraps in both directions',()=>{
+// Down wraps from the last result to the first. Up from the first result now
+// returns to the query (covered above), so this trace never presses it there.
+test('navigation uses fresh DOM visibility/disabled state and wraps downward',()=>{
   const traces=['baseline','current'].map(mode=>{
     const h=makeKeyboard(mode,{count:5}),trace=[];
-    for(const key of ['ArrowDown','End','ArrowDown','ArrowUp','Home'])trace.push(h.key(key));
+    for(const key of ['ArrowDown','End','ArrowDown','End','ArrowUp','Home'])trace.push(h.key(key));
+    assert.deepEqual(trace.map(step=>step.focused),['result-0','result-4','result-0','result-4','result-3','result-0']);
     h.buttons[1].disabled=true;h.buttons[2].hidden=true;
     trace.push(h.key('ArrowDown'));assert.equal(trace.at(-1).focused,'result-3');
     h.buttons[1].disabled=false;h.buttons[2].hidden=false;
