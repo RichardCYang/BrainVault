@@ -1,7 +1,7 @@
 import { Router, raw } from "express";
 import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
-import { admitPageProjection, assertStoredPageResourceBudget, addPageBlockUsage, emptyPageResourceUsage } from "../lib/page-resource-limits.js";
+import { admitPageProjection, assertPagesFitSharedDocument, assertStoredPageResourceBudget, addPageBlockUsage, emptyPageResourceUsage } from "../lib/page-resource-limits.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
@@ -1184,6 +1184,8 @@ collaborationRouter.post(
           await client.execute("DELETE FROM page_collaboration_state WHERE page_id = ?", [pageId]);
           await ensureCollaborationState(pageId, client);
         }
+        // A page too large for one shared document could not be opened once shared.
+        await assertPagesFitSharedDocument(client, [pageId]);
         const shareGeneration = createId("share");
         await client.execute(
           `INSERT INTO page_shares (page_id, user_id, permission, shared_by, generation)
@@ -1555,6 +1557,9 @@ collaborationRouter.post(
         }
         const collaborationState = await ensureCollaborationState(pageId, client);
         await assertStoredPageResourceBudget(client, pageId);
+        // Also guards pages shared before this limit existed: a clear refusal
+        // instead of a document the server rejects and the browser retries.
+        await assertPagesFitSharedDocument(client, [pageId]);
         const documentBlocks = await client.query<BlockRow>(
           "SELECT * FROM blocks WHERE page_id = ? ORDER BY COALESCE(parent_block_id, ''), sort_order ASC, id ASC",
           [pageId]

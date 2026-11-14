@@ -595,7 +595,7 @@ contains("src/lib/data-transfer.ts", [
   "maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes",
   "maxEntries: dataTransferResourceLimits.maxZipEntries",
   "stagedFileBytes + BigInt(fileStat.size) > maxTransferBytes",
-  "measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1)"
+  "measureJsonUtf8BytesWithinLimit(rootManifest, maxManifestBytes - 1)"
 ]);
 const codeHighlightingSource = contains("src/lib/code-highlighting.ts", [
   "maxSourceLength: 2_000",

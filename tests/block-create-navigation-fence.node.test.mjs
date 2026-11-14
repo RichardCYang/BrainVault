@@ -165,6 +165,9 @@ test("collaborative block creation rechecks navigation inside the queued Yjs com
     canPersistSelectedPage() { return true; },
     requireWritablePage() { return true; },
     isCollaborativePage() { return true; },
+    // The shared-page block limit check counts the blocks on the page.
+    flattenBlocks(blocks) { return blocks ?? []; },
+    SHARED_PAGE_MAX_BLOCKS: 5000,
     createClientId() { return "blk-stale"; },
     getBlockSiblings() { return []; },
     t(key) { return key; },

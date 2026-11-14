@@ -415,5 +415,6 @@ test("collaboration startup treats unreadable or undecodable recovery as a non-r
     "const socket = new WebSocket",
     "recovery before websocket"
   );
-  assert.match(connect, /if \(!recoveryIntegrityFailure\) this\.scheduleReconnect\(\)/);
+  // Integrity failures (and a page too large to share) never retry.
+  assert.match(connect, /if \(!recoveryIntegrityFailure && !pageTooLargeToShare\) this\.scheduleReconnect\(\)/);
 });

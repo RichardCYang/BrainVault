@@ -174,9 +174,12 @@ export function createHarness({ source = defaultAppSource, latencyMs = 0, blocks
   // Exercise the production collaborative save path with explicit session doubles.
   ctx.state.collaborationSession = { isReady: true, async upsertBlock(block) { metrics.collaborativeWrites = (metrics.collaborativeWrites ?? 0) + 1; return block; } };
   ctx.isCurrentCollaborationMutationContext = (scope, id, session) => ctx.isCurrentAuthenticatedSessionScope(scope) && ctx.state.selectedPage.id === id && ctx.state.collaborationSession === session;
-  const names = ["getPositiveVersion", "getLatestKnownVersion", "sortJsonValue", "jsonValuesMatch", "normalizeComparableMetadata", "blockPayloadsMatch", "flattenBlocks", "getBlockById", "updateBlockInState", "normalizeParentBlockId", "getPageBlockSiblings", "getBlockSiblings", "reorderPageBlockSiblings", "applyAuthoritativePageContentVersion", "shouldReconcileCanonicalCreatedBlockOrder", "adoptCommittedCreatedBlockLocally", "reconcileCanonicalCreatedBlock", "takeCollaborationTextBase", "takeCollaborationMetadataBase", "saveBlockRow", "getBlockCreateTask", "submitBlockCreateTask", "createEmptyBlock", "captureDirectBlockInsertionContext", "isCurrentDirectBlockInsertionContext", "tryRenderConfirmedBlockInsertion", "insertBlockRelative", "appendBlock"];
+  const names = ["getPositiveVersion", "getLatestKnownVersion", "sortJsonValue", "jsonValuesMatch", "normalizeComparableMetadata", "blockPayloadsMatch", "flattenBlocks", "getBlockById", "updateBlockInState", "normalizeParentBlockId", "getPageBlockSiblings", "getBlockSiblings", "reorderPageBlockSiblings", "applyAuthoritativePageContentVersion", "shouldReconcileCanonicalCreatedBlockOrder", "adoptCommittedCreatedBlockLocally", "reconcileCanonicalCreatedBlock", "takeCollaborationTextBase", "takeCollaborationMetadataBase", "saveBlockRow", "getBlockCreateTask", "submitBlockCreateTask", "createEmptyBlock", "captureDirectBlockInsertionContext", "isCurrentDirectBlockInsertionContext", "tryRenderConfirmedBlockInsertion", "insertConfirmedBlockRowInPlace", "insertBlockRelative", "appendBlock"];
   ctx.collaborationTextBases = new WeakMap();
   ctx.collaborationMetadataBases = new WeakMap();
+  // Constants the loaded functions read (large-page row insertion, shared-page limit).
+  ctx.farRowPageThreshold = 300;
+  ctx.SHARED_PAGE_MAX_BLOCKS = 5000;
   vm.createContext(ctx);
   vm.runInContext(names.map((name) => functionSource(source, name)).filter(Boolean).join("\n\n"), ctx);
   return ctx;

@@ -5,8 +5,9 @@ import { createReadStream } from "node:fs";
 import type { Dirent } from "node:fs";
 import type { Writable } from "node:stream";
 import { access, copyFile, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { getHeapStatistics } from "node:v8";
 import { z } from "zod";
-import { assertManifestValidationBudget } from "./backup-validation.js";
+import { assertManifestValidationBudget, manifestValidationLimits } from "./backup-validation.js";
 import { failFastArray as backupArray } from "./validation-errors.js";
 import { syncPath } from "./storage-sync.js";
 import { env } from "../config/env.js";
@@ -15,6 +16,7 @@ import {
   attachmentUploadRoot,
   getAttachmentFilePath,
   inspectStoredAttachmentContent,
+  maxAttachmentStorageBytes,
   withUserAttachmentLock
 } from "./attachments.js";
 import {
@@ -32,7 +34,8 @@ import {
   customIconUploadRoot,
   detectCustomIconFileType,
   getCustomIconFilePath,
-  isServerCustomIconPath
+  isServerCustomIconPath,
+  maxCustomIconStorageBytes
 } from "./custom-icons.js";
 import { db, transaction, type DbClient } from "./db.js";
 import {
@@ -77,7 +80,11 @@ import {
   isPageVersionOmittedValue,
   parsePageVersionSummaryJson
 } from "./page-version-history.js";
-import { dataTransferResourceLimits, measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
+import {
+  computeBackupDataBudgetBytes,
+  dataTransferResourceLimits,
+  measureJsonUtf8BytesWithinLimit
+} from "./data-transfer-limits.js";
 import { blockSortOrderLimits } from "./block-order-integrity.js";
 import {
   maxAvatarBytes,
@@ -115,8 +122,40 @@ const pageCoverFileBackupVersion = 2;
 const uploadedAssetBackupVersion = 3;
 const completeWorkspaceBackupVersion = 4;
 const explicitWorkspaceBackupVersion = 5;
-const backupVersion = 6;
+const iconPublicationBackupVersion = 6;
+// Version 7 moves the sections that grow with the workspace (blocks, history,
+// comments, tag relations, icon publications) out of the manifest into
+// bounded JSON shards, so no single JSON value has to hold the workspace.
+// Versions 1-6 are read exactly as before.
+const shardedBackupVersion = 7;
+const backupVersion = shardedBackupVersion;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
+const shardedSections = ["blocks", "pageTags", "pageComments", "pageVersions", "customIconPublications"] as const;
+type ShardedSection = (typeof shardedSections)[number];
+const shardPathPattern = /^data-shards\/(blocks|pageTags|pageComments|pageVersions|customIconPublications)\/\d{6}\.json$/;
+
+/** Total backup JSON one export or restore may hold; see computeBackupDataBudgetBytes. */
+export function backupDataBudgetBytes() {
+  return computeBackupDataBudgetBytes({
+    configuredBytes: env.DATA_TRANSFER_MAX_DATA_SIZE_MB * 1024 * 1024,
+    heapLimitBytes: getHeapStatistics().heap_size_limit,
+    // A restore first saves a safety snapshot, so count one export more.
+    concurrentOperations: env.DATA_EXPORT_MAX_CONCURRENT + env.DATA_IMPORT_MAX_CONCURRENT + 1,
+    minimumBytes: maxManifestBytes
+  });
+}
+
+/**
+ * Archive bytes a backup may have. A workspace that stays within every storage
+ * quota must always be able to back itself up, so the configured transfer
+ * limit is raised to what those quotas allow. Archive bytes are streamed to and
+ * from disk, never held in memory.
+ */
+export function backupTransferBudgetBytes() {
+  const configured = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
+  const quotas = maxAttachmentStorageBytes + maxCustomIconStorageBytes + BigInt(backupDataBudgetBytes());
+  return configured > quotas ? configured : quotas;
+}
 export type DataTransferOptions = Readonly<{
   /**
    * Keep the configured aggregate archive/manifest byte ceilings for ordinary
@@ -412,6 +451,20 @@ const navigationPageOrderSchema = z.object({
   updated_at: timestampSchema.optional()
 }).strict();
 
+const shardSchema = z.object({
+  section: z.enum(shardedSections),
+  path: z.string().max(80).regex(shardPathPattern),
+  rows: z.number().int().min(1).max(manifestValidationLimits.maxArrayItems)
+}).strict();
+
+const shardRowSchemas = {
+  blocks: blockSchema,
+  pageTags: pageTagSchema,
+  pageComments: pageCommentSchema,
+  pageVersions: pageVersionSchema,
+  customIconPublications: customIconPublicationSchema
+} as const;
+
 const manifestSchema = z.object({
   format: z.literal(backupFormat),
   version: z.union([
@@ -420,7 +473,8 @@ const manifestSchema = z.object({
     z.literal(uploadedAssetBackupVersion),
     z.literal(completeWorkspaceBackupVersion),
     z.literal(explicitWorkspaceBackupVersion),
-    z.literal(backupVersion)
+    z.literal(iconPublicationBackupVersion),
+    z.literal(shardedBackupVersion)
   ]),
   exportedAt: exportedAtTimestampSchema,
   source: z.object({ userId: idSchema, username: z.string().min(1).max(50) }).strict(),
@@ -474,7 +528,9 @@ const manifestSchema = z.object({
   // Version 6 preserves explicit owner-controlled icon publication grants.
   // Owner and public path are reconstructed, never trusted from the archive.
   customIconPublications: backupArray(customIconPublicationSchema,
-    dataTransferResourceLimits.maxCustomIconPublications).optional()
+    dataTransferResourceLimits.maxCustomIconPublications).optional(),
+  // Version 7 lists the shard entries that hold its sharded sections.
+  shards: backupArray(shardSchema, dataTransferResourceLimits.maxShardEntries).optional()
 }).strict().superRefine((manifest, context) => {
   let issueCount = 0;
   const addIssue = (issue: Parameters<typeof context.addIssue>[0]) => {
@@ -482,13 +538,37 @@ const manifestSchema = z.object({
     if (++issueCount > 20) invalidBackup("The backup manifest is invalid");
     context.addIssue(issue);
   };
-  if (manifest.version >= backupVersion && !manifest.customIconPublications) {
+  if (manifest.version >= shardedBackupVersion) {
+    if (!manifest.shards) {
+      addIssue({ code: z.ZodIssueCode.custom, path: ["shards"], message: "Version 7 backups must declare their data shards" });
+    }
+    // Sharded sections live only in their shards, never also in the manifest.
+    for (const section of shardedSections) {
+      const rows = section === "customIconPublications" ? manifest.customIconPublications : manifest.data[section];
+      if (rows && rows.length) {
+        addIssue({
+          code: z.ZodIssueCode.custom, path: ["data", section],
+          message: "Version 7 backups keep this section in shards"
+        });
+      }
+    }
+    const paths = new Set<string>();
+    for (const shard of manifest.shards ?? []) {
+      if (paths.has(shard.path) || !shard.path.startsWith(`data-shards/${shard.section}/`)) {
+        addIssue({ code: z.ZodIssueCode.custom, path: ["shards"], message: "Shard paths must be unique and match their section" });
+      }
+      paths.add(shard.path);
+    }
+  } else if (manifest.shards !== undefined) {
+    addIssue({ code: z.ZodIssueCode.custom, path: ["shards"], message: "Backups before version 7 cannot declare data shards" });
+  }
+  if (manifest.version >= iconPublicationBackupVersion && !manifest.customIconPublications) {
     addIssue({
       code: z.ZodIssueCode.custom, path: ["customIconPublications"],
       message: "Version 6 backups must declare custom icon publications"
     });
   }
-  if (manifest.version < backupVersion && manifest.customIconPublications !== undefined) {
+  if (manifest.version < iconPublicationBackupVersion && manifest.customIconPublications !== undefined) {
     addIssue({
       code: z.ZodIssueCode.custom, path: ["customIconPublications"],
       message: "Backups before version 6 cannot declare custom icon publications"
@@ -644,6 +724,107 @@ export function parseBackupManifest(value: unknown): BrainVaultBackup {
     if (error instanceof ApiError) throw error;
     invalidBackup("The backup manifest is invalid");
   }
+}
+
+type BackupShard = NonNullable<BrainVaultBackup["shards"]>[number];
+type ShardRows = Record<string, unknown>[];
+
+function getShardedSectionRows(manifest: BrainVaultBackup, section: ShardedSection): ShardRows {
+  const rows = section === "customIconPublications" ? manifest.customIconPublications : manifest.data[section];
+  return (rows ?? []) as ShardRows;
+}
+
+function setShardedSectionRows(manifest: BrainVaultBackup, section: ShardedSection, rows: ShardRows) {
+  if (section === "customIconPublications") {
+    manifest.customIconPublications = rows as NonNullable<BrainVaultBackup["customIconPublications"]>;
+  } else {
+    (manifest.data as unknown as Record<string, unknown>)[section] = rows;
+  }
+}
+
+/**
+ * Reads a version 7 backup's shards into its manifest. Each shard is parsed and
+ * validated on its own, so peak memory is one shard plus the rows kept, and the
+ * total is bounded by the data budget. Older versions have no shards.
+ */
+async function loadBackupShards(
+  zipPath: string,
+  entryByName: Map<string, Awaited<ReturnType<typeof readZipDirectory>>[number]>,
+  manifest: BrainVaultBackup,
+  manifestBytes: bigint,
+  enforceConfiguredSizeLimits: boolean
+) {
+  if (manifest.version < shardedBackupVersion) return;
+  const dataBudget = BigInt(backupDataBudgetBytes());
+  let totalBytes = manifestBytes;
+  const collected = new Map<ShardedSection, ShardRows>(shardedSections.map((section) => [section, []]));
+  for (const shard of manifest.shards ?? []) {
+    const entry = entryByName.get(shard.path);
+    if (!entry) invalidBackup(`${shard.path} is missing`);
+    if (entry.uncompressedSize > BigInt(dataTransferResourceLimits.maxShardBytes)) invalidBackup(`${shard.path} is too large`);
+    totalBytes += entry.uncompressedSize;
+    if (enforceConfiguredSizeLimits && totalBytes > dataBudget) {
+      throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup data exceeds what this server can restore at once");
+    }
+    let rows: ShardRows;
+    try {
+      const buffer = await readZipEntryBuffer(zipPath, entry, dataTransferResourceLimits.maxShardBytes);
+      const value: unknown = JSON.parse(buffer.toString("utf8"));
+      assertManifestValidationBudget(value);
+      rows = backupArray(shardRowSchemas[shard.section], manifestValidationLimits.maxArrayItems).parse(value) as ShardRows;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      invalidBackup(`${shard.path} is invalid`);
+    }
+    if (rows.length !== shard.rows) invalidBackup(`${shard.path} does not hold the declared rows`);
+    const target = collected.get(shard.section)!;
+    for (const row of rows) target.push(row);
+  }
+  for (const [section, rows] of collected) setShardedSectionRows(manifest, section, rows);
+}
+
+/**
+ * Splits a complete manifest into a version 7 root manifest and its shards.
+ * Rows keep their order; a shard holds whole rows up to the target size.
+ */
+function shardBackupManifest(manifest: BrainVaultBackup) {
+  const shards: Array<BackupShard & { buffer: Buffer }> = [];
+  const root: BrainVaultBackup = { ...manifest, data: { ...manifest.data }, version: shardedBackupVersion };
+  for (const section of shardedSections) {
+    const rows = getShardedSectionRows(manifest, section);
+    let parts: string[] = [];
+    let partBytes = 2;
+    const flush = () => {
+      if (!parts.length) return;
+      if (shards.length >= dataTransferResourceLimits.maxShardEntries) {
+        throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The workspace needs more backup shards than allowed");
+      }
+      const index = shards.filter((shard) => shard.section === section).length + 1;
+      shards.push({
+        section,
+        path: `data-shards/${section}/${String(index).padStart(6, "0")}.json`,
+        rows: parts.length,
+        buffer: Buffer.from(`[${parts.join(",")}]`, "utf8")
+      });
+      parts = [];
+      partBytes = 2;
+    };
+    for (const row of rows) {
+      const json = JSON.stringify(row);
+      const bytes = Buffer.byteLength(json, "utf8");
+      if (bytes + 2 > dataTransferResourceLimits.maxShardBytes) {
+        throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", `One ${section} record is too large for a backup`);
+      }
+      if (parts.length && (partBytes + bytes + 1 > dataTransferResourceLimits.shardTargetBytes
+        || parts.length >= manifestValidationLimits.maxArrayItems)) flush();
+      parts.push(json);
+      partBytes += bytes + 1;
+    }
+    flush();
+    setShardedSectionRows(root, section, []);
+  }
+  root.shards = shards.map(({ section, path: shardPath, rows }) => ({ section, path: shardPath, rows }));
+  return { root, shards };
 }
 type BackupPage = BrainVaultBackup["data"]["pages"][number];
 type BackupBlock = BrainVaultBackup["data"]["blocks"][number];
@@ -1750,7 +1931,7 @@ export async function readUserDataBackupManifest(
   try {
     entries = await readZipDirectory(zipPath, {
       maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes,
-      maxEntries: dataTransferResourceLimits.maxZipEntries
+      maxEntries: dataTransferResourceLimits.maxZipEntries + dataTransferResourceLimits.maxShardEntries
     });
   } catch (error) {
     invalidBackup(error instanceof Error ? error.message : "The ZIP archive is invalid");
@@ -1772,7 +1953,7 @@ export async function readUserDataBackupManifest(
     totalSize += entry.uncompressedSize;
   }
 
-  const maxBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
+  const maxBytes = backupTransferBudgetBytes();
   if (enforceConfiguredSizeLimits && totalSize > maxBytes) {
     throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
   }
@@ -1795,6 +1976,7 @@ export async function readUserDataBackupManifest(
     if (error instanceof ApiError) throw error;
     invalidBackup("The backup manifest is invalid");
   }
+  await loadBackupShards(zipPath, entryByName, manifest, manifestEntry.uncompressedSize, enforceConfiguredSizeLimits);
   validateManifestRelations(manifest);
 
   const allowedEntries = new Set([
@@ -1802,7 +1984,8 @@ export async function readUserDataBackupManifest(
     ...manifest.attachments.map((item) => item.path),
     ...(manifest.retainedAttachments ?? []).map((item) => item.path),
     ...(manifest.pageCovers ?? []).map((item) => item.path),
-    ...(manifest.customIcons ?? []).map((item) => item.path)
+    ...(manifest.customIcons ?? []).map((item) => item.path),
+    ...(manifest.shards ?? []).map((item) => item.path)
   ]);
   for (const entry of entries) {
     if (!allowedEntries.has(entry.name)) invalidBackup(`Unexpected ZIP entry: ${entry.name}`);
@@ -1815,8 +1998,11 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
   await ensureDataTransferDirectories();
   const enforceConfiguredSizeLimits = configuredSizeLimitsEnabled(options)
     || options.maxArchiveBytes !== undefined || options.maxManifestBytes !== undefined;
-  const maxTransferBytes = options.maxArchiveBytes ?? BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
+  const maxTransferBytes = options.maxArchiveBytes ?? backupTransferBudgetBytes();
+  // The root manifest stays within the manifest limit; the shards together
+  // with it stay within the data budget.
   const maxManifestBytes = options.maxManifestBytes ?? env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
+  const maxDataBytes = Math.max(maxManifestBytes, backupDataBudgetBytes());
   const operationRoot = path.join(dataTransferTempDir, createId("export"));
   const stagedAttachmentDir = path.join(operationRoot, "attachments");
   const stagedPageCoverDir = path.join(operationRoot, "page-covers");
@@ -1963,7 +2149,8 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
          ORDER BY cip.page_id ASC, cip.file_path ASC`,
         [userId, userId]
       );
-      assertExportCount("custom icon publications", publicationRows.length, dataTransferResourceLimits.maxCustomIconPublications);
+      // Blocks, tag relations, comments, history and icon publications are
+      // sharded: their size is bounded by the data budget, not a row count.
       const publicationPrefix = `${customIconPublicPrefix}${userId}/`;
       const customIconPublications = publicationRows.map((row) => {
         if (!row.file_path.startsWith(publicationPrefix)) {
@@ -1977,12 +2164,9 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       });
       const attachmentBlocks = blocks.filter((item) => item.type === "ATTACHMENT");
       assertExportCount("pages", pages.length, dataTransferResourceLimits.maxPages);
-      assertExportCount("blocks", blocks.length, dataTransferResourceLimits.maxBlocks);
       assertExportCount("tags", tags.length, dataTransferResourceLimits.maxTags);
-      assertExportCount("page-tag relations", pageTags.length, dataTransferResourceLimits.maxPageTags);
       assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
       assertExportCount("collection sharing grants", collectionShares.length, dataTransferResourceLimits.maxPageShares);
-      assertExportCount("page comments", pageComments.length, dataTransferResourceLimits.maxPageComments);
       assertExportCount("collapsed navigation pages", navigationCollapsedPageIds.length, dataTransferResourceLimits.maxPages);
       assertExportCount("ordered navigation pages", navigationPageOrder.length, dataTransferResourceLimits.maxPages);
       assertExportCount("attachments", attachmentBlocks.length, dataTransferResourceLimits.maxAttachments);
@@ -2300,22 +2484,20 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
     // Fit the history into the backup instead of refusing the whole backup.
     let historyEntriesOmitted = 0;
     {
+      // Only when the whole workspace would not fit the data budget is the
+      // oldest history left out; current content is never trimmed.
       const versions = manifest.data.pageVersions ?? [];
-      const overCount = versions.length > dataTransferResourceLimits.maxPageVersions;
       const overBytes = enforceConfiguredSizeLimits
-        && measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1) === null;
-      if (overCount || overBytes) {
-        let maxHistoryBytes: number | null = null;
-        if (enforceConfiguredSizeLimits) {
-          const withoutHistory = measureJsonUtf8BytesWithinLimit(
-            { ...manifest, data: { ...manifest.data, pageVersions: [] } },
-            maxManifestBytes - 1
-          );
-          // Content alone over the limit: nothing to trim, refused below.
-          maxHistoryBytes = withoutHistory === null ? 0 : maxManifestBytes - 1 - withoutHistory;
-        }
+        && measureJsonUtf8BytesWithinLimit(manifest, maxDataBytes - 1) === null;
+      if (overBytes) {
+        const withoutHistory = measureJsonUtf8BytesWithinLimit(
+          { ...manifest, data: { ...manifest.data, pageVersions: [] } },
+          maxDataBytes - 1
+        );
+        // Content alone over the budget: nothing to trim, refused below.
+        const maxHistoryBytes = withoutHistory === null ? 0 : maxDataBytes - 1 - withoutHistory;
         const fitted = fitPageVersionsToBackupBudget(versions, {
-          maxCount: dataTransferResourceLimits.maxPageVersions,
+          maxCount: Number.MAX_SAFE_INTEGER,
           maxBytes: maxHistoryBytes
         });
         manifest.data.pageVersions = fitted.kept;
@@ -2323,8 +2505,16 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       }
     }
     validateManifestRelations(manifest);
+    if (enforceConfiguredSizeLimits && measureJsonUtf8BytesWithinLimit(manifest, maxDataBytes - 1) === null) {
+      throw new ApiError(
+        413,
+        "DATA_BACKUP_TOO_LARGE",
+        "The workspace content exceeds what this server can back up at once"
+      );
+    }
+    const { root: rootManifest, shards } = shardBackupManifest(manifest);
     if (enforceConfiguredSizeLimits) {
-      const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1);
+      const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(rootManifest, maxManifestBytes - 1);
       if (measuredManifestBytes === null) {
         throw new ApiError(
           413,
@@ -2333,7 +2523,7 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
         );
       }
     }
-    const manifestBuffer = Buffer.from(`${JSON.stringify(manifest)}\n`, "utf8");
+    const manifestBuffer = Buffer.from(`${JSON.stringify(rootManifest)}\n`, "utf8");
     if (enforceConfiguredSizeLimits && manifestBuffer.length > maxManifestBytes) {
       throw new ApiError(
         413,
@@ -2341,15 +2531,17 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
         "The backup manifest exceeds the supported import limit"
       );
     }
+    const shardFiles = shards.map((shard) => ({ name: shard.path, buffer: shard.buffer }));
     const totalUncompressedSize = [...attachmentFiles, ...retainedAttachmentFiles, ...pageCoverFiles, ...customIconFiles].reduce(
       (total, item) => total + item.inspection.size,
-      BigInt(manifestBuffer.length)
+      shardFiles.reduce((total, shard) => total + BigInt(shard.buffer.length), BigInt(manifestBuffer.length))
     );
     if (enforceConfiguredSizeLimits && totalUncompressedSize > maxTransferBytes) {
       throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
     }
     const archiveSize = calculateZipArchiveSize([
       { name: manifestName, size: BigInt(manifestBuffer.length) },
+      ...shardFiles.map((shard) => ({ name: shard.name, size: BigInt(shard.buffer.length) })),
       ...attachmentFiles.map((item) => ({ name: item.path, size: item.inspection.size })),
       ...retainedAttachmentFiles.map((item) => ({ name: item.path, size: item.inspection.size })),
       ...pageCoverFiles.map((item) => ({ name: item.path, size: item.inspection.size })),
@@ -2362,6 +2554,7 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       account: snapshot.account,
       manifest,
       manifestBuffer,
+      shardFiles,
       attachmentFiles,
       retainedAttachmentFiles,
       pageCoverFiles,
@@ -2381,6 +2574,7 @@ export async function writeUserDataBackup(
   output: Writable
 ) {
   const { account, manifest, manifestBuffer, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles } = plan;
+  const shardFiles = plan.shardFiles ?? [];
   try {
     const writer = new ZipWriter(output);
     await writer.add({
@@ -2389,6 +2583,14 @@ export async function writeUserDataBackup(
       crc32: crc32(manifestBuffer),
       source: { kind: "buffer", data: manifestBuffer }
     });
+    for (const shard of shardFiles) {
+      await writer.add({
+        name: shard.name,
+        size: BigInt(shard.buffer.length),
+        crc32: crc32(shard.buffer),
+        source: { kind: "buffer", data: shard.buffer }
+      });
+    }
     for (const item of attachmentFiles) {
       await writer.add({
         name: item.path,
@@ -3862,7 +4064,7 @@ export async function importUserDataBackup(
   try {
     entries = await readZipDirectory(zipPath, {
       maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes,
-      maxEntries: dataTransferResourceLimits.maxZipEntries
+      maxEntries: dataTransferResourceLimits.maxZipEntries + dataTransferResourceLimits.maxShardEntries
     });
   } catch (error) {
     invalidBackup(error instanceof Error ? error.message : "The ZIP archive is invalid");
@@ -3883,7 +4085,7 @@ export async function importUserDataBackup(
     entryNamesCaseFolded.add(caseFoldedName);
     totalSize += entry.uncompressedSize;
   }
-  const maxBytes = BigInt(env.DATA_TRANSFER_MAX_SIZE_MB) * 1024n * 1024n;
+  const maxBytes = backupTransferBudgetBytes();
   if (enforceConfiguredSizeLimits && totalSize > maxBytes) {
     throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup exceeds the configured data-transfer limit");
   }
@@ -3905,6 +4107,7 @@ export async function importUserDataBackup(
     if (error instanceof ApiError) throw error;
     invalidBackup("The backup manifest is invalid");
   }
+  await loadBackupShards(zipPath, entryByName, manifest, manifestEntry.uncompressedSize, enforceConfiguredSizeLimits);
   validateManifestRelations(manifest);
   // Check source/count limits before staging files or deleting existing data.
   // Generated HTML is measured incrementally inside importRows' transaction.
@@ -3945,7 +4148,8 @@ export async function importUserDataBackup(
     ...manifest.attachments.map((item) => item.path),
     ...retainedAttachments.map((item) => item.path),
     ...(manifest.pageCovers ?? []).map((item) => item.path),
-    ...(manifest.customIcons ?? []).map((item) => item.path)
+    ...(manifest.customIcons ?? []).map((item) => item.path),
+    ...(manifest.shards ?? []).map((item) => item.path)
   ]);
   for (const entry of entries) {
     if (!allowedEntries.has(entry.name)) invalidBackup(`Unexpected ZIP entry: ${entry.name}`);

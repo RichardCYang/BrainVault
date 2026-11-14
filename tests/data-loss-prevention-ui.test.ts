@@ -408,7 +408,8 @@ describe("Data-loss prevention integration", () => {
   it("keeps reorder responses scoped to the page that started the request", () => {
     expect(client).toContain('const data = await api(`/api/pages/${task.pageId}/blocks/reorder`');
     expect(client).toContain('applyPageContentVersion(task.pageId, data.pageContentVersion);');
-    expect(client).toContain(`if (state.selectedPage?.id === task.pageId) {\n    for (const block of data.blocks ?? []) updateBlockInState(block);`);
+    // The whole answer is applied in one pass (updateBlocksInState), still only to the same page.
+    expect(client).toContain(`if (state.selectedPage?.id === task.pageId) {\n    updateBlocksInState(data.blocks ?? []);`);
   });
 
   it("preserves other-tab drafts during block and page deletion and surfaces orphaned pages", () => {

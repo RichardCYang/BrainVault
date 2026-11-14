@@ -5,6 +5,7 @@ import multer from "multer";
 import { env } from "../config/env.js";
 import {
   admitDataRestore,
+  backupTransferBudgetBytes,
   dataTransferTempDir,
   ensureDataTransferDirectories,
   importUserDataBackup,
@@ -35,7 +36,9 @@ import { requireUser } from "../utils/schemas.js";
 export const dataRouter = Router();
 dataRouter.use(requireAuth);
 
-const maxBackupUploadBytes = env.DATA_TRANSFER_MAX_SIZE_MB * 1024 * 1024;
+// The same archive budget an export may produce, so every backup this server
+// creates can be uploaded back. Bytes stream to disk, never into memory.
+const maxBackupUploadBytes = Number(backupTransferBudgetBytes());
 const maxMultipartOverheadBytes = 1024 * 1024;
 
 function enforceBackupUploadRequestSize(req: Request, _res: Response, next: NextFunction) {

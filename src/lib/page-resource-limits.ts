@@ -9,7 +9,12 @@ const MiB = 1024 * 1024;
 // snapshot semantics. Bound its source before fetching bodies, and its output
 // before serialization. These are server boundaries, independent of the client.
 export const pageResourceLimits = Object.freeze({
-  maxBlocks: 2_000,
+  // Measured against a real database and headless Edge (2026-11-14): a 20,000
+  // block page loads and renders in 2.5 s, and an Enter split mid-page takes
+  // about 4.7 s end to end (server reorder 2.1 s). Every step grows linearly.
+  // Reorders use the compact form (block-order-request.ts), so this is not
+  // bounded by the request validation budget (tests/page-block-limit.node.test.mjs).
+  maxBlocks: 20_000,
   maxMetadataBytes: 8 * MiB,
   maxMarkdownBytes: 4 * MiB,
   maxHtmlCacheBytes: 8 * MiB,
@@ -18,6 +23,39 @@ export const pageResourceLimits = Object.freeze({
   maxRenderBytes: 16 * MiB,
   concurrentProjections: 2
 });
+
+// A shared page lives in one real-time (Yjs) document, and the server refuses
+// any document update with more than 100,000 structs (yjs-validation.ts), a
+// security bound that stays. A plain block takes 10 structs and editing adds
+// more, so 5,000 blocks keeps half the budget free (measured 2026-11-14; at
+// 20,000 blocks a shared page could not open at all).
+export const sharedPageResourceLimits = Object.freeze({
+  maxBlocks: 5_000
+});
+
+/**
+ * Refuses to make pages shared, or to open them for live editing, when they
+ * hold more blocks than a shared document can. Counts only; no bodies are read.
+ */
+export async function assertPagesFitSharedDocument(client: DbClient, pageIds: readonly string[]) {
+  const unique = [...new Set(pageIds)];
+  for (let start = 0; start < unique.length; start += 500) {
+    const batch = unique.slice(start, start + 500);
+    const over = await client.queryOne<{ page_id: string }>(
+      `SELECT page_id FROM blocks WHERE page_id IN (${batch.map(() => "?").join(", ")})
+       GROUP BY page_id HAVING COUNT(*) > ? LIMIT 1`,
+      [...batch, sharedPageResourceLimits.maxBlocks]
+    );
+    if (over) {
+      throw new ApiError(
+        413,
+        "SHARED_PAGE_BLOCK_LIMIT_EXCEEDED",
+        `A shared page can hold up to ${sharedPageResourceLimits.maxBlocks} blocks. Move part of this page into a subpage before sharing it.`,
+        { pageId: over.page_id, maximum: sharedPageResourceLimits.maxBlocks }
+      );
+    }
+  }
+}
 
 export type PageResourceUsage = {
   blocks: number;

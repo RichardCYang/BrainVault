@@ -82,8 +82,8 @@ const result = {
     navigationCollapseStateLostAfterSuccessfulRestore: vulnerableAfter.navigationCollapsedPageIds.length === 0
   },
   fixed: {
-    currentBackupVersionIs6: currentTransfer.includes("const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;"),
-    v1ThroughV6ImportCompatibilityRetained: /z\.literal\(legacyBackupVersion\)[\s\S]*?z\.literal\(pageCoverFileBackupVersion\)[\s\S]*?z\.literal\(uploadedAssetBackupVersion\)[\s\S]*?z\.literal\(completeWorkspaceBackupVersion\)[\s\S]*?z\.literal\(explicitWorkspaceBackupVersion\)[\s\S]*?z\.literal\(backupVersion\)/.test(currentTransfer),
+    currentBackupVersionIs6: currentTransfer.includes("const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst iconPublicationBackupVersion = 6;") && currentTransfer.includes("const shardedBackupVersion = 7;\nconst backupVersion = shardedBackupVersion;"),
+    v1ThroughV6ImportCompatibilityRetained: /z\.literal\(legacyBackupVersion\)[\s\S]*?z\.literal\(pageCoverFileBackupVersion\)[\s\S]*?z\.literal\(uploadedAssetBackupVersion\)[\s\S]*?z\.literal\(completeWorkspaceBackupVersion\)[\s\S]*?z\.literal\(explicitWorkspaceBackupVersion\)[\s\S]*?z\.literal\(iconPublicationBackupVersion\)[\s\S]*?z\.literal\(shardedBackupVersion\)/.test(currentTransfer),
     manifestExportsPageVersions: currentTransfer.includes("pageVersions: snapshot.pageVersions"),
     manifestExportsNavigationState: currentTransfer.includes("navigationCollapsedPageIds: snapshot.navigationCollapsedPageIds"),
     restoreReinsertsPageVersions: currentTransfer.includes("INSERT INTO page_versions"),

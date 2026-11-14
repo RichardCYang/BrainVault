@@ -13,8 +13,36 @@ export const dataTransferResourceLimits = Object.freeze({
   maxCustomIconLibraryRemovals: 50_000,
   // manifest + uploaded attachment files (active + retained) + page covers + uploaded custom icons
   maxZipEntries: 45_001,
-  maxCentralDirectoryBytes: 8 * 1024 * 1024
+  maxCentralDirectoryBytes: 8 * 1024 * 1024,
+  // Version 7 backups also carry their largest sections as separate JSON
+  // shards. Their count is bounded here; their total bytes by the data budget.
+  maxShardEntries: 4_096,
+  shardTargetBytes: 8 * 1024 * 1024,
+  maxShardBytes: 16 * 1024 * 1024
 });
+
+/**
+ * Bytes of backup JSON one export or restore may hold in memory. A restore
+ * keeps roughly twice its JSON size as objects, and up to every configured
+ * export and import can run at once, so each gets an equal share of the heap.
+ * Never below the legacy manifest limit, so nothing that restored before is
+ * refused now.
+ */
+export function computeBackupDataBudgetBytes({
+  configuredBytes,
+  heapLimitBytes,
+  concurrentOperations,
+  minimumBytes
+}: {
+  configuredBytes: number;
+  heapLimitBytes: number;
+  concurrentOperations: number;
+  minimumBytes: number;
+}) {
+  const operations = Math.max(1, Math.floor(concurrentOperations));
+  const heapShare = Math.floor(heapLimitBytes / (2 * operations));
+  return Math.max(minimumBytes, Math.min(configuredBytes, heapShare));
+}
 
 function jsonStringByteLength(value: string) {
   return Buffer.byteLength(JSON.stringify(value), "utf8");

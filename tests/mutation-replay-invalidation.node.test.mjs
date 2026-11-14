@@ -88,13 +88,10 @@ test("structural block edits clear obsolete block PATCH replay markers", async (
     blocks,
     /SET parent_block_id = \?, sort_order = \?, last_mutation_id = NULL,\s*last_mutation_hash = NULL, edit_version = edit_version \+ 1/
   );
+  // Reorders write their rows in batches; each row still clears its replay marker.
   assert.match(
     blocks,
-    /SET sort_order = \?, parent_block_id = \?, last_mutation_id = NULL,\s*last_mutation_hash = NULL, edit_version = edit_version \+ 1/
-  );
-  assert.match(
-    blocks,
-    /SET sort_order = \?, last_mutation_id = NULL, last_mutation_hash = NULL,\s*edit_version = edit_version \+ 1/
+    /SET sort_order = CASE id \$\{sortCases\} END,\s*parent_block_id = [^\n]+,\s*last_mutation_id = NULL, last_mutation_hash = NULL, edit_version = edit_version \+ 1/
   );
 });
 

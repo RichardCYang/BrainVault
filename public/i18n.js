@@ -10918,12 +10918,163 @@ const dataLossDeepReviewTranslations = {
   }
 };
 
+// Long pastes continue in new blocks instead of being refused.
+const splitPasteTranslations = {
+  en: {
+    "status.pasteSplitIntoSubpage": "Paste into a new subpage",
+    "status.pasteSubpageTitle": "{title} (continued)",
+    "status.pasteSplitIntoSubpageDone": "The paste is in a new subpage, over {count} blocks.",
+    "status.pasteSplitting": "Pasting across blocks… {done} of {count}",
+    "status.pasteSplitDone": "The paste was longer than one block holds, so it continues over {count} blocks.",
+    "status.pasteSplitInterrupted": "The paste stopped after {added} of {count} new blocks. This block was left unchanged and your clipboard still has everything, so nothing is lost; remove the added blocks or paste the rest.",
+    "status.pasteSplitSourceChanged": "This block changed while the paste was being added, so its text was left as it is. The new blocks below hold the rest of the paste; your clipboard still has all of it.",
+    "status.pasteSplitPageFull": "Nothing was pasted: spread over {count} blocks, it would not fit on this page. Paste it into a new subpage instead; your clipboard still has all of it."
+  },
+  ja: {
+    "status.pasteSplitIntoSubpage": "新しいサブページに貼り付け",
+    "status.pasteSubpageTitle": "{title}（続き）",
+    "status.pasteSplitIntoSubpageDone": "新しいサブページに {count} 個のブロックに分けて貼り付けました。",
+    "status.pasteSplitting": "複数のブロックに貼り付けています… {count} 個中 {done} 個",
+    "status.pasteSplitDone": "1 つのブロックに収まらない長さだったため、{count} 個のブロックに分けて貼り付けました。",
+    "status.pasteSplitInterrupted": "新しいブロック {count} 個中 {added} 個を追加したところで貼り付けが止まりました。このブロックは変更しておらず、クリップボードにもすべて残っているので、失われた内容はありません。追加されたブロックを削除するか、残りを貼り付けてください。",
+    "status.pasteSplitSourceChanged": "貼り付け中にこのブロックが変更されたため、このブロックのテキストはそのままにしました。貼り付けの残りは下の新しいブロックにあります。クリップボードにもすべて残っています。",
+    "status.pasteSplitPageFull": "貼り付けませんでした。{count} 個のブロックに分けてもこのページに収まりません。新しいサブページに貼り付けてください。クリップボードの内容はそのまま残っています。"
+  },
+  ko: {
+    "status.pasteSplitIntoSubpage": "새 하위 페이지에 붙여넣기",
+    "status.pasteSubpageTitle": "{title} (이어서)",
+    "status.pasteSplitIntoSubpageDone": "새 하위 페이지에 {count}개 블록으로 나눠 붙여넣었습니다.",
+    "status.pasteSplitting": "여러 블록에 나눠 붙여넣는 중… {count}개 중 {done}개",
+    "status.pasteSplitDone": "한 블록에 다 들어가지 않는 길이라서 {count}개 블록에 나눠 붙여넣었습니다.",
+    "status.pasteSplitInterrupted": "새 블록 {count}개 중 {added}개를 추가한 뒤 붙여넣기가 멈췄습니다. 이 블록은 바뀌지 않았고 클립보드에도 전부 남아 있어 잃은 내용은 없습니다. 추가된 블록을 지우거나 나머지를 붙여넣어 주세요.",
+    "status.pasteSplitSourceChanged": "붙여넣는 동안 이 블록이 바뀌어서 이 블록의 글은 그대로 두었습니다. 붙여넣은 나머지 내용은 아래 새 블록들에 있고, 클립보드에도 전부 남아 있습니다.",
+    "status.pasteSplitPageFull": "붙여넣지 않았습니다. {count}개 블록으로 나눠도 이 페이지에 다 들어가지 않습니다. 새 하위 페이지에 붙여넣어 주세요. 클립보드 내용은 그대로 남아 있습니다."
+  },
+  fr: {
+    "status.pasteSplitIntoSubpage": "Coller dans une nouvelle sous-page",
+    "status.pasteSubpageTitle": "{title} (suite)",
+    "status.pasteSplitIntoSubpageDone": "Le texte collé est dans une nouvelle sous-page, sur {count} blocs.",
+    "status.pasteSplitting": "Collage sur plusieurs blocs… {done} sur {count}",
+    "status.pasteSplitDone": "Le texte collé dépassait la taille d’un bloc ; il continue donc sur {count} blocs.",
+    "status.pasteSplitInterrupted": "Le collage s’est arrêté après {added} des {count} nouveaux blocs. Ce bloc n’a pas été modifié et votre presse-papiers contient toujours tout, donc rien n’est perdu ; supprimez les blocs ajoutés ou collez le reste.",
+    "status.pasteSplitSourceChanged": "Ce bloc a changé pendant le collage, son texte a donc été laissé tel quel. Les nouveaux blocs en dessous contiennent la suite ; votre presse-papiers contient toujours tout.",
+    "status.pasteSplitPageFull": "Rien n’a été collé : réparti sur {count} blocs, le texte ne tiendrait pas sur cette page. Collez-le plutôt dans une nouvelle sous-page ; votre presse-papiers contient toujours tout."
+  },
+  de: {
+    "status.pasteSplitIntoSubpage": "In eine neue Unterseite einfügen",
+    "status.pasteSubpageTitle": "{title} (Fortsetzung)",
+    "status.pasteSplitIntoSubpageDone": "Der Text steht in einer neuen Unterseite, verteilt auf {count} Blöcke.",
+    "status.pasteSplitting": "Wird auf mehrere Blöcke verteilt … {done} von {count}",
+    "status.pasteSplitDone": "Der eingefügte Text war länger, als ein Block fasst, und geht daher über {count} Blöcke.",
+    "status.pasteSplitInterrupted": "Das Einfügen stoppte nach {added} von {count} neuen Blöcken. Dieser Block blieb unverändert und die Zwischenablage enthält weiterhin alles, es ging also nichts verloren; entfernen Sie die hinzugefügten Blöcke oder fügen Sie den Rest ein.",
+    "status.pasteSplitSourceChanged": "Dieser Block wurde während des Einfügens geändert, sein Text blieb daher unverändert. Die neuen Blöcke darunter enthalten den Rest; die Zwischenablage enthält weiterhin alles.",
+    "status.pasteSplitPageFull": "Nichts eingefügt: Auch auf {count} Blöcke verteilt passt der Text nicht auf diese Seite. Fügen Sie ihn in eine neue Unterseite ein; die Zwischenablage enthält weiterhin alles."
+  },
+  es: {
+    "status.pasteSplitIntoSubpage": "Pegar en una subpágina nueva",
+    "status.pasteSubpageTitle": "{title} (continuación)",
+    "status.pasteSplitIntoSubpageDone": "Lo pegado está en una subpágina nueva, en {count} bloques.",
+    "status.pasteSplitting": "Pegando en varios bloques… {done} de {count}",
+    "status.pasteSplitDone": "Lo pegado no cabía en un bloque, así que continúa en {count} bloques.",
+    "status.pasteSplitInterrupted": "El pegado se detuvo tras {added} de {count} bloques nuevos. Este bloque no cambió y el portapapeles conserva todo, así que no se perdió nada; elimina los bloques añadidos o pega el resto.",
+    "status.pasteSplitSourceChanged": "Este bloque cambió mientras se pegaba, así que su texto se dejó como estaba. Los bloques nuevos de abajo tienen el resto; el portapapeles conserva todo.",
+    "status.pasteSplitPageFull": "No se pegó nada: repartido en {count} bloques no cabría en esta página. Pégalo en una subpágina nueva; el portapapeles conserva todo."
+  },
+  pt: {
+    "status.pasteSplitIntoSubpage": "Colar em uma subpágina nova",
+    "status.pasteSubpageTitle": "{title} (continuação)",
+    "status.pasteSplitIntoSubpageDone": "O texto colado está em uma subpágina nova, em {count} blocos.",
+    "status.pasteSplitting": "Colando em vários blocos… {done} de {count}",
+    "status.pasteSplitDone": "O texto colado não cabia em um bloco, então continua em {count} blocos.",
+    "status.pasteSplitInterrupted": "A colagem parou depois de {added} de {count} blocos novos. Este bloco não mudou e a área de transferência ainda tem tudo, então nada se perdeu; remova os blocos adicionados ou cole o restante.",
+    "status.pasteSplitSourceChanged": "Este bloco mudou durante a colagem, então o texto dele ficou como estava. Os blocos novos abaixo têm o restante; a área de transferência ainda tem tudo.",
+    "status.pasteSplitPageFull": "Nada foi colado: dividido em {count} blocos, não caberia nesta página. Cole em uma subpágina nova; a área de transferência ainda tem tudo."
+  }
+};
+
+
+// Page budget errors say what to do next instead of showing the server's English text.
+const pageLimitTranslations = {
+  en: {
+    "errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED": "A shared page can hold up to 5,000 blocks, and this one would go over. Nothing was changed. Move part of it into a subpage; to do that on a page that is already shared, stop sharing it first.",
+    "errors.PAGE_BLOCK_LIMIT_EXCEEDED": "This page already holds as many blocks as a page can. Nothing was changed. Move part of it into a subpage, or continue in a new subpage.",
+    "errors.PAGE_MARKDOWN_LIMIT_EXCEEDED": "This page already holds as much content as a page can. Nothing was changed. Move part of it into a subpage, or continue in a new subpage.",
+    "errors.PAGE_METADATA_LIMIT_EXCEEDED": "This page already holds as much content as a page can. Nothing was changed. Move part of it into a subpage, or continue in a new subpage.",
+    "errors.PAGE_HTML_CACHE_LIMIT_EXCEEDED": "This page already holds as much content as a page can. Nothing was changed. Move part of it into a subpage, or continue in a new subpage.",
+    "errors.PAGE_SOURCE_LIMIT_EXCEEDED": "This page already holds as much content as a page can. Nothing was changed. Move part of it into a subpage, or continue in a new subpage.",
+    "errors.PAGE_RESPONSE_TOO_LARGE": "This page already holds as much content as a page can. Nothing was changed. Move part of it into a subpage, or continue in a new subpage.",
+    "errors.PAGE_RENDER_LIMIT_EXCEEDED": "This page already holds as much content as a page can. Nothing was changed. Move part of it into a subpage, or continue in a new subpage."
+  },
+  ja: {
+    "errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED": "共有ページに入れられるブロックは 5,000 個までで、このページはそれを超えます。何も変更していません。一部をサブページに移してください。すでに共有中のページは、先に共有を解除してください。",
+    "errors.PAGE_BLOCK_LIMIT_EXCEEDED": "このページにはこれ以上ブロックを追加できません。何も変更していません。一部をサブページに移すか、新しいサブページで続けてください。",
+    "errors.PAGE_MARKDOWN_LIMIT_EXCEEDED": "このページにはこれ以上内容を追加できません。何も変更していません。一部をサブページに移すか、新しいサブページで続けてください。",
+    "errors.PAGE_METADATA_LIMIT_EXCEEDED": "このページにはこれ以上内容を追加できません。何も変更していません。一部をサブページに移すか、新しいサブページで続けてください。",
+    "errors.PAGE_HTML_CACHE_LIMIT_EXCEEDED": "このページにはこれ以上内容を追加できません。何も変更していません。一部をサブページに移すか、新しいサブページで続けてください。",
+    "errors.PAGE_SOURCE_LIMIT_EXCEEDED": "このページにはこれ以上内容を追加できません。何も変更していません。一部をサブページに移すか、新しいサブページで続けてください。",
+    "errors.PAGE_RESPONSE_TOO_LARGE": "このページにはこれ以上内容を追加できません。何も変更していません。一部をサブページに移すか、新しいサブページで続けてください。",
+    "errors.PAGE_RENDER_LIMIT_EXCEEDED": "このページにはこれ以上内容を追加できません。何も変更していません。一部をサブページに移すか、新しいサブページで続けてください。"
+  },
+  ko: {
+    "errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED": "공유 페이지에는 블록을 5,000개까지 넣을 수 있는데, 이 페이지는 그보다 많아집니다. 아무것도 바뀌지 않았습니다. 일부를 하위 페이지로 옮겨 주세요. 이미 공유 중인 페이지라면 먼저 공유를 해제해 주세요.",
+    "errors.PAGE_BLOCK_LIMIT_EXCEEDED": "이 페이지에는 더 이상 블록을 추가할 수 없습니다. 아무것도 바뀌지 않았습니다. 일부를 하위 페이지로 옮기거나 새 하위 페이지에서 이어서 작성해 주세요.",
+    "errors.PAGE_MARKDOWN_LIMIT_EXCEEDED": "이 페이지에는 더 이상 내용을 추가할 수 없습니다. 아무것도 바뀌지 않았습니다. 일부를 하위 페이지로 옮기거나 새 하위 페이지에서 이어서 작성해 주세요.",
+    "errors.PAGE_METADATA_LIMIT_EXCEEDED": "이 페이지에는 더 이상 내용을 추가할 수 없습니다. 아무것도 바뀌지 않았습니다. 일부를 하위 페이지로 옮기거나 새 하위 페이지에서 이어서 작성해 주세요.",
+    "errors.PAGE_HTML_CACHE_LIMIT_EXCEEDED": "이 페이지에는 더 이상 내용을 추가할 수 없습니다. 아무것도 바뀌지 않았습니다. 일부를 하위 페이지로 옮기거나 새 하위 페이지에서 이어서 작성해 주세요.",
+    "errors.PAGE_SOURCE_LIMIT_EXCEEDED": "이 페이지에는 더 이상 내용을 추가할 수 없습니다. 아무것도 바뀌지 않았습니다. 일부를 하위 페이지로 옮기거나 새 하위 페이지에서 이어서 작성해 주세요.",
+    "errors.PAGE_RESPONSE_TOO_LARGE": "이 페이지에는 더 이상 내용을 추가할 수 없습니다. 아무것도 바뀌지 않았습니다. 일부를 하위 페이지로 옮기거나 새 하위 페이지에서 이어서 작성해 주세요.",
+    "errors.PAGE_RENDER_LIMIT_EXCEEDED": "이 페이지에는 더 이상 내용을 추가할 수 없습니다. 아무것도 바뀌지 않았습니다. 일부를 하위 페이지로 옮기거나 새 하위 페이지에서 이어서 작성해 주세요."
+  },
+  fr: {
+    "errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED": "Une page partagée peut contenir jusqu’à 5 000 blocs, et celle-ci dépasserait ce nombre. Rien n’a été modifié. Déplacez-en une partie dans une sous-page ; si la page est déjà partagée, arrêtez d’abord le partage.",
+    "errors.PAGE_BLOCK_LIMIT_EXCEEDED": "Cette page contient déjà le nombre maximal de blocs. Rien n’a été modifié. Déplacez-en une partie dans une sous-page ou continuez dans une nouvelle sous-page.",
+    "errors.PAGE_MARKDOWN_LIMIT_EXCEEDED": "Cette page contient déjà le maximum de contenu. Rien n’a été modifié. Déplacez-en une partie dans une sous-page ou continuez dans une nouvelle sous-page.",
+    "errors.PAGE_METADATA_LIMIT_EXCEEDED": "Cette page contient déjà le maximum de contenu. Rien n’a été modifié. Déplacez-en une partie dans une sous-page ou continuez dans une nouvelle sous-page.",
+    "errors.PAGE_HTML_CACHE_LIMIT_EXCEEDED": "Cette page contient déjà le maximum de contenu. Rien n’a été modifié. Déplacez-en une partie dans une sous-page ou continuez dans une nouvelle sous-page.",
+    "errors.PAGE_SOURCE_LIMIT_EXCEEDED": "Cette page contient déjà le maximum de contenu. Rien n’a été modifié. Déplacez-en une partie dans une sous-page ou continuez dans une nouvelle sous-page.",
+    "errors.PAGE_RESPONSE_TOO_LARGE": "Cette page contient déjà le maximum de contenu. Rien n’a été modifié. Déplacez-en une partie dans une sous-page ou continuez dans une nouvelle sous-page.",
+    "errors.PAGE_RENDER_LIMIT_EXCEEDED": "Cette page contient déjà le maximum de contenu. Rien n’a été modifié. Déplacez-en une partie dans une sous-page ou continuez dans une nouvelle sous-page."
+  },
+  de: {
+    "errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED": "Eine geteilte Seite fasst höchstens 5.000 Blöcke, diese Seite würde darüber liegen. Nichts wurde geändert. Verschieben Sie einen Teil in eine Unterseite; ist die Seite bereits geteilt, beenden Sie zuerst die Freigabe.",
+    "errors.PAGE_BLOCK_LIMIT_EXCEEDED": "Diese Seite enthält bereits die maximale Anzahl an Blöcken. Nichts wurde geändert. Verschieben Sie einen Teil in eine Unterseite oder schreiben Sie in einer neuen Unterseite weiter.",
+    "errors.PAGE_MARKDOWN_LIMIT_EXCEEDED": "Diese Seite enthält bereits den maximalen Inhalt. Nichts wurde geändert. Verschieben Sie einen Teil in eine Unterseite oder schreiben Sie in einer neuen Unterseite weiter.",
+    "errors.PAGE_METADATA_LIMIT_EXCEEDED": "Diese Seite enthält bereits den maximalen Inhalt. Nichts wurde geändert. Verschieben Sie einen Teil in eine Unterseite oder schreiben Sie in einer neuen Unterseite weiter.",
+    "errors.PAGE_HTML_CACHE_LIMIT_EXCEEDED": "Diese Seite enthält bereits den maximalen Inhalt. Nichts wurde geändert. Verschieben Sie einen Teil in eine Unterseite oder schreiben Sie in einer neuen Unterseite weiter.",
+    "errors.PAGE_SOURCE_LIMIT_EXCEEDED": "Diese Seite enthält bereits den maximalen Inhalt. Nichts wurde geändert. Verschieben Sie einen Teil in eine Unterseite oder schreiben Sie in einer neuen Unterseite weiter.",
+    "errors.PAGE_RESPONSE_TOO_LARGE": "Diese Seite enthält bereits den maximalen Inhalt. Nichts wurde geändert. Verschieben Sie einen Teil in eine Unterseite oder schreiben Sie in einer neuen Unterseite weiter.",
+    "errors.PAGE_RENDER_LIMIT_EXCEEDED": "Diese Seite enthält bereits den maximalen Inhalt. Nichts wurde geändert. Verschieben Sie einen Teil in eine Unterseite oder schreiben Sie in einer neuen Unterseite weiter."
+  },
+  es: {
+    "errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED": "Una página compartida admite hasta 5.000 bloques y esta los superaría. No se cambió nada. Mueve una parte a una subpágina; si la página ya está compartida, deja de compartirla primero.",
+    "errors.PAGE_BLOCK_LIMIT_EXCEEDED": "Esta página ya tiene el máximo de bloques. No se cambió nada. Mueve una parte a una subpágina o continúa en una subpágina nueva.",
+    "errors.PAGE_MARKDOWN_LIMIT_EXCEEDED": "Esta página ya tiene el máximo de contenido. No se cambió nada. Mueve una parte a una subpágina o continúa en una subpágina nueva.",
+    "errors.PAGE_METADATA_LIMIT_EXCEEDED": "Esta página ya tiene el máximo de contenido. No se cambió nada. Mueve una parte a una subpágina o continúa en una subpágina nueva.",
+    "errors.PAGE_HTML_CACHE_LIMIT_EXCEEDED": "Esta página ya tiene el máximo de contenido. No se cambió nada. Mueve una parte a una subpágina o continúa en una subpágina nueva.",
+    "errors.PAGE_SOURCE_LIMIT_EXCEEDED": "Esta página ya tiene el máximo de contenido. No se cambió nada. Mueve una parte a una subpágina o continúa en una subpágina nueva.",
+    "errors.PAGE_RESPONSE_TOO_LARGE": "Esta página ya tiene el máximo de contenido. No se cambió nada. Mueve una parte a una subpágina o continúa en una subpágina nueva.",
+    "errors.PAGE_RENDER_LIMIT_EXCEEDED": "Esta página ya tiene el máximo de contenido. No se cambió nada. Mueve una parte a una subpágina o continúa en una subpágina nueva."
+  },
+  pt: {
+    "errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED": "Uma página compartilhada comporta até 5.000 blocos, e esta passaria disso. Nada foi alterado. Mova uma parte para uma subpágina; se a página já estiver compartilhada, pare de compartilhá-la primeiro.",
+    "errors.PAGE_BLOCK_LIMIT_EXCEEDED": "Esta página já tem o máximo de blocos. Nada foi alterado. Mova uma parte para uma subpágina ou continue em uma subpágina nova.",
+    "errors.PAGE_MARKDOWN_LIMIT_EXCEEDED": "Esta página já tem o máximo de conteúdo. Nada foi alterado. Mova uma parte para uma subpágina ou continue em uma subpágina nova.",
+    "errors.PAGE_METADATA_LIMIT_EXCEEDED": "Esta página já tem o máximo de conteúdo. Nada foi alterado. Mova uma parte para uma subpágina ou continue em uma subpágina nova.",
+    "errors.PAGE_HTML_CACHE_LIMIT_EXCEEDED": "Esta página já tem o máximo de conteúdo. Nada foi alterado. Mova uma parte para uma subpágina ou continue em uma subpágina nova.",
+    "errors.PAGE_SOURCE_LIMIT_EXCEEDED": "Esta página já tem o máximo de conteúdo. Nada foi alterado. Mova uma parte para uma subpágina ou continue em uma subpágina nova.",
+    "errors.PAGE_RESPONSE_TOO_LARGE": "Esta página já tem o máximo de conteúdo. Nada foi alterado. Mova uma parte para uma subpágina ou continue em uma subpágina nova.",
+    "errors.PAGE_RENDER_LIMIT_EXCEEDED": "Esta página já tem o máximo de conteúdo. Nada foi alterado. Mova uma parte para uma subpágina ou continue em uma subpágina nova."
+  }
+};
+
 for (const [language, entries] of [
   ...Object.entries(catalogCompletionTranslations),
   ...Object.entries(apiErrorAndRecoveryTranslations),
   ...Object.entries(dataLossGuardTranslations),
   ...Object.entries(dataLossBrowserReviewTranslations),
-  ...Object.entries(dataLossDeepReviewTranslations)
+  ...Object.entries(dataLossDeepReviewTranslations),
+  ...Object.entries(splitPasteTranslations),
+  ...Object.entries(pageLimitTranslations)
 ]) {
   const catalog = translationCatalogs[language];
   if (!catalog) continue;

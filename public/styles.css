@@ -1801,6 +1801,21 @@ kbd {
   border-top: 0;
 }
 
+/* Large pages: rows far from the viewport skip layout and paint until they
+   come near (farRowObserver in app.js). "auto" keeps the last rendered height,
+   so scrolling does not jump. Rows near the viewport are never contained, so
+   menus and handles that overflow a row are not clipped. */
+.editor-block-row.is-far {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 44px;
+}
+
+@media print {
+  .editor-block-row.is-far {
+    content-visibility: visible;
+  }
+}
+
 .editor-block-row {
   position: relative;
   display: grid;

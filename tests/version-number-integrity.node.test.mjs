@@ -45,8 +45,9 @@ test("every SQL version increment is fenced below the JavaScript safe-integer ce
   assert.equal(count(pageRoute, /edit_version = edit_version \+ 1/g), 3);
   assert.equal(count(pageRoute, /edit_version < \?/g), 3);
 
-  assert.equal(count(blockRoute, /edit_version = edit_version \+ 1/g), 5);
-  assert.equal(count(blockRoute, /edit_version < \?/g), 5);
+  // The reorder writes its rows in batches: one statement, still fenced.
+  assert.equal(count(blockRoute, /edit_version = edit_version \+ 1/g), 4);
+  assert.equal(count(blockRoute, /edit_version < \?/g), 4);
   assert.equal(count(blockRoute, /content_version = content_version \+ 1/g), 1);
   assert.equal(count(blockRoute, /content_version < \?/g), 1);
 

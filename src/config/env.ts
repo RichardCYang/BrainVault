@@ -115,6 +115,9 @@ const envSchema = z.object({
   ATTACHMENT_UPLOAD_MAX_CONCURRENT: z.coerce.number().int().min(1).max(32).default(4),
   DATA_TRANSFER_MAX_SIZE_MB: z.coerce.number().int().min(1).max(16_384).default(1024),
   DATA_TRANSFER_MAX_MANIFEST_SIZE_MB: z.coerce.number().int().min(1).max(64).default(16),
+  // Total backup JSON (manifest plus version 7 shards). The server further caps
+  // it to a share of the Node.js heap, so raising it never risks memory.
+  DATA_TRANSFER_MAX_DATA_SIZE_MB: z.coerce.number().int().min(16).max(65_536).default(4_096),
   DATA_EXPORT_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60_000),
   DATA_EXPORT_MAX: z.coerce.number().int().positive().default(20),
   DATA_EXPORT_MAX_CONCURRENT: z.coerce.number().int().min(1).max(32).default(2),

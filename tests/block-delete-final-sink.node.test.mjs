@@ -97,9 +97,10 @@ test("authorized block write sinks stay scoped to the locked page", () => {
   const reorderStart = route.indexOf('blockRouter.post(\n  "/pages/:pageId/blocks/reorder"');
   assert.notEqual(reorderStart, -1, "missing reorder route");
   const reorderRoute = route.slice(reorderStart);
+  // Batched reorder writes name each (id, expected version) pair and stay scoped to the page.
   const scopedReorderWrites = reorderRoute.match(
-    /WHERE id = \? AND page_id = \? AND edit_version = \?/g
+    /WHERE page_id = \? AND edit_version < \?\s+AND \(id, edit_version\) IN \(/g
   ) ?? [];
-  assert.equal(scopedReorderWrites.length, 2);
+  assert.equal(scopedReorderWrites.length, 1);
   assert.doesNotMatch(reorderRoute, /WHERE id = \? AND edit_version = \?/);
 });

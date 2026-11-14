@@ -36,6 +36,7 @@ import {
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
 import { quarantineCollaborationHistoryForOwner } from "../lib/collaboration-quarantine.js";
 import { lockUserAttachmentGeneration } from "../lib/attachments.js";
+import { assertPagesFitSharedDocument } from "../lib/page-resource-limits.js";
 import {
   grantDirectPageRecovery,
   grantLegacyYjsPageRecovery,
@@ -646,6 +647,7 @@ collectionSharingRouter.post(
           ...firstSharePages.map((page) => page.id),
           ...downgradedTargetPages.map((page) => page.id)
         ])];
+        await assertPagesFitSharedDocument(client, firstSharePages.map((page) => page.id));
         await assertNoActiveCollaborationWriteLeases(client, fencedPageIds);
         for (const page of downgradedTargetPages) {
           // READ replaces the direct EDIT authority, so preserve any local write

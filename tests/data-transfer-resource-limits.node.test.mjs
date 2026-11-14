@@ -122,7 +122,7 @@ test("backup route and manifest limits are applied before expensive import work"
   assert.ok(routeSource.indexOf('backupUpload.single("backup")') < routeSource.indexOf("releaseDataImport = beginDataImportProcessing(res)"));
   assert.ok(routeSource.includes("releaseDataImport?.();"));
   assert.ok(transferSource.includes("DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024"));
-  assert.ok(transferSource.includes("measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1)"));
+  assert.ok(transferSource.includes("measureJsonUtf8BytesWithinLimit(rootManifest, maxManifestBytes - 1)"));
   assert.ok(transferSource.includes("manifestEntry.uncompressedSize > BigInt(maxManifestBytes)"));
   assert.ok(transferSource.includes("const byteCountSchema = z.string().min(1).max(20)"));
   assert.ok(transferSource.includes("maxCentralDirectoryBytes: dataTransferResourceLimits.maxCentralDirectoryBytes"));

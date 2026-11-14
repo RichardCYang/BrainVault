@@ -246,8 +246,8 @@ test("BV-45: older backups never invent publication grants", async () => {
   await h.restore(manifest);
   assert.equal(h.rows.length, 0);
   const source = read("src/lib/data-transfer.ts");
-  assert.match(source, /manifest\.version >= backupVersion && !manifest\.customIconPublications/);
-  assert.match(source, /manifest\.version < backupVersion && manifest\.customIconPublications !== undefined/);
+  assert.match(source, /manifest\.version >= iconPublicationBackupVersion && !manifest\.customIconPublications/);
+  assert.match(source, /manifest\.version < iconPublicationBackupVersion && manifest\.customIconPublications !== undefined/);
   assert.match(source, /custom-icon-publication\\0/);
   assert.match(source, /customIconPublications: snapshot\.customIconPublications/);
   assert.match(source, /customIconPublications\.map\(\(item\) => `\$\{item\.page_id\}\\u0000\$\{item\.fileName\}`\)/);

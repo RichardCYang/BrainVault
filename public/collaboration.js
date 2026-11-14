@@ -1702,7 +1702,9 @@ class PageCollaborationSession {
       const recoveryIntegrityFailure =
         error?.code === "COLLABORATION_RECOVERY_INSPECTION_FAILED"
         || error?.code === "COLLABORATION_RECOVERY_DECODE_FAILED";
-      if (!recoveryIntegrityFailure) this.scheduleReconnect();
+      // A page too large for one shared document stays too large on retry.
+      const pageTooLargeToShare = error?.code === "SHARED_PAGE_BLOCK_LIMIT_EXCEEDED";
+      if (!recoveryIntegrityFailure && !pageTooLargeToShare) this.scheduleReconnect();
     } finally {
       this.connecting = false;
     }

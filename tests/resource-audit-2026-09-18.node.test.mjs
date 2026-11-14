@@ -170,8 +170,10 @@ test("resource audit: reordered writes retain optimistic SQL predicates and page
   const start = routes.indexOf('blockRouter.post(\n  "/pages/:pageId/blocks/reorder"');
   const route = routes.slice(start);
   assert.match(route, /lockPage: true/);
-  assert.match(route, /WHERE id = \? AND page_id = \? AND edit_version = \? AND edit_version < \?/);
-  assert.match(route, /Number\(result.affectedRows\) !== 1/);
+  // Rows are written in batches; each still needs its expected version, the
+  // page scope and the safe-integer fence, and a batch must change every row.
+  assert.match(route, /WHERE page_id = \? AND edit_version < \?\s+AND \(id, edit_version\) IN \(/);
+  assert.match(route, /Number\(result.affectedRows\) !== batch\.length/);
 });
 
 test("resource audit: unrelated highlighter and tree code remain unchanged after line-ending normalization", () => {

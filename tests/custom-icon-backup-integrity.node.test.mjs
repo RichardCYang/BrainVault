@@ -8,7 +8,7 @@ test("backup v3+ makes uploaded custom icons self-contained and restorable", asy
   const transfer = normalize(await readFile(new URL("../src/lib/data-transfer.ts", import.meta.url), "utf8"));
   const customIcons = normalize(await readFile(new URL("../src/lib/custom-icons.ts", import.meta.url), "utf8"));
 
-  assert.match(transfer, /const pageCoverFileBackupVersion = 2;\nconst uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;/);
+  assert.match(transfer, /const pageCoverFileBackupVersion = 2;\nconst uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst iconPublicationBackupVersion = 6;[\s\S]*?const shardedBackupVersion = 7;\nconst backupVersion = shardedBackupVersion;/);
   assert.match(transfer, /customIcons: backupArray\(customIconFileSchema, dataTransferResourceLimits.maxCustomIcons\)/);
   assert.match(transfer, /customIconLibraryRemovals: backupArray\(customIconLibraryRemovalSchema,\s*dataTransferResourceLimits.maxCustomIconLibraryRemovals\)/);
   assert.match(transfer, /const customIconOwnerDir = storageOwnerDirectory\(customIconUploadRoot, userId\)/);

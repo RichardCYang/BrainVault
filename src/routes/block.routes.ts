@@ -4,7 +4,8 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import multer from "multer";
 import { z } from "zod";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
-import { admitPageProjection, assertStoredPageResourceBudget, addPageBlockUsage } from "../lib/page-resource-limits.js";
+import { admitPageProjection, assertStoredPageResourceBudget, addPageBlockUsage, pageResourceLimits } from "../lib/page-resource-limits.js";
+import { compactBlockOrderSchema, expandCompactBlockOrder } from "../lib/block-order-request.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
 import { env } from "../config/env.js";
@@ -101,6 +102,8 @@ const blockSortOrderSchema = z.number().int()
   .min(blockSortOrderLimits.min)
   .max(blockSortOrderLimits.max);
 const mutationIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
+// Rows per batched UPDATE in a reorder (each row adds four or six parameters).
+const blockReorderUpdateBatchSize = 500;
 
 const createBlockSchema = z.object({
   type: blockTypeSchema.default("MARKDOWN"),
@@ -393,7 +396,15 @@ const reorderSchema = z.object({
       })
     )
     .min(1)
-    .max(500)
+    // A reorder names every sibling of the parents it changes. With a cap below
+    // the page's block limit, a page with more top-level blocks could not place
+    // a new or moved block: it stayed at the end of the page.
+    .max(pageResourceLimits.maxBlocks)
+    .optional(),
+  // The same snapshot for one parent in two strings (see block-order-request.ts).
+  order: compactBlockOrderSchema(pageResourceLimits.maxBlocks).optional()
+}).refine((body) => (body.items === undefined) !== (body.order === undefined), {
+  message: "Send either items or order"
 });
 
 const attachmentFormSchema = z.object({
@@ -2238,7 +2249,13 @@ blockRouter.post(
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const pageId = String(req.params.pageId);
-      const { items, mutationId } = req.body as z.infer<typeof reorderSchema>;
+      const body = req.body as z.infer<typeof reorderSchema>;
+      const { mutationId } = body;
+      // Both forms become the same items, so validation and the idempotency
+      // hash do not depend on which one the client sent.
+      const items = body.order
+        ? expandCompactBlockOrder(body.order, pageResourceLimits.maxBlocks)
+        : body.items!;
       const mutationHash = mutationId ? createMutationRequestHash({ pageId, items }) : undefined;
 
       const result = await transaction(async (client) => {
@@ -2386,23 +2403,29 @@ blockRouter.post(
         assertReorderDoesNotCreateCycle(hierarchyRows, items);
         assertBlockParentChangesDepth(hierarchyRows, items);
 
-        for (const item of items) {
-          const result = item.parentBlockId !== undefined
-            ? await client.execute<{ affectedRows: number }>(
-                `UPDATE blocks
-                 SET sort_order = ?, parent_block_id = ?, last_mutation_id = NULL,
-                     last_mutation_hash = NULL, edit_version = edit_version + 1
-                 WHERE id = ? AND page_id = ? AND edit_version = ? AND edit_version < ?`,
-                [item.sortOrder, item.parentBlockId, item.id, pageId, item.expectedVersion, Number.MAX_SAFE_INTEGER]
-              )
-            : await client.execute<{ affectedRows: number }>(
-                `UPDATE blocks
-                 SET sort_order = ?, last_mutation_id = NULL, last_mutation_hash = NULL,
-                     edit_version = edit_version + 1
-                 WHERE id = ? AND page_id = ? AND edit_version = ? AND edit_version < ?`,
-                [item.sortOrder, item.id, pageId, item.expectedVersion, Number.MAX_SAFE_INTEGER]
-              );
-          if (Number(result.affectedRows) !== 1) {
+        // One statement per batch instead of one per block: a page-wide reorder
+        // was thousands of round trips. Each row keeps exactly the per-row
+        // guards and changes of the single-row form, and a batch that does not
+        // change every row it names fails the whole transaction.
+        for (let start = 0; start < items.length; start += blockReorderUpdateBatchSize) {
+          const batch = items.slice(start, start + blockReorderUpdateBatchSize);
+          const sortCases = batch.map(() => "WHEN ? THEN ?").join(" ");
+          const reparented = batch.filter((item) => item.parentBlockId !== undefined);
+          const parentCases = reparented.map(() => "WHEN ? THEN ?").join(" ");
+          const params: DbValue[] = batch.flatMap((item) => [item.id, item.sortOrder]);
+          for (const item of reparented) params.push(item.id, item.parentBlockId ?? null);
+          params.push(pageId, Number.MAX_SAFE_INTEGER);
+          for (const item of batch) params.push(item.id, item.expectedVersion);
+          const result = await client.execute<{ affectedRows: number }>(
+            `UPDATE blocks
+             SET sort_order = CASE id ${sortCases} END,
+                 parent_block_id = ${reparented.length ? `CASE id ${parentCases} ELSE parent_block_id END` : "parent_block_id"},
+                 last_mutation_id = NULL, last_mutation_hash = NULL, edit_version = edit_version + 1
+             WHERE page_id = ? AND edit_version < ?
+               AND (id, edit_version) IN (${batch.map(() => "(?, ?)").join(", ")})`,
+            params
+          );
+          if (Number(result.affectedRows) !== batch.length) {
             throw new ApiError(
               409,
               "BLOCK_EDIT_CONFLICT",

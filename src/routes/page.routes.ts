@@ -9,7 +9,7 @@ import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
 import { isCurrentAiChatHtmlCache } from "../lib/ai-chat-cache.js";
-import { admitPageProjection, assertStoredPageResourceBudget, assertPageResponseBudget, assertPageRenderBudget } from "../lib/page-resource-limits.js";
+import { admitPageProjection, assertPagesFitSharedDocument, assertStoredPageResourceBudget, assertPageResponseBudget, assertPageRenderBudget } from "../lib/page-resource-limits.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
@@ -2251,6 +2251,7 @@ pageRouter.patch("/:pageId", admitPageProjection, validate({ params: idParamSche
             const beforeShareCount = beforeShareCounts.get(row.id) ?? 0;
             const afterShareCount = await getEffectivePageShareCount(row.id, client, destinationCollectionId, { lock: true });
             if (beforeShareCount === 0 && afterShareCount > 0) {
+              await assertPagesFitSharedDocument(client, [row.id]);
               // A page entering a shared collection starts a fresh Yjs lineage
               // from its canonical SQL snapshot, matching first direct-share
               // behavior and protecting any browser-local owner draft.

@@ -13,11 +13,11 @@ test("backup v5 closes current-format optional-section completeness gaps", async
 
   assert.match(
     transfer,
-    /const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst backupVersion = 6;/
+    /const uploadedAssetBackupVersion = 3;\nconst completeWorkspaceBackupVersion = 4;\nconst explicitWorkspaceBackupVersion = 5;\nconst iconPublicationBackupVersion = 6;[\s\S]*?const shardedBackupVersion = 7;\nconst backupVersion = shardedBackupVersion;/
   );
   assert.match(
     transfer,
-    /z\.literal\(uploadedAssetBackupVersion\),\n\s*z\.literal\(completeWorkspaceBackupVersion\),\n\s*z\.literal\(explicitWorkspaceBackupVersion\),\n\s*z\.literal\(backupVersion\)/
+    /z\.literal\(uploadedAssetBackupVersion\),\n\s*z\.literal\(completeWorkspaceBackupVersion\),\n\s*z\.literal\(explicitWorkspaceBackupVersion\),\n\s*z\.literal\(iconPublicationBackupVersion\),\n\s*z\.literal\(shardedBackupVersion\)/
   );
   assert.match(transfer, /manifest\.version >= explicitWorkspaceBackupVersion[\s\S]*Version 5 backups must declare page sharing grants/);
   assert.match(transfer, /Version 5 backups must declare collection sharing grants/);

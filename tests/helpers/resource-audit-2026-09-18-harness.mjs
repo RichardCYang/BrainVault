@@ -20,7 +20,11 @@ export function reorderSource(original = false) {
   const text = source("src/routes/block.routes.ts", original);
   const route = text.indexOf('blockRouter.post(\n  "/pages/:pageId/blocks/reorder"');
   if (route < 0) throw new Error("Missing reorder route");
-  return section(text, "        const rowById = new Map(hierarchyRows.map", "\n        for (const item of items) {\n          const result", route);
+  // The current route writes rows in batches; the baseline wrote them one by one.
+  const end = original
+    ? "\n        for (const item of items) {\n          const result"
+    : "\n        // One statement per batch instead of one per block";
+  return section(text, "        const rowById = new Map(hierarchyRows.map", end, route);
 }
 const http = source("src/lib/http.ts");
 const errorClass = stripTypeScriptTypes(section(http, "export class ApiError", "export ", http.indexOf("export class ApiError")).replace("export class", "class"));

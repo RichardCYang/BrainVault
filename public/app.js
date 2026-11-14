@@ -146,7 +146,11 @@ import {
 } from "./indexeddb-recovery-storage.js";
 import {
   BLOCK_MARKDOWN_MAX_LENGTH,
-  requirePageTitleWithinLimit
+  PAGE_MAX_BLOCKS,
+  PAGE_MAX_MARKDOWN_BYTES,
+  SHARED_PAGE_MAX_BLOCKS,
+  requirePageTitleWithinLimit,
+  splitTextIntoBlockChunks
 } from "./editor-content-limits.js";
 import {
   createYouTubeVideoEditor,
@@ -12415,6 +12419,8 @@ async function startPageCollaboration(page = state.selectedPage) {
           renderCollaborationChrome();
           if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
             setStatus(t("status.localDraftStorageFailed"), true);
+          } else if (error?.code === "SHARED_PAGE_BLOCK_LIMIT_EXCEEDED") {
+            setStatus(t("errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED"), true);
           } else if (error?.code === "COLLABORATION_UPDATE_REJECTED") {
             // The session stopped resending changes the server keeps refusing.
             // They stay in this browser's recovery storage; say so plainly and
@@ -14303,6 +14309,25 @@ async function deleteBlockWithVersionCheck(blockId, options = {}) {
   }
 }
 
+// Same result as calling updateBlockInState for each block, in one pass over
+// the page: a reorder answers with every block, and searching the tree once per
+// block made a 20,000-block page spend over a second here.
+function updateBlocksInState(updatedBlocks, blocks = state.selectedPage?.blocks ?? []) {
+  const pending = new Map();
+  for (const updated of updatedBlocks ?? []) pending.set(updated.id, updated);
+  const stack = [...blocks].reverse();
+  while (stack.length && pending.size) {
+    const block = stack.pop();
+    const updated = pending.get(block.id);
+    if (updated) {
+      Object.assign(block, updated, { children: block.children ?? [] });
+      pending.delete(block.id);
+    }
+    const children = block.children ?? [];
+    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
+  }
+}
+
 function updateBlockInState(updatedBlock, blocks = state.selectedPage?.blocks ?? []) {
   for (const block of blocks) {
     if (block.id === updatedBlock.id) {
@@ -14320,6 +14345,7 @@ function updateBlockInState(updatedBlock, blocks = state.selectedPage?.blocks ??
 const autoGrowObservedWidths = new WeakMap();
 const autoGrowResizeObserver = typeof ResizeObserver === "function"
   ? new ResizeObserver((entries) => {
+    const resized = [];
     for (const entry of entries) {
       const textarea = entry.target;
       if (!textarea.isConnected) {
@@ -14331,29 +14357,99 @@ const autoGrowResizeObserver = typeof ResizeObserver === "function"
       const width = entry.contentRect.width;
       if (autoGrowObservedWidths.get(textarea) === width) continue;
       autoGrowObservedWidths.set(textarea, width);
-      if (width > 0) fitTextareaHeight(textarea);
+      if (width > 0) resized.push(textarea);
     }
+    fitTextareaHeights(resized);
   })
   : null;
 
-function autoGrowTextarea(textarea) {
-  if (!textarea) return;
+function observeTextareaWidth(textarea) {
   if (autoGrowResizeObserver && textarea.isConnected && !autoGrowObservedWidths.has(textarea)) {
     autoGrowObservedWidths.set(textarea, -1);
     autoGrowResizeObserver.observe(textarea);
   }
+}
+
+function autoGrowTextarea(textarea) {
+  if (!textarea) return;
+  observeTextareaWidth(textarea);
   fitTextareaHeight(textarea);
 }
 
+// Rendering a page creates one editor per block. Fitting each as it appears
+// forced a full layout per textarea, so opening a 2,000-block page took about
+// eight seconds. Fits requested while rendering are gathered and done together
+// in the next frame, with a single layout for all of them.
+const pendingTextareaFits = new Set();
+let pendingTextareaFitFrame = 0;
+
+function scheduleTextareaFit(textarea) {
+  if (!textarea) return;
+  pendingTextareaFits.add(textarea);
+  if (pendingTextareaFitFrame) return;
+  pendingTextareaFitFrame = requestAnimationFrame(() => {
+    pendingTextareaFitFrame = 0;
+    const textareas = [...pendingTextareaFits];
+    pendingTextareaFits.clear();
+    for (const textarea of textareas) observeTextareaWidth(textarea);
+    fitTextareaHeights(textareas);
+  });
+}
+
 function fitTextareaHeight(textarea) {
-  textarea.style.height = "auto";
-  const isPlainTextBlock = Boolean(
-    textarea.classList.contains("block-row-input")
-      && textarea.closest('.editor-block-row[data-block-type="MARKDOWN"]')
-  );
-  const cssMinimumHeight = Number.parseFloat(getComputedStyle(textarea).minHeight);
-  const minimumHeight = isPlainTextBlock && Number.isFinite(cssMinimumHeight) ? cssMinimumHeight : 30;
-  textarea.style.height = `${Math.max(textarea.scrollHeight, minimumHeight)}px`;
+  fitTextareaHeights([textarea]);
+}
+
+// Large pages: rows far from the viewport skip layout and paint
+// (content-visibility, see .editor-block-row.is-far). Their textareas are
+// fitted when the row comes near, since measuring them would lay them out.
+const farRowPageThreshold = 300;
+const farRowObserver = typeof IntersectionObserver === "function"
+  ? new IntersectionObserver((entries) => {
+    const nearTextareas = [];
+    for (const entry of entries) {
+      const row = entry.target;
+      if (!row.isConnected) {
+        farRowObserver.unobserve(row);
+        continue;
+      }
+      if (entry.isIntersecting) {
+        if (!row.classList.contains("is-far")) continue;
+        row.classList.remove("is-far");
+        nearTextareas.push(...row.querySelectorAll("textarea"));
+      } else if (!row.contains(document.activeElement) && !row.classList.contains("is-far")) {
+        row.classList.add("is-far");
+      }
+    }
+    fitTextareaHeights(nearTextareas);
+  }, { rootMargin: "200% 0px" })
+  : null;
+
+function markRowFarUntilVisible(row) {
+  if (!farRowObserver || !row) return;
+  row.classList.add("is-far");
+  farRowObserver.observe(row);
+}
+
+// Writes, then reads, then writes for every textarea at once: interleaving them
+// per textarea makes the browser lay out the whole page again for each one.
+function fitTextareaHeights(textareas) {
+  // A far row is fitted when it comes near (farRowObserver).
+  const connected = textareas.filter((textarea) => textarea?.isConnected && !textarea.closest(".is-far"));
+  if (!connected.length) return;
+  for (const textarea of connected) textarea.style.height = "auto";
+  const heights = connected.map((textarea) => {
+    const isPlainTextBlock = Boolean(
+      textarea.classList.contains("block-row-input")
+        && textarea.closest('.editor-block-row[data-block-type="MARKDOWN"]')
+    );
+    const cssMinimumHeight = Number.parseFloat(getComputedStyle(textarea).minHeight);
+    const minimumHeight = isPlainTextBlock && Number.isFinite(cssMinimumHeight) ? cssMinimumHeight : 30;
+    return Math.max(textarea.scrollHeight, minimumHeight);
+  });
+  connected.forEach((textarea, index) => {
+    textarea.style.height = `${heights[index]}px`;
+  });
 }
 
 function getBlockTableData(block) {
@@ -14741,7 +14837,7 @@ function createKanbanEditor(row, boardValue) {
       description.placeholder = t("kanban.descriptionPlaceholder");
       description.dataset.cardId = card.id;
       description.setAttribute("aria-label", t("kanban.descriptionAria"));
-      requestAnimationFrame(() => autoGrowTextarea(description));
+      scheduleTextareaFit(description);
 
       const tagsField = document.createElement("div");
       tagsField.className = "kanban-card-tags-field";
@@ -15488,7 +15584,7 @@ function createTextBlockEditor(block) {
 
   editor.append(textarea, preview);
   updateRenderedBlockPreview(editor, block);
-  requestAnimationFrame(() => autoGrowTextarea(textarea));
+  scheduleTextareaFit(textarea);
   return editor;
 }
 
@@ -15564,7 +15660,7 @@ function createToggleBlockEditor(row, block) {
   surface.classList.toggle("is-open", expanded);
 
   editor.append(surface, preview);
-  requestAnimationFrame(() => autoGrowTextarea(textarea));
+  scheduleTextareaFit(textarea);
   return editor;
 }
 
@@ -19301,7 +19397,9 @@ async function submitBlockOrderTask(task, { keepalive = false, requestGuard = nu
   const data = await api(`/api/pages/${task.pageId}/blocks/reorder`, {
     method: "POST",
     keepalive,
-    body: { mutationId: task.mutationId, items: task.items },
+    // The compact form names the same siblings in two strings, so a large page
+    // stays within the server's request validation budget.
+    body: { mutationId: task.mutationId, order: compactBlockOrder(task) },
     beforeFetch: () => (
       isCurrentAuthenticatedSessionScope(task.authenticationScope)
       && requestGuard?.() !== false
@@ -19311,7 +19409,7 @@ async function submitBlockOrderTask(task, { keepalive = false, requestGuard = nu
   assertCurrentAuthenticatedSessionScope(task.authenticationScope);
   applyPageContentVersion(task.pageId, data.pageContentVersion);
   if (state.selectedPage?.id === task.pageId) {
-    for (const block of data.blocks ?? []) updateBlockInState(block);
+    updateBlocksInState(data.blocks ?? []);
     const returnedIds = (data.blocks ?? [])
       .filter((block) => normalizeParentBlockId(block.parentBlockId) === task.parentBlockId)
       .sort((left, right) => Number(left.sortOrder ?? 0) - Number(right.sortOrder ?? 0) || left.id.localeCompare(right.id))
@@ -19321,6 +19419,18 @@ async function submitBlockOrderTask(task, { keepalive = false, requestGuard = nu
     }
   }
   return data;
+}
+
+function compactBlockOrder(task) {
+  const parentBlockId = task.parentBlockId ?? null;
+  if (task.items.some((item, index) => item.sortOrder !== index || (item.parentBlockId ?? null) !== parentBlockId)) {
+    throw new Error(t("errors.currentBlockOrder"));
+  }
+  return {
+    parentBlockId,
+    ids: task.items.map((item) => item.id).join(","),
+    versions: task.items.map((item) => String(item.expectedVersion)).join(",")
+  };
 }
 
 async function requireBlockOrderRecoveryDurability({ allowRecoveryFailure = false } = {}) {
@@ -19626,6 +19736,10 @@ async function createEmptyBlock(
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
     if (!session?.isReady) throw new Error(t("sharing.syncRequired"));
+    // The server refuses a shared document this large; say so before adding.
+    if (flattenBlocks(state.selectedPage?.blocks).length >= SHARED_PAGE_MAX_BLOCKS) {
+      throw new Error(t("errors.SHARED_PAGE_BLOCK_LIMIT_EXCEEDED"));
+    }
     const block = {
       id: createClientId("blk"),
       type,
@@ -19741,8 +19855,45 @@ async function tryRenderConfirmedBlockInsertion(context, data, parentBlockId, or
   state.pendingFocusBlockId = plan.createdBlock.id;
   // Reuse the normal sanitized renderer and history handling. In particular,
   // do not reset edit tracking or openPage() for a server-confirmed insertion.
-  renderSelectedPage();
+  // On a large page, add just the new row: rebuilding every row took seconds.
+  if (!insertConfirmedBlockRowInPlace(context.page, plan.createdBlock.id)) renderSelectedPage();
   syncBeforeUnloadProtection();
+  return true;
+}
+
+// The plan has proven that only the new block was added and its siblings'
+// order changed, so the other rows are current except their sort order.
+function insertConfirmedBlockRowInPlace(page, createdId) {
+  const flatBlocks = flattenBlocks(page.blocks);
+  if (flatBlocks.length <= farRowPageThreshold) return false;
+  if (
+    state.workspaceView !== "page"
+    || state.selectedPage !== page
+    || elements.blockList.dataset.pageId !== page.id
+    || isCollaborativePage(page)
+  ) return false;
+  const index = flatBlocks.findIndex((block) => block.id === createdId);
+  if (index < 0) return false;
+  const renderedRows = elements.blockList.querySelectorAll(".editor-block-row[data-block-id]");
+  // Every other block must already have its row, in the same order.
+  if (renderedRows.length !== flatBlocks.length - 1) return false;
+  const created = flatBlocks[index];
+  const row = renderBlock(created, null);
+  const previousRow = index > 0 ? renderedRows[index - 1] : null;
+  if (previousRow && previousRow.dataset.blockId !== flatBlocks[index - 1].id) return false;
+  if (!previousRow && renderedRows[0]?.dataset.blockId !== flatBlocks[1]?.id) return false;
+  if (previousRow) previousRow.after(row);
+  else elements.blockList.prepend(row);
+  const sortOrders = new Map(flatBlocks
+    .filter((block) => (block.parentBlockId ?? null) === (created.parentBlockId ?? null))
+    .map((block) => [block.id, String(block.sortOrder ?? 0)]));
+  for (const sibling of elements.blockList.querySelectorAll(".editor-block-row[data-block-id]")) {
+    const sortOrder = sortOrders.get(sibling.dataset.blockId);
+    if (sortOrder !== undefined) sibling.dataset.sortOrder = sortOrder;
+  }
+  elements.pageKicker.textContent = formatDate(page.updatedAt);
+  elements.blockCount.textContent = t("counts.blocks", { count: formatNumber(flatBlocks.length) });
+  syncPageModeUi({ contentRebuilt: true, focusPending: true });
   return true;
 }
 
@@ -20644,10 +20795,13 @@ function renderSelectedPage() {
     // Discard the snapshots after this render; never retain them across page,
     // account, source, or subsequent recovery-storage changes.
     const draftRecordsBySource = new Map();
+    const deferFarRows = flatBlocks.length > farRowPageThreshold;
     for (const block of flatBlocks) {
-      elements.blockList.append(
-        renderBlock(block, isCollaborativePage(page) ? null : getBlockRenderDraft(page.id, block.id, draftRecordsBySource))
-      );
+      const row = renderBlock(block, isCollaborativePage(page) ? null : getBlockRenderDraft(page.id, block.id, draftRecordsBySource));
+      // Every row starts far; the observer brings the visible ones in, so the
+      // first layout covers one screen instead of the whole page.
+      if (deferFarRows) markRowFarUntilVisible(row);
+      elements.blockList.append(row);
     }
   }
   if (isCollaborativePage(page)) refreshCollaborativePageDraftRecovery();
@@ -25458,11 +25612,183 @@ document.addEventListener("paste", (event) => {
   if (nextLength <= field.maxLength) return;
   event.preventDefault();
   event.stopImmediatePropagation();
+  // In a text block, a long paste simply continues in new blocks below.
+  const splitRow = getSplitPasteRow(field);
+  if (splitRow) {
+    void pasteAcrossBlocks(splitRow, field, text).catch((error) => {
+      setStatus(error instanceof Error ? error.message : String(error), true);
+    });
+    return;
+  }
   setStatus(t("status.pasteTooLong", {
     max: formatNumber(field.maxLength),
     over: formatNumber(nextLength - field.maxLength)
   }), true);
 }, true);
+
+// A paste longer than one block holds is spread over new blocks instead of
+// being refused. Only the block's own text editor qualifies; Math and Mermaid
+// would break if split, so they keep the refusal.
+const splitPasteBlockTypes = new Set([
+  "MARKDOWN", "HEADING_1", "HEADING_2", "HEADING_3", "HEADING_4", "HEADING_5", "TODO", "QUOTE", "CODE"
+]);
+const activeSplitPastes = new Set();
+
+function getSplitPasteRow(field) {
+  if (!(field instanceof HTMLTextAreaElement) || !field.classList.contains("block-row-input")) return null;
+  if (field.maxLength !== BLOCK_MARKDOWN_MAX_LENGTH) return null;
+  const row = getBlockRow(field);
+  const blockId = row?.dataset.blockId;
+  if (!blockId || getBlockTextarea(row) !== field) return null;
+  if (!splitPasteBlockTypes.has(row.dataset.blockType ?? "MARKDOWN")) return null;
+  if (activeSplitPastes.has(blockId) || pendingBlockSplits.has(blockId)) return null;
+  return requireWritablePage({ announce: false }) ? row : null;
+}
+
+function getSplitPasteContinuation(row) {
+  const type = row.dataset.blockType ?? "MARKDOWN";
+  if (type === "CODE") {
+    const metadata = getBlockById(row.dataset.blockId)?.metadata;
+    return { type: "CODE", ...(metadata == null ? {} : { metadata }) };
+  }
+  return { type: type === "QUOTE" ? "QUOTE" : "MARKDOWN" };
+}
+
+function measureSelectedPageMarkdownBytes() {
+  const encoder = new TextEncoder();
+  let total = 0;
+  for (const block of flattenBlocks(state.selectedPage?.blocks)) total += encoder.encode(block.markdown ?? "").length;
+  return total;
+}
+
+// The later parts are created first and the first part only goes into this
+// block at the end, so a failure part way leaves this block untouched: at
+// worst some text appears twice, never is it lost.
+async function pasteAcrossBlocks(row, field, text) {
+  const sourceId = row.dataset.blockId;
+  const original = field.value;
+  const start = Math.min(field.selectionStart ?? original.length, original.length);
+  const end = Math.min(Math.max(field.selectionEnd ?? start, start), original.length);
+  const combined = original.slice(0, start) + normalizeInsertedFieldText(field, text) + original.slice(end);
+  const isCode = (row.dataset.blockType ?? "MARKDOWN") === "CODE";
+  const chunks = splitTextIntoBlockChunks(combined, field.maxLength, { markdownFences: !isCode });
+  const addedBlocks = chunks.length - 1;
+  if (addedBlocks < 1) return;
+
+  const blockCount = flattenBlocks(state.selectedPage?.blocks).length;
+  const addedBytes = new TextEncoder().encode(combined).length - new TextEncoder().encode(original).length;
+  if (
+    blockCount + addedBlocks > (isCollaborativePage() ? SHARED_PAGE_MAX_BLOCKS : PAGE_MAX_BLOCKS)
+    || measureSelectedPageMarkdownBytes() + addedBytes > PAGE_MAX_MARKDOWN_BYTES
+  ) {
+    // This page is full; offer a new subpage that holds only the pasted text.
+    // Code would lose its formatting in the subpage's text blocks, so it is not offered.
+    const pasted = normalizeInsertedFieldText(field, text);
+    const pastedChunks = splitTextIntoBlockChunks(pasted, field.maxLength, { markdownFences: true });
+    const parentPageId = state.selectedPage?.id;
+    const fitsNewPage = !isCode
+      && pastedChunks.length <= (isCollaborativePage() ? SHARED_PAGE_MAX_BLOCKS : PAGE_MAX_BLOCKS)
+      && new TextEncoder().encode(pasted).length <= PAGE_MAX_MARKDOWN_BYTES;
+    setStatus(t("status.pasteSplitPageFull", { count: formatNumber(chunks.length) }), true, fitsNewPage && parentPageId ? {
+      action: {
+        label: t("status.pasteSplitIntoSubpage"),
+        onSelect: () => {
+          void pasteIntoNewSubpage(parentPageId, pasted).catch((error) => {
+            setStatus(error instanceof Error ? error.message : String(error), true);
+          });
+        }
+      }
+    } : {});
+    return;
+  }
+
+  const continuation = getSplitPasteContinuation(row);
+  activeSplitPastes.add(sourceId);
+  let previousId = sourceId;
+  let added = 0;
+  try {
+    setStatus(t("status.pasteSplitting", { done: formatNumber(0), count: formatNumber(chunks.length) }));
+    // Save what the block holds now, so the parts below follow a saved block.
+    await saveBlockRow(row, { quiet: true });
+    await withBlockEditorHistorySuppressed(async () => {
+      for (const chunk of chunks.slice(1)) {
+        const previousRow = findRenderedBlockRow(previousId);
+        if (!previousRow) throw new Error(t("errors.currentBlockOrder"));
+        const created = await insertBlockRelative(previousRow, "after", {
+          ...continuation,
+          markdown: chunk,
+          announce: false
+        });
+        if (!created?.block?.id) throw new Error(t("errors.currentBlockOrder"));
+        previousId = created.block.id;
+        added += 1;
+        setStatus(t("status.pasteSplitting", { done: formatNumber(added), count: formatNumber(chunks.length) }));
+      }
+    });
+  } catch {
+    setStatus(t("status.pasteSplitInterrupted", {
+      added: formatNumber(added),
+      count: formatNumber(addedBlocks)
+    }), true);
+    return;
+  } finally {
+    activeSplitPastes.delete(sourceId);
+  }
+
+  const sourceRow = findRenderedBlockRow(sourceId);
+  const sourceTextarea = getBlockTextarea(sourceRow);
+  if (!sourceTextarea || sourceTextarea.value !== original) {
+    // The block changed meanwhile. Keep it as it is; the clipboard still has the paste.
+    setStatus(t("status.pasteSplitSourceChanged"), true);
+    return;
+  }
+  replaceBlockTextareaValue(sourceRow, sourceTextarea, chunks[0]);
+  await saveBlockRow(sourceRow, { quiet: true });
+  const lastChunk = chunks[chunks.length - 1];
+  placeCaretInBlock(previousId, Math.max(0, lastChunk.length - (original.length - end)));
+  setStatus(t("status.pasteSplitDone", { count: formatNumber(chunks.length) }));
+  return chunks.length;
+}
+
+// The page the paste was meant for is full: put the pasted text into a new
+// subpage instead. Its first block is filled the same way as any long paste,
+// so the same no-loss rules apply; the clipboard still holds everything.
+async function pasteIntoNewSubpage(parentPageId, pasted) {
+  const parent = getPageSummaryById(parentPageId);
+  const created = await createWorkspacePage(
+    { title: t("status.pasteSubpageTitle", { title: parent?.title ?? "" }).slice(0, 160), icon: "📄", parentPageId },
+    { creatingKey: "status.creatingDocument", createdKey: "status.documentCreated" }
+  );
+  if (!created?.applied || state.selectedPage?.id !== created.page?.id) return;
+  const pageId = created.page.id;
+  // Entering write mode gives an empty page its starter block; use that block.
+  let row = elements.blockList.querySelector(".editor-block-row[data-block-id]");
+  if (!row) {
+    const data = await appendBlock(null, { announce: false });
+    if (!data?.block?.id || state.selectedPage?.id !== pageId) throw new Error(t("errors.currentBlockOrder"));
+    row = findRenderedBlockRow(data.block.id);
+  }
+  let field = getBlockTextarea(row);
+  if (!field || state.selectedPage?.id !== pageId) throw new Error(t("errors.currentBlockOrder"));
+  // A new page starts with the caret in its title. Leave the title and let its
+  // save settle first: it reloads the page, which would interrupt the paste.
+  field.focus({ preventScroll: true });
+  await flushPendingPageEdits();
+  if (state.selectedPage?.id !== pageId) throw new Error(t("errors.currentBlockOrder"));
+  row = findRenderedBlockRow(row.dataset.blockId) ?? row;
+  field = getBlockTextarea(row);
+  if (!field) throw new Error(t("errors.currentBlockOrder"));
+  field.focus({ preventScroll: true });
+  field.setSelectionRange(field.value.length, field.value.length);
+  if (field.value.length + pasted.length <= field.maxLength) {
+    replaceBlockTextareaValue(row, field, field.value + pasted);
+    await saveBlockRow(row, { quiet: true });
+    setStatus(t("status.pasteSplitIntoSubpageDone", { count: formatNumber(1) }));
+    return;
+  }
+  const chunks = await pasteAcrossBlocks(row, field, pasted);
+  if (chunks) setStatus(t("status.pasteSplitIntoSubpageDone", { count: formatNumber(chunks) }));
+}
 
 // Pasting an image or file adds it as an attachment, and pasting a URL over
 // selected text links that text, as in other block editors.

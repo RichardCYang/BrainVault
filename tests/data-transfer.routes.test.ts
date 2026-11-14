@@ -91,6 +91,23 @@ import { signAuthToken } from "../src/lib/auth.js";
 import { prepareUserDataBackup, writeUserDataBackup } from "../src/lib/data-transfer.js";
 import { readZipDirectory, readZipEntryBuffer } from "../src/lib/zip.js";
 
+// Version 7 keeps blocks, history, comments, tag relations and icon
+// publications in shards; put them back so a test sees the whole manifest.
+async function readCompleteManifest(zipPath: string, entries: Awaited<ReturnType<typeof readZipDirectory>>) {
+  const manifestEntry = entries.find((entry) => entry.name === "brainvault-backup.json");
+  expect(manifestEntry).toBeTruthy();
+  const manifest = JSON.parse((await readZipEntryBuffer(zipPath, manifestEntry!, 1024 * 1024)).toString("utf8"));
+  for (const shard of manifest.shards ?? []) {
+    const entry = entries.find((candidate) => candidate.name === shard.path);
+    expect(entry).toBeTruthy();
+    const rows = JSON.parse((await readZipEntryBuffer(zipPath, entry!, 16 * 1024 * 1024)).toString("utf8"));
+    expect(rows).toHaveLength(shard.rows);
+    const target = shard.section === "customIconPublications" ? manifest : manifest.data;
+    target[shard.section].push(...rows);
+  }
+  return manifest;
+}
+
 const userId = "usr_data_transfer";
 const pageId = "pag_data_transfer";
 const blockId = "blk_data_transfer";
@@ -536,10 +553,8 @@ describe("Complete data transfer routes", () => {
     await mkdir(path.dirname(zipPath), { recursive: true });
     await writeFile(zipPath, exported.body as Buffer);
     const entries = await readZipDirectory(zipPath);
-    const manifestEntry = entries.find((entry) => entry.name === "brainvault-backup.json");
-    expect(manifestEntry).toBeTruthy();
-    const manifest = JSON.parse((await readZipEntryBuffer(zipPath, manifestEntry!, 1024 * 1024)).toString("utf8"));
-    expect(manifest.version).toBe(6);
+    const manifest = await readCompleteManifest(zipPath, entries);
+    expect(manifest.version).toBe(7);
     expect(manifest.retainedAttachments).toEqual([expect.objectContaining({
       fileName: retainedAttachmentId,
       path: `attachments/${retainedAttachmentId}`
@@ -625,9 +640,7 @@ describe("Complete data transfer routes", () => {
     await mkdir(path.dirname(zipPath), { recursive: true });
     await writeFile(zipPath, exported.body as Buffer);
     const entries = await readZipDirectory(zipPath);
-    const manifestEntry = entries.find((entry) => entry.name === "brainvault-backup.json");
-    expect(manifestEntry).toBeTruthy();
-    const manifest = JSON.parse((await readZipEntryBuffer(zipPath, manifestEntry!, 1024 * 1024)).toString("utf8"));
+    const manifest = await readCompleteManifest(zipPath, entries);
     expect(manifest.data.pages[0].title).toBe("Original Page");
     expect(manifest.data.pages[0].edit_version).toBe(7);
     expect(manifest.data.pages[0].content_version).toBe(11);
