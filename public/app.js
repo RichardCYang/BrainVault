@@ -67,6 +67,7 @@ import {
 } from "./timetable-block.js";
 import {
   createAiChatEditor,
+  aiChatLimits,
   createDefaultAiChatData,
   extractAiChatData,
   hydrateRenderedAiChatLinks,
@@ -9628,6 +9629,26 @@ function createPageVersionChangeCard(change) {
       type: t(blockTypeLabels[change.blockType] ?? String(change.blockType ?? ""))
     });
     for (const fieldChange of change.fields ?? []) fields.append(createPageVersionFieldChange(fieldChange));
+    const previousText = getRestorablePreviousBlockText(change);
+    if (previousText) {
+      restoreButton = document.createElement("button");
+      restoreButton.type = "button";
+      restoreButton.className = "secondary page-version-restore-block";
+      restoreButton.textContent = t("versions.restorePreviousText");
+      const button = restoreButton;
+      button.addEventListener("click", () => {
+        button.disabled = true;
+        restorePreviousBlockTextFromPageVersion(change.blockId, previousText)
+          .then((restored) => {
+            if (restored) button.textContent = t("versions.blockRestoredFromHistory");
+            else button.disabled = false;
+          })
+          .catch((error) => {
+            button.disabled = false;
+            setStatus(error.message, true);
+          });
+      });
+    }
   }
 
   header.append(title, meta);
@@ -9648,6 +9669,41 @@ function canRestoreBlockFromPageVersion(block) {
     && !block.metadataOmitted
     && typeof block.markdown === "string"
   );
+}
+
+// The text an edit replaced, when it can come back as a text block of its own.
+// Structured blocks keep their content in metadata and are not offered.
+function getRestorablePreviousBlockText(change) {
+  const markdown = change?.fields?.find((field) => field.field === "markdown");
+  if (typeof markdown?.before !== "string" || !markdown.before.trim()) return null;
+  const typeField = change.fields.find((field) => field.field === "type");
+  const type = typeof typeField?.before === "string" ? typeField.before : change.blockType;
+  if (
+    typeof type !== "string"
+    || !Object.hasOwn(blockTypeLabels, type)
+    || type === "ATTACHMENT"
+    || isStructuredBlockType(type)
+  ) return null;
+  return { type, markdown: markdown.before };
+}
+
+// Puts replaced text back without touching the block as it is now: the old
+// text becomes a new block right below it (or at the end if it is gone).
+async function restorePreviousBlockTextFromPageVersion(blockId, previous) {
+  const pageId = state.pageVersionHistory.pageId;
+  if (!pageId || state.selectedPage?.id !== pageId || !previous) return false;
+  if (!requireWritablePage()) return false;
+  const options = { type: previous.type, markdown: previous.markdown, announce: false };
+  const row = blockId ? findRenderedBlockRow(blockId) : null;
+  const created = row
+    ? await insertBlockRelative(row, "after", options)
+    : await appendBlock(null, options);
+  if (!created?.block?.id) {
+    setStatus(t("status.blockRestoreFromHistoryFailed"), true);
+    return false;
+  }
+  setStatus(t("status.previousTextRestored"));
+  return true;
 }
 
 // Brings a deleted block back as a new block: under its old parent when that
@@ -18867,6 +18923,24 @@ async function applySlashCommand(row, type) {
     return;
   }
 
+  if (type === "AI_CHAT" && markdown.length > aiChatLimits.questionLength) {
+    // The text would become the chat's question, which holds fewer characters
+    // than a text block, and the rest would be cut off without a word. Keep
+    // the text where it is and add an empty chat below it instead.
+    if (previousType !== "TOGGLE" && previousTextarea && previousTextarea.value !== markdown) {
+      previousTextarea.value = markdown;
+      autoGrowTextarea(previousTextarea);
+    }
+    closeSlashMenu();
+    await saveBlockRow(row, { quiet: true });
+    await insertBlockRelative(row, "after", {
+      type,
+      metadata: createInitialBlockMetadata(type)
+    });
+    setStatus(t("status.aiChatQuestionTooLong", { max: formatNumber(aiChatLimits.questionLength) }), true);
+    return;
+  }
+
   const canReuseMarkdown = type === "VIDEO" && Boolean(parseYouTubeVideoUrl(markdown));
 
   if (slashInsertAfterTypes.has(type) && markdown.trim() && !canReuseMarkdown) {
@@ -25106,11 +25180,44 @@ function getPasteLengthGuardField(target) {
   return null;
 }
 
-function getLengthAfterPaste(field, text) {
+function normalizeInsertedFieldText(field, text) {
   // Text fields drop line breaks; text areas store each as a single "\n".
-  const pasted = field instanceof HTMLTextAreaElement
+  return field instanceof HTMLTextAreaElement
     ? text.replace(/\r\n?/g, "\n")
     : text.replace(/[\r\n]+/g, "");
+}
+
+function getLengthAfterDrop(field, text) {
+  const dropped = normalizeInsertedFieldText(field, text);
+  const length = field.value.length;
+  // Dragging the selection to another spot in the same field moves it, so the
+  // length does not change.
+  const start = field.selectionStart ?? 0;
+  const end = field.selectionEnd ?? start;
+  if (document.activeElement === field && end > start && field.value.slice(start, end) === dropped) return length;
+  return length + dropped.length;
+}
+
+// A drop is cut at maxlength just like a paste. Dragging text out of another
+// block also takes it out of that block, so the cut part would be gone.
+document.addEventListener("drop", (event) => {
+  const field = getPasteLengthGuardField(event.target);
+  if (!field || field.readOnly || field.disabled || !(field.maxLength > 0) || !event.dataTransfer) return;
+  if (dataTransferHasFiles(event.dataTransfer)) return;
+  const text = event.dataTransfer.getData("text/plain") ?? "";
+  if (!text) return;
+  const nextLength = getLengthAfterDrop(field, text);
+  if (nextLength <= field.maxLength) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  setStatus(t("status.dropTooLong", {
+    max: formatNumber(field.maxLength),
+    over: formatNumber(nextLength - field.maxLength)
+  }), true);
+}, true);
+
+function getLengthAfterPaste(field, text) {
+  const pasted = normalizeInsertedFieldText(field, text);
   const length = field.value.length;
   const start = Math.min(field.selectionStart ?? length, length);
   const end = Math.min(Math.max(field.selectionEnd ?? start, start), length);
@@ -26337,6 +26444,43 @@ function countBlockDescendants(blockId) {
   ).length;
 }
 
+// Attachment blocks in a block and everything nested under it. Their files are
+// deleted from the server with the blocks and cannot be restored.
+function countSubtreeAttachments(blockId) {
+  const root = getBlockById(blockId);
+  const pending = root ? [root] : [];
+  let count = 0;
+  while (pending.length) {
+    const block = pending.pop();
+    if (block?.type === "ATTACHMENT") count += 1;
+    if (Array.isArray(block?.children)) pending.push(...block.children);
+  }
+  return count;
+}
+
+// Mirrors pageVersionDeletedMetadataInlineMaxBytes on the server: a deleted
+// block whose structured content is larger is kept in history without it.
+const deletedBlockHistoryMetadataMaxBytes = 128 * 1024;
+
+function isBlockTooLargeForDeletionHistory(block) {
+  if (!block?.metadata) return false;
+  try {
+    return new TextEncoder().encode(JSON.stringify(block.metadata)).length > deletedBlockHistoryMetadataMaxBytes;
+  } catch {
+    return true;
+  }
+}
+
+function getBlockDeletionConfirmMessage(row, blockId) {
+  const block = getBlockById(blockId);
+  if ((block?.type ?? row?.dataset.blockType) === "ATTACHMENT") {
+    const name = block?.metadata?.attachment?.originalName || block?.markdown || getBlockTypeLabel("ATTACHMENT");
+    return t("confirm.deleteAttachmentBlock", { name });
+  }
+  if (isBlockTooLargeForDeletionHistory(block)) return t("confirm.deleteUnrestorableBlock");
+  return t("confirm.deleteBlock");
+}
+
 function isBlockDeletionTrivial(row, blockId) {
   if (!confirmFreeDeleteBlockTypes.has(row.dataset.blockType ?? "MARKDOWN")) return false;
   const blocks = state.selectedPage?.blocks ?? [];
@@ -26440,17 +26584,24 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       const descendantCount = countBlockDescendants(blockId);
       let deleteChoice = "confirm";
       if (!isBlockDeletionTrivial(row, blockId) && !undoSnapshot) {
+        // A file is removed from the server as soon as its block is deleted,
+        // and a very large block is too big for version history to keep. Say
+        // so instead of the generic prompt, since neither can come back.
+        const subtreeAttachmentCount = countSubtreeAttachments(blockId);
+        const childrenMessage = t("confirm.deleteBlockWithChildren", { count: formatNumber(descendantCount) });
         deleteChoice = descendantCount > 0
           ? await showChoiceDialog({
               title: t("dialog.deleteTitle"),
-              message: t("confirm.deleteBlockWithChildren", { count: formatNumber(descendantCount) }),
+              message: subtreeAttachmentCount > 0
+                ? `${childrenMessage} ${t("confirm.deleteIncludesAttachments", { count: formatNumber(subtreeAttachmentCount) })}`
+                : childrenMessage,
               confirmLabel: t("dialog.deleteBlockAndChildren"),
               alternateLabel: t("dialog.deleteBlockKeepChildren"),
               danger: true
             })
           : (await showConfirmDialog({
               title: t("dialog.deleteTitle"),
-              message: t("confirm.deleteBlock"),
+              message: getBlockDeletionConfirmMessage(row, blockId),
               confirmLabel: t("dialog.delete"),
               danger: true
             })) ? "confirm" : "cancel";

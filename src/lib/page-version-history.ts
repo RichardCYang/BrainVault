@@ -463,6 +463,9 @@ function describeOmittedHistoryValue(value: unknown) {
 // A deleted block exists nowhere else once it is gone, and history is where a
 // person can bring it back from. Keep more of its structured content inline.
 export const pageVersionDeletedMetadataInlineMaxBytes = 128 * 1024;
+// The same reasoning applies to the value an edit replaced. 128 KB holds the
+// longest block text (20,000 characters, JSON-escaped) with room to spare.
+export const pageVersionPreviousValueInlineMaxBytes = 128 * 1024;
 // Field values at most this size stay readable even when a row is reduced.
 const pageVersionReducedValueInlineMaxBytes = 256;
 
@@ -494,9 +497,15 @@ function boundHistoryChange(change: PageVersionChange, reduced: boolean): PageVe
   }
   if (change.kind === "page-updated" || change.kind === "block-updated") {
     const limit = reduced ? pageVersionReducedValueInlineMaxBytes : pageVersionValueInlineMaxBytes;
+    // A block's previous content is the only copy of what an edit replaced:
+    // the "after" value is still in the block or in the next entry's "before".
+    // Keep the whole previous text of even a full-length block.
+    const beforeLimit = !reduced && change.kind === "block-updated"
+      ? pageVersionPreviousValueInlineMaxBytes
+      : limit;
     return { ...change, fields: change.fields.map((field) => ({
       ...field,
-      before: boundHistoryFieldValue(field.before, limit),
+      before: boundHistoryFieldValue(field.before, beforeLimit),
       after: boundHistoryFieldValue(field.after, limit)
     })) };
   }
@@ -570,13 +579,34 @@ export function pageVersionChangesForBackup(value: string) {
   }
 }
 
+// An entry that deleted a block holds the only copy of that block. Leaving the
+// 1,000-revision window does not remove it: the newest of these are kept on
+// top of the window, so Restore stays available long after the deletion.
+export const pageVersionMaxRetainedDeletionRowsPerPage = 200;
+const pageVersionDeletionRowSql =
+  "COALESCE(CAST(JSON_VALUE(change_summary, '$.blocksDeleted') AS UNSIGNED), 0) > 0";
+
 export async function prunePageVersionHistory(client: DbClient, pageId: string, revision: number) {
-  if (revision > pageVersionMaxRowsPerPage) {
-    await client.execute("DELETE FROM page_versions WHERE page_id = ? AND revision <= ?", [
-      pageId, revision - pageVersionMaxRowsPerPage
-    ]);
+  const windowCutoff = revision - pageVersionMaxRowsPerPage;
+  if (windowCutoff > 0) {
+    await client.execute(
+      `DELETE FROM page_versions WHERE page_id = ? AND revision <= ? AND NOT (${pageVersionDeletionRowSql})`,
+      [pageId, windowCutoff]
+    );
+    // Only deletion entries remain below the window now; keep the newest ones.
+    const oldestRetained = await client.queryOne<{ revision: number | bigint | null }>(
+      `SELECT revision FROM page_versions WHERE page_id = ? AND revision <= ?
+       ORDER BY revision DESC LIMIT 1 OFFSET ?`,
+      [pageId, windowCutoff, pageVersionMaxRetainedDeletionRowsPerPage - 1]
+    );
+    if (oldestRetained?.revision !== null && oldestRetained?.revision !== undefined) {
+      await client.execute("DELETE FROM page_versions WHERE page_id = ? AND revision < ?", [
+        pageId, Number(oldestRetained.revision)
+      ]);
+    }
   }
-  // The revision prune bounds this scan to 1,000 rows, including legacy history.
+  // The revision prune bounds this scan to 1,200 rows, including legacy history.
+  // The byte budget below stays a hard limit for every kind of entry.
   // Compute sizes in SQL so historical JSON never crosses the DB connection.
   const expired = await client.queryOne<{ cutoff_revision: number | bigint | null }>(
     `SELECT MAX(retained_versions.revision) AS cutoff_revision FROM (
@@ -592,6 +622,153 @@ export async function prunePageVersionHistory(client: DbClient, pageId: string, 
       pageId, Number(expired.cutoff_revision)
     ]);
   }
+}
+
+// Autosave writes after every pause in typing. Without grouping, an afternoon
+// of typing fills the 1,000-entry window and pushes everything older (deleted
+// blocks included) out of history. Successive saves of one block by the same
+// people within this window share one entry instead.
+export const pageVersionCoalesceWindowSeconds = 10 * 60;
+// An edit that removes more than this many characters always starts a new
+// entry. Grouping keeps only the first "before", so text typed and then
+// replaced or cleared inside the window would otherwise vanish from history.
+export const pageVersionCoalesceMaxRemovedCharacters = 64;
+const pageVersionCoalescibleSources = new Set(["BLOCK_UPDATE", "COLLABORATION"]);
+const pageVersionCoalescibleBlockFields = new Set(["markdown", "checked", "metadata"]);
+
+function serializeHistoryFieldValue(value: unknown) {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value ?? null) ?? "null";
+}
+
+/** Characters of `before` that are not kept, at either end, in `after`. */
+export function countRemovedHistoryCharacters(before: string, after: string) {
+  const shared = Math.min(before.length, after.length);
+  let prefix = 0;
+  while (prefix < shared && before.charCodeAt(prefix) === after.charCodeAt(prefix)) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < shared - prefix
+    && before.charCodeAt(before.length - 1 - suffix) === after.charCodeAt(after.length - 1 - suffix)
+  ) suffix += 1;
+  return before.length - prefix - suffix;
+}
+
+function isCoalescibleBlockUpdateFields(fields: PageVersionFieldChange[]) {
+  return fields.length > 0 && fields.every((field) => pageVersionCoalescibleBlockFields.has(field.field));
+}
+
+/** True when this change may join the previous entry for the same block. */
+export function isCoalescibleBlockUpdate(changes: PageVersionChange[]) {
+  if (changes.length !== 1) return false;
+  const [change] = changes;
+  if (change.kind !== "block-updated" || !isCoalescibleBlockUpdateFields(change.fields)) return false;
+  return change.fields.every((field) => {
+    if (field.field === "checked") return true;
+    // Without both values the size of the removal is unknown: keep it separate.
+    if (isPageVersionOmittedValue(field.before) || isPageVersionOmittedValue(field.after)) return false;
+    return countRemovedHistoryCharacters(
+      serializeHistoryFieldValue(field.before),
+      serializeHistoryFieldValue(field.after)
+    ) <= pageVersionCoalesceMaxRemovedCharacters;
+  });
+}
+
+/**
+ * Folds `next` into the stored entry: each field keeps the oldest "before"
+ * and takes the newest "after". Returns null when they cannot be merged.
+ */
+export function mergeCoalescedBlockUpdate(
+  previous: PageVersionChange[],
+  next: PageVersionChange[]
+): PageVersionChange[] | null {
+  if (previous.length !== 1 || !isCoalescibleBlockUpdate(next)) return null;
+  const [stored] = previous;
+  const [change] = next;
+  if (
+    stored.kind !== "block-updated"
+    || change.kind !== "block-updated"
+    || stored.blockId !== change.blockId
+    || !isCoalescibleBlockUpdateFields(stored.fields)
+  ) return null;
+
+  const fields = stored.fields.map((field) => ({ ...field }));
+  for (const field of change.fields) {
+    const existing = fields.find((candidate) => candidate.field === field.field);
+    if (existing) existing.after = field.after;
+    else fields.push({ ...field });
+  }
+  return [{ kind: "block-updated", blockId: change.blockId, blockType: change.blockType, fields }];
+}
+
+function sameHistoryActors(stored: string | PageVersionActor[], actors: PageVersionActor[]) {
+  try {
+    const storedIds = parsePageVersionActorsJson(stored).map((actor) => actor.id).sort();
+    const nextIds = actors.map((actor) => actor.id).sort();
+    return storedIds.length === nextIds.length && storedIds.every((id, index) => id === nextIds[index]);
+  } catch {
+    return false;
+  }
+}
+
+async function coalescePageVersion(
+  client: DbClient,
+  input: { pageId: string; actors: PageVersionActor[]; source: string; changes: PageVersionChange[] },
+  page: Pick<PageRow, "edit_version" | "content_version">,
+  currentRevision: number
+) {
+  if (currentRevision < 1 || !pageVersionCoalescibleSources.has(input.source)) return null;
+  if (!isCoalescibleBlockUpdate(input.changes)) return null;
+
+  const latest = await client.queryOne<{
+    id: number | bigint;
+    revision: number | bigint;
+    source: string;
+    actors: string | PageVersionActor[];
+    changes: string | PageVersionChange[];
+    recent: number | bigint | boolean | string | null;
+  }>(
+    `SELECT id, revision, source, actors, changes,
+            created_at >= DATE_SUB(NOW(3), INTERVAL ? SECOND) AS recent
+     FROM page_versions WHERE page_id = ? AND revision = ? FOR UPDATE`,
+    [pageVersionCoalesceWindowSeconds, input.pageId, currentRevision]
+  );
+  if (
+    !latest
+    || Number(latest.revision) !== currentRevision
+    || latest.source !== input.source
+    || !(latest.recent === true || Number(latest.recent) === 1)
+    || !sameHistoryActors(latest.actors, input.actors)
+  ) return null;
+
+  let stored: PageVersionChange[];
+  try {
+    stored = parsePageVersionChangesJson(latest.changes);
+  } catch {
+    return null;
+  }
+  const merged = mergeCoalescedBlockUpdate(stored, input.changes);
+  if (!merged) return null;
+  const bounded = boundPageVersionChanges(merged);
+  // Never let grouping cost detail that a separate entry would have kept.
+  if (bounded.some((change) => change.kind === "details-omitted")) return null;
+
+  await client.execute(
+    `UPDATE page_versions
+     SET page_edit_version = ?, page_content_version = ?, change_count = ?, change_summary = ?, changes = ?
+     WHERE id = ? AND page_id = ?`,
+    [
+      Number(page.edit_version ?? 1),
+      Number(page.content_version ?? 1),
+      countPageVersionChanges(merged),
+      JSON.stringify(summarizePageVersionChanges(merged)),
+      JSON.stringify(bounded),
+      Number(latest.id),
+      input.pageId
+    ]
+  );
+  await prunePageVersionHistory(client, input.pageId, currentRevision);
+  return { id: Number(latest.id), revision: currentRevision };
 }
 
 export async function recordPageVersion(
@@ -623,6 +800,8 @@ export async function recordPageVersion(
   ) {
     throw new Error("Page version history revision cannot be advanced safely");
   }
+  const coalesced = await coalescePageVersion(client, input, page, currentRevision);
+  if (coalesced) return coalesced;
   const revision = currentRevision + 1;
   const summary = summarizePageVersionChanges(input.changes);
   const changeCount = countPageVersionChanges(input.changes);

@@ -53,7 +53,8 @@ test("a paste longer than the field allows is refused instead of silently cut", 
   assert.match(guard, /if \(nextLength <= field\.maxLength\) return;\s*event\.preventDefault\(\);\s*event\.stopImmediatePropagation\(\);/);
   assert.match(guard, /t\("status\.pasteTooLong"/);
   const length = functionSource(app, "getLengthAfterPaste");
-  assert.match(length, /text\.replace\(\/\\r\\n\?\/g, "\\n"\)/, "text areas count CRLF as one character");
+  assert.match(length, /normalizeInsertedFieldText\(field, text\)/);
+  assert.match(functionSource(app, "normalizeInsertedFieldText"), /text\.replace\(\/\\r\\n\?\/g, "\\n"\)/, "text areas count CRLF as one character");
   assert.match(length, /length - \(end - start\) \+ pasted\.length/, "the replaced selection is subtracted");
 });
 

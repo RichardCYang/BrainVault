@@ -10714,10 +10714,79 @@ const dataLossGuardTranslations = {
   }
 };
 
+// 2026-11-14 browser review: long text turned into an AI chat, deleting files
+// and very large blocks, and text dropped into a nearly full field.
+const dataLossBrowserReviewTranslations = {
+  en: {
+    "status.aiChatQuestionTooLong": "This text is longer than an AI chat question can hold ({max} characters), so it was kept as it is and an empty AI chat was added below it.",
+    "confirm.deleteAttachmentBlock": "Delete “{name}”? The file is removed from the server right away. This cannot be undone, and version history cannot bring it back.",
+    "confirm.deleteUnrestorableBlock": "Delete this block? It is too large for version history to keep, so once deleted it cannot be brought back.",
+    "confirm.deleteIncludesAttachments": "Deleting everything also removes {count} attached files from the server for good.",
+    "status.dropTooLong": "Nothing was dropped: this field holds up to {max} characters, and the dropped text would go {over} over. Drop a shorter part.",
+    "versions.restorePreviousText": "Restore previous text",
+    "status.previousTextRestored": "The previous text is back as a new block below the current one."
+  },
+  ja: {
+    "status.aiChatQuestionTooLong": "このテキストは AI チャットの質問に入る長さ（{max} 文字）を超えているため、そのまま残し、下に空の AI チャットを追加しました。",
+    "confirm.deleteAttachmentBlock": "「{name}」を削除しますか？ファイルはすぐにサーバーから削除されます。元に戻せず、バージョン履歴からも復元できません。",
+    "confirm.deleteUnrestorableBlock": "このブロックを削除しますか？大きすぎてバージョン履歴に残せないため、削除すると復元できません。",
+    "confirm.deleteIncludesAttachments": "すべて削除すると、添付ファイル {count} 件もサーバーから完全に削除されます。",
+    "status.dropTooLong": "ドロップしませんでした。この欄は {max} 文字までで、ドロップすると {over} 文字超えます。短く分けてドロップしてください。",
+    "versions.restorePreviousText": "以前のテキストを復元",
+    "status.previousTextRestored": "以前のテキストを、現在のブロックの下に新しいブロックとして戻しました。"
+  },
+  ko: {
+    "status.aiChatQuestionTooLong": "이 텍스트는 AI 채팅 질문에 담을 수 있는 길이({max}자)보다 길어서, 원래 블록은 그대로 두고 아래에 빈 AI 채팅을 추가했습니다.",
+    "confirm.deleteAttachmentBlock": "‘{name}’을(를) 삭제할까요? 파일이 서버에서 바로 삭제됩니다. 되돌릴 수 없고 버전 기록에서도 복원할 수 없습니다.",
+    "confirm.deleteUnrestorableBlock": "이 블록을 삭제할까요? 너무 커서 버전 기록에 남길 수 없으므로, 삭제하면 복원할 수 없습니다.",
+    "confirm.deleteIncludesAttachments": "모두 삭제하면 첨부파일 {count}개도 서버에서 완전히 삭제됩니다.",
+    "status.dropTooLong": "놓지 않았습니다. 이 칸은 최대 {max}자까지인데, 놓으면 {over}자가 넘칩니다. 짧게 나눠서 놓아 주세요.",
+    "versions.restorePreviousText": "이전 내용 복원",
+    "status.previousTextRestored": "이전 내용을 현재 블록 바로 아래에 새 블록으로 되살렸습니다."
+  },
+  fr: {
+    "status.aiChatQuestionTooLong": "Ce texte dépasse la longueur d’une question de chat IA ({max} caractères) : il a été conservé tel quel et un chat IA vide a été ajouté en dessous.",
+    "confirm.deleteAttachmentBlock": "Supprimer « {name} » ? Le fichier est supprimé du serveur immédiatement. Impossible d’annuler, et l’historique des versions ne peut pas le récupérer.",
+    "confirm.deleteUnrestorableBlock": "Supprimer ce bloc ? Il est trop volumineux pour l’historique des versions : une fois supprimé, il ne pourra pas être récupéré.",
+    "confirm.deleteIncludesAttachments": "Tout supprimer retire aussi définitivement {count} fichiers joints du serveur.",
+    "status.dropTooLong": "Rien n’a été déposé : ce champ accepte {max} caractères au maximum et le texte déposé le dépasserait de {over}. Déposez une partie plus courte.",
+    "versions.restorePreviousText": "Restaurer le texte précédent",
+    "status.previousTextRestored": "Le texte précédent est revenu dans un nouveau bloc sous le bloc actuel."
+  },
+  de: {
+    "status.aiChatQuestionTooLong": "Dieser Text ist länger, als eine KI-Chat-Frage fassen kann ({max} Zeichen). Er bleibt unverändert, und darunter wurde ein leerer KI-Chat eingefügt.",
+    "confirm.deleteAttachmentBlock": "„{name}“ löschen? Die Datei wird sofort vom Server entfernt. Das lässt sich nicht rückgängig machen, und der Versionsverlauf kann sie nicht wiederherstellen.",
+    "confirm.deleteUnrestorableBlock": "Diesen Block löschen? Er ist zu groß für den Versionsverlauf und lässt sich nach dem Löschen nicht wiederherstellen.",
+    "confirm.deleteIncludesAttachments": "„Alles löschen“ entfernt außerdem {count} angehängte Dateien endgültig vom Server.",
+    "status.dropTooLong": "Nichts abgelegt: Dieses Feld fasst höchstens {max} Zeichen, der abgelegte Text läge {over} darüber. Legen Sie einen kürzeren Teil ab.",
+    "versions.restorePreviousText": "Vorherigen Text wiederherstellen",
+    "status.previousTextRestored": "Der vorherige Text steht jetzt als neuer Block unter dem aktuellen."
+  },
+  es: {
+    "status.aiChatQuestionTooLong": "Este texto supera lo que cabe en una pregunta de chat de IA ({max} caracteres), así que se mantuvo tal cual y se añadió debajo un chat de IA vacío.",
+    "confirm.deleteAttachmentBlock": "¿Eliminar «{name}»? El archivo se elimina del servidor de inmediato. No se puede deshacer y el historial de versiones no puede recuperarlo.",
+    "confirm.deleteUnrestorableBlock": "¿Eliminar este bloque? Es demasiado grande para el historial de versiones, así que una vez eliminado no se podrá recuperar.",
+    "confirm.deleteIncludesAttachments": "Eliminarlo todo también borra del servidor {count} archivos adjuntos de forma definitiva.",
+    "status.dropTooLong": "No se soltó nada: este campo admite hasta {max} caracteres y el texto soltado lo superaría en {over}. Suelta una parte más corta.",
+    "versions.restorePreviousText": "Restaurar el texto anterior",
+    "status.previousTextRestored": "El texto anterior volvió como un bloque nuevo debajo del actual."
+  },
+  pt: {
+    "status.aiChatQuestionTooLong": "Este texto é maior do que cabe numa pergunta de chat de IA ({max} caracteres), então foi mantido como está e um chat de IA vazio foi adicionado abaixo.",
+    "confirm.deleteAttachmentBlock": "Excluir “{name}”? O arquivo é removido do servidor na hora. Não é possível desfazer, e o histórico de versões não pode recuperá-lo.",
+    "confirm.deleteUnrestorableBlock": "Excluir este bloco? Ele é grande demais para o histórico de versões, então depois de excluído não poderá ser recuperado.",
+    "confirm.deleteIncludesAttachments": "Excluir tudo também remove do servidor, de vez, {count} arquivos anexados.",
+    "status.dropTooLong": "Nada foi solto: este campo aceita até {max} caracteres e o texto solto passaria {over} do limite. Solte uma parte menor.",
+    "versions.restorePreviousText": "Restaurar texto anterior",
+    "status.previousTextRestored": "O texto anterior voltou como um novo bloco abaixo do atual."
+  }
+};
+
 for (const [language, entries] of [
   ...Object.entries(catalogCompletionTranslations),
   ...Object.entries(apiErrorAndRecoveryTranslations),
-  ...Object.entries(dataLossGuardTranslations)
+  ...Object.entries(dataLossGuardTranslations),
+  ...Object.entries(dataLossBrowserReviewTranslations)
 ]) {
   const catalog = translationCatalogs[language];
   if (!catalog) continue;
