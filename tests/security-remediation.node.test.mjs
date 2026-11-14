@@ -120,7 +120,10 @@ test("collaboration updates are semantically validated off the event loop before
   assert.match(source.slice(validationIndex, insertIndex), /CollaborationDocumentError/);
   assert.match(source.slice(validationIndex, insertIndex), /client\.socket\.close\(1008, "Invalid collaboration update"\)/);
   assert.match(worker, /applyValidatedYjsStateUpdate/);
-  assert.match(worker, /readCollaborationMaterialization\(candidate\.document\)/);
+  // The worker validates through validateCollaborationCandidate, which reads
+  // (and, for a repairable concurrent merge, repairs then re-reads) the candidate.
+  assert.match(worker, /validateCollaborationCandidate\(candidate,/);
+  assert.match(read("src/lib/collaboration-materialization.ts"), /readCollaborationMaterialization\(candidate\.document\)/);
   assert.match(pool, /maxPendingValidationTasks = 64/);
   assert.match(pool, /maxPendingValidationBytes = 128 \* 1024 \* 1024/);
   assert.match(pool, /maxPendingValidationTasksPerPrincipal = 1/);

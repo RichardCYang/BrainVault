@@ -17,6 +17,7 @@ const PREPARED_LOCAL_ORIGIN = Object.freeze({ kind: "prepared-local" });
 const RECOVERY_ORIGIN = Object.freeze({ kind: "recovery" });
 const COMPACTION_UPDATE_THRESHOLD = 200;
 const MATERIALIZE_DELAY_MS = 900;
+const MAX_CONSECUTIVE_UPDATE_REJECTIONS = 3;
 const AWARENESS_DELAY_MS = 80;
 const COLLABORATIVE_BLOCK_TYPES = new Set([
   "MARKDOWN",
@@ -138,6 +139,125 @@ export function rebaseTextEdit(base, current, next) {
     .reduce((total, [from, to]) => total + (to - from), 0);
   const at = Math.max(0, Math.min(result.length, insertAt - removedBeforeInsert));
   return result.slice(0, at) + local.insert + result.slice(at);
+}
+
+function hasIdentifiedItems(values) {
+  const ids = new Set();
+  for (const item of values) {
+    if (!isPlainObject(item) || typeof item.id !== "string" || !item.id || ids.has(item.id)) return false;
+    ids.add(item.id);
+  }
+  return true;
+}
+
+// Adds the items of `other` that `order` lacks and that `other` added or
+// changed (a changed item the order side removed is kept, not lost). Each is
+// placed after the item preceding it in `other`, so it keeps its position.
+function insertMissingItems(order, other, baseById) {
+  const result = [...order];
+  let previousId = null;
+  for (const item of other) {
+    const before = baseById.get(item.id);
+    if (!result.includes(item.id) && (before === undefined || !plainValuesEqual(item, before))) {
+      const at = previousId === null ? 0 : result.indexOf(previousId) + 1;
+      result.splice(at, 0, item.id);
+    }
+    if (result.includes(item.id)) previousId = item.id;
+  }
+  return result;
+}
+
+function mergeIdentifiedArrays(base, live, local) {
+  const baseById = new Map(base.map((item) => [item.id, item]));
+  const liveById = new Map(live.map((item) => [item.id, item]));
+  const localById = new Map(local.map((item) => [item.id, item]));
+  const localIds = local.map((item) => item.id);
+  const shared = (ids) => ids.filter((id) => baseById.has(id) && liveById.has(id) && localById.has(id));
+  const localReordered = !plainValuesEqual(shared(localIds), shared(base.map((item) => item.id)));
+  // Keep this editor's order when it reordered, otherwise the shared order.
+  let order = localReordered ? localIds : live.map((item) => item.id);
+  order = insertMissingItems(order, localReordered ? live : local, baseById);
+
+  const result = [];
+  for (const id of order) {
+    const before = baseById.get(id);
+    const inLive = liveById.get(id);
+    const inLocal = localById.get(id);
+    if (before === undefined) {
+      result.push(inLocal ?? inLive);
+      continue;
+    }
+    if (inLive === undefined || inLocal === undefined) {
+      // One side removed the item. If the other side changed it meanwhile,
+      // keep that change rather than lose it; otherwise the removal stands.
+      const survivor = inLive ?? inLocal;
+      if (survivor !== undefined && !plainValuesEqual(survivor, before)) result.push(survivor);
+      continue;
+    }
+    result.push(mergeConcurrentValue(before, inLive, inLocal));
+  }
+  return result;
+}
+
+// Arrays without ids (table rows and cells) line up by position. That is safe
+// only while one side appended at most: then every shared position still holds
+// the same item on both sides.
+function mergePositionalArrays(base, live, local) {
+  if (live.length === base.length && local.length === base.length) {
+    return local.map((item, index) => mergeConcurrentValue(base[index], live[index], item));
+  }
+  const appendedSide = live.length > base.length && local.length === base.length
+    ? "live"
+    : local.length > base.length && live.length === base.length
+      ? "local"
+      : null;
+  if (!appendedSide) return local;
+  const grown = appendedSide === "live" ? live : local;
+  const aligned = base.every((item, index) =>
+    plainValuesEqual(grown[index], item)
+    || plainValuesEqual((appendedSide === "live" ? local : live)[index], item)
+  );
+  if (!aligned) return local;
+  return grown.map((item, index) => (
+    index < base.length ? mergeConcurrentValue(base[index], live[index], local[index]) : item
+  ));
+}
+
+/**
+ * Three-way merge of a structured block value (table, board, database, ...).
+ * `base` is what this editor last sent, `live` is the shared document now
+ * (peers' changes included) and `local` is the editor's new value. Only what
+ * this editor changed since `base` is applied on top of `live`; a peer's edit
+ * to another cell or card is kept instead of being overwritten by the
+ * editor's older copy. Concurrent edits of the same text merge like typing.
+ */
+export function mergeConcurrentValue(base, live, local) {
+  if (plainValuesEqual(local, base)) return live;
+  if (plainValuesEqual(live, base) || plainValuesEqual(live, local)) return local;
+  if (live === undefined) return local;
+  if (local === undefined) {
+    // This editor removed a value a peer changed: keep the peer's change.
+    return live;
+  }
+  if (typeof base === "string" && typeof live === "string" && typeof local === "string") {
+    return rebaseTextEdit(base, live, local);
+  }
+  if (isPlainObject(base) && isPlainObject(live) && isPlainObject(local)) {
+    const result = {};
+    const keys = new Set([...Object.keys(local), ...Object.keys(live), ...Object.keys(base)]);
+    for (const key of keys) {
+      const merged = mergeConcurrentValue(base[key], live[key], local[key]);
+      if (merged !== undefined) result[key] = merged;
+    }
+    return result;
+  }
+  if (Array.isArray(base) && Array.isArray(live) && Array.isArray(local)) {
+    if (hasIdentifiedItems(base) && hasIdentifiedItems(live) && hasIdentifiedItems(local)) {
+      return mergeIdentifiedArrays(base, live, local);
+    }
+    return mergePositionalArrays(base, live, local);
+  }
+  return local;
 }
 
 /** Moves a caret index across a change from `before` to `after`. */
@@ -570,6 +690,10 @@ class PageCollaborationSession {
     this.connecting = false;
     this.connectionId = null;
     this.reconnectAttempt = 0;
+    // Closes for a rejected update (1008) since the last acknowledged one. The
+    // same local changes are resent on every reconnect, so past a few the
+    // session stops retrying instead of looping forever (see handleSocketClose).
+    this.consecutiveUpdateRejections = 0;
     this.reconnectTimer = null;
     this.materializeTimer = null;
     this.awarenessTimer = null;
@@ -979,7 +1103,15 @@ class PageCollaborationSession {
   // mutation runs later (after durable recovery storage), and a peer's change
   // may land in between; the edit is then re-applied on top of it instead of
   // overwriting it.
-  upsertBlock(block, { allowDisconnected = false, beforeCommit = null, baseMarkdown = null } = {}) {
+  // `baseMetadata` works the same way for structured blocks (tables, boards,
+  // databases): pass what this editor last sent (null when the block had no
+  // metadata), and only this editor's changes since then are merged in.
+  upsertBlock(block, {
+    allowDisconnected = false,
+    beforeCommit = null,
+    baseMarkdown = null,
+    baseMetadata = undefined
+  } = {}) {
     const normalized = normalizeBlock(block);
     let committed = normalized;
     return this.commitLocalMutation(({ blocks, deletedAttachments }) => {
@@ -993,14 +1125,22 @@ class PageCollaborationSession {
       if (typeof baseMarkdown === "string" && liveText instanceof this.Y.Text) {
         markdown = requireBlockMarkdownWithinLimit(rebaseTextEdit(baseMarkdown, liveText.toString(), normalized.markdown));
       }
-      committed = markdown === normalized.markdown ? normalized : { ...normalized, markdown };
+      let metadata = normalized.metadata;
+      if (baseMetadata !== undefined && map.has("metadata")) {
+        const liveMetadata = readYValue(this.Y, map.get("metadata"));
+        const merged = mergeConcurrentValue(baseMetadata, liveMetadata, normalized.metadata);
+        metadata = isPlainObject(merged) ? merged : null;
+      }
+      committed = markdown === normalized.markdown && metadata === normalized.metadata
+        ? normalized
+        : { ...normalized, markdown, metadata };
       reconcileYMap(this.Y, map, {
         type: normalized.type,
         markdown,
         checked: normalized.checked,
         parentBlockId: normalized.parentBlockId,
         sortOrder: normalized.sortOrder,
-        metadata: normalized.metadata
+        metadata
       });
       if (normalized.type === "ATTACHMENT") deletedAttachments.delete(normalized.id);
     }, { allowDisconnected, beforeCommit }).then(() => committed);
@@ -1637,6 +1777,7 @@ class PageCollaborationSession {
       return;
     }
     if (message.type === "update-ack") {
+      this.consecutiveUpdateRejections = 0;
       this.lastUpdateId = Math.max(this.lastUpdateId, Number(message.updateId) || 0);
       this.pendingLocalUpdates = Math.max(0, this.pendingLocalUpdates - 1);
       if (message.snapshot) {
@@ -1739,8 +1880,34 @@ class PageCollaborationSession {
       this.onStatus("offline");
       return;
     }
+    if (event.code === 1008 && this.needsRecovery) {
+      this.consecutiveUpdateRejections += 1;
+      if (this.consecutiveUpdateRejections >= MAX_CONSECUTIVE_UPDATE_REJECTIONS) {
+        // The server keeps refusing these local changes, and they are resent on
+        // every reconnect. Stop instead of retrying forever; the changes stay
+        // in this browser's recovery storage and retrySynchronization() tries
+        // again (for example after the server was updated).
+        const error = new Error(
+          "The server refused this browser's changes to the shared page. They are kept in this browser."
+        );
+        error.code = "COLLABORATION_UPDATE_REJECTED";
+        this.onError(error);
+        this.onStatus("offline");
+        return;
+      }
+    }
     this.onStatus("reconnecting");
     this.scheduleReconnect();
+  }
+
+  /** Reconnects after the session stopped on repeated update rejection. */
+  retrySynchronization() {
+    if (this.destroyed || this.socket || this.reconnectTimer) return false;
+    this.consecutiveUpdateRejections = 0;
+    this.reconnectAttempt = 0;
+    this.onStatus("reconnecting");
+    this.scheduleReconnect();
+    return true;
   }
 
   scheduleReconnect() {

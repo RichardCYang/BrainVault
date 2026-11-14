@@ -15,6 +15,8 @@ export type ValidatedYjsUpdate = {
   stateUpdate: Uint8Array;
   incrementalUpdate: Uint8Array;
   changed: boolean;
+  /** State vector of the room before this update; the incremental update is relative to it. */
+  baseStateVector: Uint8Array;
 };
 
 // Yjs 13.x allocates an array sized from an update-declared struct count while
@@ -194,10 +196,32 @@ export function applyValidatedYjsStateUpdate(
       document: candidate,
       stateUpdate,
       incrementalUpdate,
-      changed: !Buffer.from(currentState).equals(Buffer.from(stateUpdate))
+      changed: !Buffer.from(currentState).equals(Buffer.from(stateUpdate)),
+      baseStateVector: currentStateVector
     };
   } catch (error) {
     candidate.destroy();
+    if (error instanceof InvalidYjsUpdateError) throw error;
+    throw new InvalidYjsUpdateError(undefined, { cause: error });
+  }
+}
+
+/**
+ * Re-encode a candidate after the server changed its document (a repair of a
+ * concurrent merge). The incremental update then carries the client's update
+ * and the repair together, so every peer, the sender included, converges on
+ * the repaired state.
+ */
+export function reencodeValidatedYjsCandidate(
+  candidate: ValidatedYjsUpdate,
+  maxStateBytes: number
+): ValidatedYjsUpdate {
+  try {
+    const stateUpdate = encodeBoundedState(candidate.document, maxStateBytes);
+    const incrementalUpdate = Y.encodeStateAsUpdate(candidate.document, candidate.baseStateVector);
+    assertUpdatePreflight(incrementalUpdate, maxStateBytes);
+    return { ...candidate, stateUpdate, incrementalUpdate, changed: true };
+  } catch (error) {
     if (error instanceof InvalidYjsUpdateError) throw error;
     throw new InvalidYjsUpdateError(undefined, { cause: error });
   }

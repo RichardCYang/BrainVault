@@ -74,6 +74,12 @@ import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "..
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
 import {
+  createPreDeleteSafetySnapshot,
+  deleteSafetySnapshotIdHeader,
+  deleteSafetySnapshotSkipHeader,
+  pruneAutomaticSnapshots
+} from "../lib/workspace-snapshots.js";
+import {
   grantDirectPageRecovery,
   grantLegacyYjsPageRecovery,
   preserveRecoveryGrantsForPages
@@ -327,6 +333,24 @@ function getPageSubtreeRows(pageId: string, rows: PageDeletionPageRow[]) {
     for (let index = childIds.length - 1; index >= 0; index -= 1) pending.push(childIds[index]);
   }
   return ordered;
+}
+
+/**
+ * True for a first (not replayed) permanent deletion of a collection or of a
+ * page with nested pages: the deletions that cannot be archived instead and
+ * take many pages at once. A plain read; the deletion transaction re-checks
+ * everything under its locks.
+ */
+async function needsPreDeleteSafetySnapshot(ownerId: string, mutationId: string, pageId: string) {
+  const replay = await db.queryOne<{ mutation_id: string }>(
+    "SELECT mutation_id FROM page_delete_mutations WHERE actor_id = ? AND mutation_id = ?",
+    [ownerId, mutationId]
+  );
+  if (replay) return false;
+  const rows = await getOwnedPageTreeRows(ownerId);
+  const target = rows.find((row) => row.id === pageId);
+  if (!target) return false;
+  return Boolean(target.is_collection) || getPageSubtreeRows(pageId, rows).length > 1;
 }
 
 function assertPageParentFromLockedRows(
@@ -2341,6 +2365,19 @@ pageRouter.delete(
           "SELECT owner_id FROM pages WHERE id = ?",
           [pageId]
         );
+        // A collection, or a page with nested pages, takes many pages, their
+        // history and files with it, and there is no archive for collections.
+        // Save the owner's workspace first so the deletion can be undone. The
+        // deletion below still checks the confirmed preview hash, so anything
+        // that changed after this copy was taken stops the deletion instead.
+        let safetySnapshotId: string | null = null;
+        if (
+          pageOwnerHint?.owner_id === user.id
+          && req.header(deleteSafetySnapshotSkipHeader) !== "1"
+          && await needsPreDeleteSafetySnapshot(user.id, mutationId, pageId)
+        ) {
+          safetySnapshotId = (await createPreDeleteSafetySnapshot(user.id, authScope)).id;
+        }
         const deletion = await transaction(async (client) => {
           await lockPageDeleteUsers(
             client,
@@ -2543,6 +2580,10 @@ pageRouter.delete(
             deletion.attachmentIds,
             deletion.attachmentGeneration
           );
+        }
+        if (safetySnapshotId) {
+          await pruneAutomaticSnapshots(user.id, authScope, [safetySnapshotId]);
+          res.setHeader(deleteSafetySnapshotIdHeader, safetySnapshotId);
         }
         res.status(204).send();
         return;

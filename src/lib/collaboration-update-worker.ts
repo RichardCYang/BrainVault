@@ -1,7 +1,7 @@
 import { parentPort } from "node:worker_threads";
 import {
   materializeCollaborationUpdates,
-  readCollaborationMaterialization,
+  validateCollaborationCandidate,
   type CollaborationMaterialization
 } from "./collaboration-materialization.js";
 import { CollaborationDocumentError } from "./collaboration-document.js";
@@ -144,9 +144,18 @@ workerParentPort.on("message", (request: CollaborationWorkerRequest) => {
       request.update,
       request.maxStateBytes
     );
-    const materialization = candidate.changed || request.includeMaterialization
-      ? readCollaborationMaterialization(candidate.document)
-      : null;
+    let materialization: CollaborationMaterialization | null = null;
+    if (candidate.changed || request.includeMaterialization) {
+      // A merge of two valid concurrent edits can break a document rule. Repair
+      // it inside this update (never on the bootstrap write, which must match
+      // the saved page exactly) instead of rejecting this peer forever.
+      const validated = validateCollaborationCandidate(candidate, {
+        maxStateBytes: request.maxStateBytes,
+        allowRepair: !request.includeMaterialization
+      });
+      candidate = validated.candidate;
+      materialization = validated.materialization;
+    }
     const stateUpdate = Uint8Array.from(candidate.stateUpdate);
     const incrementalUpdate = Uint8Array.from(candidate.incrementalUpdate);
     const response: CollaborationUpdateValidationSuccess = {

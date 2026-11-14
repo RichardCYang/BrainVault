@@ -18,6 +18,8 @@ export type PageVersionFieldChange = {
   field: string;
   before: unknown;
   after: unknown;
+  /** Characters removed by the saves grouped into this entry so far (see coalescing). */
+  removedInGroup?: number;
 };
 
 export type PageVersionBlockState = {
@@ -93,7 +95,8 @@ const pageVersionSummarySchema = z.object({
 const pageVersionFieldChangeSchema = z.object({
   field: z.string().min(1).max(64),
   before: z.unknown(),
-  after: z.unknown()
+  after: z.unknown(),
+  removedInGroup: z.number().int().nonnegative().max(1_000_000_000).optional()
 }).strict();
 const omittedHistoryValueSchema = z.object({
   $pageVersionOmitted: z.literal(true),
@@ -583,6 +586,8 @@ export function pageVersionChangesForBackup(value: string) {
 // 1,000-revision window does not remove it: the newest of these are kept on
 // top of the window, so Restore stays available long after the deletion.
 export const pageVersionMaxRetainedDeletionRowsPerPage = 200;
+/** Byte share of pageVersionMaxBytesPerPage kept for block deletion entries. */
+export const pageVersionMaxDeletionBytesPerPage = 4 * 1024 * 1024;
 const pageVersionDeletionRowSql =
   "COALESCE(CAST(JSON_VALUE(change_summary, '$.blocksDeleted') AS UNSIGNED), 0) > 0";
 
@@ -605,20 +610,34 @@ export async function prunePageVersionHistory(client: DbClient, pageId: string, 
       ]);
     }
   }
-  // The revision prune bounds this scan to 1,200 rows, including legacy history.
-  // The byte budget below stays a hard limit for every kind of entry.
+  // The revision prune bounds these scans to 1,200 rows, including legacy
+  // history. The byte budgets stay a hard limit: deletion entries and other
+  // entries each have their own share of pageVersionMaxBytesPerPage, so a
+  // busy page full of large edits cannot push out the only copy of a deleted
+  // block (it used to, after a few hundred saves of long blocks).
   // Compute sizes in SQL so historical JSON never crosses the DB connection.
+  await pruneVersionHistoryBytes(client, pageId, true, pageVersionMaxDeletionBytesPerPage);
+  await pruneVersionHistoryBytes(
+    client,
+    pageId,
+    false,
+    pageVersionMaxBytesPerPage - pageVersionMaxDeletionBytesPerPage
+  );
+}
+
+async function pruneVersionHistoryBytes(client: DbClient, pageId: string, deletions: boolean, maxBytes: number) {
+  const kind = deletions ? pageVersionDeletionRowSql : `NOT (${pageVersionDeletionRowSql})`;
   const expired = await client.queryOne<{ cutoff_revision: number | bigint | null }>(
     `SELECT MAX(retained_versions.revision) AS cutoff_revision FROM (
        SELECT revision,
               SUM(OCTET_LENGTH(actors) + OCTET_LENGTH(change_summary) + OCTET_LENGTH(changes))
                 OVER (ORDER BY revision DESC ROWS UNBOUNDED PRECEDING) AS total_bytes
-       FROM page_versions WHERE page_id = ?
+       FROM page_versions WHERE page_id = ? AND ${kind}
      ) retained_versions WHERE retained_versions.total_bytes > ?`,
-    [pageId, pageVersionMaxBytesPerPage]
+    [pageId, maxBytes]
   );
   if (expired?.cutoff_revision !== null && expired?.cutoff_revision !== undefined) {
-    await client.execute("DELETE FROM page_versions WHERE page_id = ? AND revision <= ?", [
+    await client.execute(`DELETE FROM page_versions WHERE page_id = ? AND revision <= ? AND ${kind}`, [
       pageId, Number(expired.cutoff_revision)
     ]);
   }
@@ -694,9 +713,25 @@ export function mergeCoalescedBlockUpdate(
 
   const fields = stored.fields.map((field) => ({ ...field }));
   for (const field of change.fields) {
+    // A group keeps only its oldest "before" and newest "after", so text typed
+    // and then removed inside the group is in neither. Each save may remove a
+    // little, but the total removed in one group is capped too; past it a new
+    // entry starts and keeps that text as its "before".
+    const removed = field.field === "checked"
+      ? 0
+      : countRemovedHistoryCharacters(
+        serializeHistoryFieldValue(field.before),
+        serializeHistoryFieldValue(field.after)
+      );
     const existing = fields.find((candidate) => candidate.field === field.field);
-    if (existing) existing.after = field.after;
-    else fields.push({ ...field });
+    const removedInGroup = (existing?.removedInGroup ?? 0) + removed;
+    if (removedInGroup > pageVersionCoalesceMaxRemovedCharacters) return null;
+    if (existing) {
+      existing.after = field.after;
+      if (removedInGroup > 0) existing.removedInGroup = removedInGroup;
+    } else {
+      fields.push(removedInGroup > 0 ? { ...field, removedInGroup } : { ...field });
+    }
   }
   return [{ kind: "block-updated", blockId: change.blockId, blockType: change.blockType, fields }];
 }

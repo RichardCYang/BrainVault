@@ -75,7 +75,10 @@ describe("Page version history", () => {
     expect(client).toContain("const pageVersionResetRequestTimeoutMs = 15_000");
     expect(client).toMatch(/submitPageVersionResetTask[\s\S]*mutationTimeoutMs: pageVersionResetRequestTimeoutMs/);
     expect(client).toContain('method: "DELETE"');
-    expect(client).toContain('message: t("versions.resetConfirm", { title })');
+    // The confirmation names the page and, when history holds deleted blocks,
+    // says those can no longer be brought back afterwards.
+    expect(client).toContain('t("versions.resetConfirm", { title })');
+    expect(client).toMatch(/deletedBlocks > 0 \|\| history\.nextCursor\s*\? `\$\{t\("versions\.resetConfirm", \{ title \}\)\} \$\{t\("versions\.resetConfirmDeletedBlocks"\)\}`/);
     expect(client).toContain("createPageVersionFieldChange");
     expect(styles).toContain(".page-version-history-dialog");
     expect(styles).toContain(".page-version-before-after");

@@ -117,6 +117,11 @@ dataRouter.get(
     res.setHeader("Content-Length", plan.archiveSize.toString());
     res.setHeader("Cache-Control", "private, no-store, no-transform");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    // Oldest version history entries left out so the backup fits its limits
+    // (current content is always complete); the browser tells the person.
+    if (plan.historyEntriesOmitted > 0) {
+      res.setHeader("X-Backup-History-Entries-Omitted", String(plan.historyEntriesOmitted));
+    }
     res.strictContentLength = true;
     await writeUserDataBackup(plan, res);
     res.end();

@@ -47,7 +47,7 @@ async function assertSnapshotCapacity(userId: string, client: DbClient, addition
   return remainingBytes;
 }
 
-type SnapshotKind = "MANUAL" | "PRE_RESTORE";
+type SnapshotKind = "MANUAL" | "PRE_RESTORE" | "PRE_DELETE";
 
 type SnapshotRow = {
   id: string;
@@ -112,7 +112,7 @@ function toSnapshotInfo(row: SnapshotRow, integrity: "ok" | "missing" | "size-mi
     blocks: Number(row.block_count),
     attachments: Number(row.attachment_count),
     pageVersions: Number(row.page_version_count),
-    kind: row.kind === "PRE_RESTORE" ? "pre-restore" : "manual",
+    kind: row.kind === "PRE_RESTORE" ? "pre-restore" : row.kind === "PRE_DELETE" ? "pre-delete" : "manual",
     integrity
   };
 }
@@ -337,6 +337,36 @@ export async function createPreRestoreSafetySnapshot(
   return created;
 }
 
+export const deleteSafetySnapshotSkipHeader = "X-Delete-Skip-Safety-Snapshot";
+/** Response header naming the snapshot saved before a permanent deletion. */
+export const deleteSafetySnapshotIdHeader = "X-Delete-Safety-Snapshot-Id";
+
+/**
+ * Saves the workspace just before a collection or a page with nested pages is
+ * permanently deleted. Those deletions remove many pages, their history and
+ * files at once and cannot be archived instead, so the snapshot is what makes
+ * them undoable. Pruned like the "Before restore" snapshots.
+ *
+ * Any failure stops the deletion with DELETE_SAFETY_SNAPSHOT_FAILED; the person
+ * can then choose to delete without the safety copy.
+ */
+export async function createPreDeleteSafetySnapshot(
+  userId: string,
+  authScope: AuthSessionBoundaryScope
+) {
+  try {
+    return await createWorkspaceSnapshot(userId, authScope, "PRE_DELETE");
+  } catch (error) {
+    if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) throw error;
+    console.error("Pre-delete safety snapshot failed; the deletion was not started", { userId, error });
+    throw new ApiError(
+      409,
+      "DELETE_SAFETY_SNAPSHOT_FAILED",
+      "The workspace could not be saved as a snapshot before deleting. Nothing was deleted."
+    );
+  }
+}
+
 /**
  * A committed restore advances the workspace generation, so the request's own
  * scope no longer passes the session boundary. Pruning happens after that
@@ -367,7 +397,7 @@ export async function pruneAutomaticSnapshots(
     const rows = await db.query<{ id: string; recent: number | null }>(
       `SELECT id, (created_at >= CURRENT_TIMESTAMP(3) - INTERVAL ? HOUR) AS recent
        FROM workspace_snapshots
-       WHERE user_id = ? AND kind = 'PRE_RESTORE'
+       WHERE user_id = ? AND kind IN ('PRE_RESTORE', 'PRE_DELETE')
        ORDER BY created_at DESC, id DESC`,
       [env.SNAPSHOT_AUTO_RETENTION_HOURS, userId]
     );

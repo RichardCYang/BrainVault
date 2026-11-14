@@ -795,6 +795,7 @@ type WorkspaceCollaborationStateRow = {
   latest_update_id: number | bigint | null;
   materialized_update_id: number | bigint | null;
   materialization_version: number | bigint | null;
+  document_epoch: string | null;
 };
 
 type RawAccountRow = {
@@ -862,6 +863,7 @@ async function assertWorkspaceCollaborationMaterialized(client: DbClient, pageId
     latestUpdateId: number;
     materializedUpdateId: number;
     materializationVersion: number;
+    documentEpoch: string | null;
   }> = [];
   for (let index = 0; index < pageIds.length; index += 500) {
     const group = pageIds.slice(index, index + 500);
@@ -869,12 +871,13 @@ async function assertWorkspaceCollaborationMaterialized(client: DbClient, pageId
     const rows = await client.query<WorkspaceCollaborationStateRow>(
       `SELECT p.id AS page_id, MAX(y.id) AS latest_update_id,
          COALESCE(s.materialized_update_id, 0) AS materialized_update_id,
-         COALESCE(s.materialization_version, 0) AS materialization_version
+         COALESCE(s.materialization_version, 0) AS materialization_version,
+         s.document_epoch AS document_epoch
        FROM pages p
        LEFT JOIN page_yjs_updates y ON y.page_id = p.id
        LEFT JOIN page_collaboration_state s ON s.page_id = p.id
        WHERE p.id IN (${group.map(() => "?").join(",")})
-       GROUP BY p.id, s.materialized_update_id, s.materialization_version
+       GROUP BY p.id, s.materialized_update_id, s.materialization_version, s.document_epoch
        ORDER BY p.id ASC${lockClause}`,
       group
     );
@@ -899,7 +902,11 @@ async function assertWorkspaceCollaborationMaterialized(client: DbClient, pageId
           pageId: row.page_id,
           latestUpdateId,
           materializedUpdateId,
-          materializationVersion
+          materializationVersion,
+          // Lets the owner's browser bring the saved page up to date itself
+          // (PUT .../collaboration/snapshot) and retry, instead of being told
+          // to find and open each page.
+          documentEpoch: row.document_epoch ?? null
         });
       }
     }
@@ -1199,6 +1206,53 @@ async function createWorkspaceRestoreSnapshot(
 
 function invalidBackup(message: string, details?: unknown): never {
   throw new ApiError(400, "INVALID_DATA_BACKUP", message, details);
+}
+
+function isBlockDeletionHistoryEntry(version: { change_summary: string }) {
+  try {
+    const summary = JSON.parse(version.change_summary) as { blocksDeleted?: unknown } | null;
+    return Number(summary?.blocksDeleted ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Version history is the part of a workspace that grows on its own, and a
+ * backup used to fail as a whole once history passed the backup limits. That
+ * also blocked snapshots and the safety copy taken before a restore, so every
+ * recovery path disappeared at once. Current content is never cut: only the
+ * oldest history entries are left out until the history fits, ordinary entries
+ * first and entries holding a deleted block (their only copy) last.
+ *
+ * Returns the kept entries in their original order and how many were left out.
+ */
+export function fitPageVersionsToBackupBudget<T extends { change_summary: string; created_at: string; revision: number }>(
+  versions: T[],
+  { maxCount, maxBytes }: { maxCount: number; maxBytes: number | null }
+): { kept: T[]; omitted: number } {
+  const sizes = versions.map((version) => Buffer.byteLength(JSON.stringify(version), "utf8") + 1);
+  let count = versions.length;
+  let bytes = sizes.reduce((total, size) => total + size, 0);
+  const fits = () => count <= maxCount && (maxBytes === null || bytes <= maxBytes);
+  if (fits()) return { kept: versions, omitted: 0 };
+
+  const dropOrder = versions
+    .map((version, index) => ({ index, deletion: isBlockDeletionHistoryEntry(version), version }))
+    .sort((left, right) =>
+      Number(left.deletion) - Number(right.deletion)
+      || left.version.created_at.localeCompare(right.version.created_at)
+      || left.version.revision - right.version.revision
+      || left.index - right.index
+    );
+  const dropped = new Set<number>();
+  for (const { index } of dropOrder) {
+    if (fits()) break;
+    dropped.add(index);
+    count -= 1;
+    bytes -= sizes[index];
+  }
+  return { kept: versions.filter((_, index) => !dropped.has(index)), omitted: dropped.size };
 }
 
 function assertExportCount(label: string, count: number, maximum: number) {
@@ -1796,8 +1850,11 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       );
       if (!account) throw new ApiError(404, "NOT_FOUND", "User not found");
       await assertWorkspaceCollaborationMaterialized(client, pages.map((page) => page.id), true);
+      // A restore renders every block's HTML again from its content and never
+      // reads the exported copy, which roughly doubled the size of a backup's
+      // text and pushed large workspaces past the manifest limit.
       const blocks = await client.query<BackupBlock>(
-        `SELECT b.id, b.page_id, b.parent_block_id, b.type, b.markdown, b.html_cache, b.checked, b.sort_order,
+        `SELECT b.id, b.page_id, b.parent_block_id, b.type, b.markdown, NULL AS html_cache, b.checked, b.sort_order,
            CAST(b.metadata AS CHAR CHARACTER SET utf8mb4) AS metadata, b.edit_version,
            DATE_FORMAT(b.created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
            DATE_FORMAT(b.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at
@@ -1926,7 +1983,6 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
       assertExportCount("collection sharing grants", collectionShares.length, dataTransferResourceLimits.maxPageShares);
       assertExportCount("page comments", pageComments.length, dataTransferResourceLimits.maxPageComments);
-      assertExportCount("page version history entries", pageVersions.length, dataTransferResourceLimits.maxPageVersions);
       assertExportCount("collapsed navigation pages", navigationCollapsedPageIds.length, dataTransferResourceLimits.maxPages);
       assertExportCount("ordered navigation pages", navigationPageOrder.length, dataTransferResourceLimits.maxPages);
       assertExportCount("attachments", attachmentBlocks.length, dataTransferResourceLimits.maxAttachments);
@@ -2241,6 +2297,31 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       customIconLibraryRemovals: snapshot.customIconLibraryRemovals,
       customIconPublications: snapshot.customIconPublications
     };
+    // Fit the history into the backup instead of refusing the whole backup.
+    let historyEntriesOmitted = 0;
+    {
+      const versions = manifest.data.pageVersions ?? [];
+      const overCount = versions.length > dataTransferResourceLimits.maxPageVersions;
+      const overBytes = enforceConfiguredSizeLimits
+        && measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1) === null;
+      if (overCount || overBytes) {
+        let maxHistoryBytes: number | null = null;
+        if (enforceConfiguredSizeLimits) {
+          const withoutHistory = measureJsonUtf8BytesWithinLimit(
+            { ...manifest, data: { ...manifest.data, pageVersions: [] } },
+            maxManifestBytes - 1
+          );
+          // Content alone over the limit: nothing to trim, refused below.
+          maxHistoryBytes = withoutHistory === null ? 0 : maxManifestBytes - 1 - withoutHistory;
+        }
+        const fitted = fitPageVersionsToBackupBudget(versions, {
+          maxCount: dataTransferResourceLimits.maxPageVersions,
+          maxBytes: maxHistoryBytes
+        });
+        manifest.data.pageVersions = fitted.kept;
+        historyEntriesOmitted = fitted.omitted;
+      }
+    }
     validateManifestRelations(manifest);
     if (enforceConfiguredSizeLimits) {
       const measuredManifestBytes = measureJsonUtf8BytesWithinLimit(manifest, maxManifestBytes - 1);
@@ -2286,7 +2367,8 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       pageCoverFiles,
       customIconFiles,
       archiveSize,
-      operationRoot
+      operationRoot,
+      historyEntriesOmitted
     };
   } catch (error) {
     await rm(operationRoot, { recursive: true, force: true }).catch(() => undefined);

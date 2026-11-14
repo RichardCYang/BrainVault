@@ -46,6 +46,13 @@ test("changed server updates are semantically checked before a successful worker
   const worker = readFileSync(new URL("../src/lib/collaboration-update-worker.ts", import.meta.url), "utf8");
   const start = worker.indexOf("candidate = applyValidatedYjsStateUpdate(");
   const body = worker.slice(start);
-  assert.match(body, /candidate\.changed \|\| request\.includeMaterialization\s*\? readCollaborationMaterialization\(candidate\.document\)/);
-  assert.ok(body.indexOf("readCollaborationMaterialization") < body.indexOf("workerParentPort.postMessage(response"));
+  // Validation may repair a concurrent merge, but a changed update is always
+  // materialized and checked (validateCollaborationCandidate reads the result,
+  // and rethrows when it cannot be repaired) before the worker answers.
+  assert.match(body, /if \(candidate\.changed \|\| request\.includeMaterialization\) \{[\s\S]*?validateCollaborationCandidate\(candidate,/);
+  assert.ok(body.indexOf("validateCollaborationCandidate") < body.indexOf("workerParentPort.postMessage(response"));
+  const materialization = readFileSync(new URL("../src/lib/collaboration-materialization.ts", import.meta.url), "utf8");
+  const validator = materialization.slice(materialization.indexOf("export function validateCollaborationCandidate("));
+  assert.match(validator, /return \{ candidate, materialization: readCollaborationMaterialization\(candidate\.document\)/);
+  assert.match(validator, /materialization: readCollaborationMaterialization\(repaired\.document\)/);
 });

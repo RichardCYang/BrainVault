@@ -73,8 +73,8 @@ test("comment mutations bind the page owner's generation before the page lock", 
   );
   assert.equal(
     (commentRoutes.match(/assertPageCommentOwnerWorkspaceGeneration\(admission, user\.id, client\)/g) ?? []).length,
-    3,
-    "create/edit/delete comment paths must all fence the owner generation"
+    4,
+    "create/edit/delete/restore comment paths must all fence the owner generation"
   );
   for (const routeStart of [
     'collaborationRouter.post(\n  "/pages/:pageId/comments"',

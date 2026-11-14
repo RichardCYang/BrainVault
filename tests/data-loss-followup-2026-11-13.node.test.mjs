@@ -209,9 +209,12 @@ test("a local edit is re-applied on top of text a peer added meanwhile", () => {
 });
 
 test("collaborative block edits carry the text they were made against", () => {
-  assert.match(collaborationSource, /upsertBlock\(block, \{ allowDisconnected = false, beforeCommit = null, baseMarkdown = null \} = \{\}\)/);
+  assert.match(collaborationSource, /upsertBlock\(block, \{\s*allowDisconnected = false,\s*beforeCommit = null,\s*baseMarkdown = null,\s*baseMetadata = undefined\s*\} = \{\}\)/);
   assert.match(collaborationSource, /rebaseTextEdit\(baseMarkdown, liveText\.toString\(\), normalized\.markdown\)/);
   assert.equal((app.match(/baseMarkdown: takeCollaborationTextBase\(row, current, (historyPayload|payload)\)/g) ?? []).length, 2);
+  // Structured blocks (tables, boards...) carry the metadata they were made against the same way.
+  assert.match(collaborationSource, /mergeConcurrentValue\(baseMetadata, liveMetadata, normalized\.metadata\)/);
+  assert.equal((app.match(/baseMetadata: takeCollaborationMetadataBase\(row, current, (historyPayload|payload)\)/g) ?? []).length, 2);
 });
 
 test("the caret is restored in the same task and moved past a peer's text", () => {

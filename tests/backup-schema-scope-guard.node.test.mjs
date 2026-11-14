@@ -44,6 +44,9 @@ const tableScope = new Map([
   ["page_collaboration_state", "operational"],
   ["page_collaboration_write_leases", "operational"],
   ["page_comment_create_mutations", "operational"],
+  // Short-lived undo copies of deleted comments (30 days); a backup holds the
+  // live comments, and a restore starts a new page generation anyway.
+  ["page_comment_deletions", "operational"],
   ["page_create_mutations", "operational"],
   ["page_delete_mutations", "operational"],
   ["page_recovery_candidates", "operational"],

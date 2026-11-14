@@ -43,6 +43,32 @@ export function hasCanonicalStructuredMetadataPolicy(type: BlockType) {
   return structuredMetadataPolicies.has(type);
 }
 
+/**
+ * The block metadata with its structured model replaced by the editor's
+ * canonical form, other top-level keys kept. Undefined for block types that
+ * have no structured model.
+ *
+ * Used to repair a merge of two valid concurrent edits (for example a row and
+ * a column added at once) that is not canonical by itself. The normalizers
+ * keep content: duplicate ids are renamed and short rows are padded.
+ */
+export function normalizeStructuredBlockMetadata(
+  type: BlockType,
+  metadata: Record<string, unknown> | null
+): Record<string, unknown> | undefined {
+  const policy = structuredMetadataPolicies.get(type);
+  if (!policy) return undefined;
+  const base = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {};
+  // Callers decode Yjs metadata with unsafe keys (__proto__ and so on) already
+  // rejected, so a plain object is safe here and matches the editor's shape.
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(base)) {
+    if (key !== policy.metadataKey) result[key] = base[key];
+  }
+  result[policy.metadataKey] = policy.normalize(base);
+  return result;
+}
+
 function normalizeComparableJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalizeComparableJsonValue);
   if (value && typeof value === "object") {

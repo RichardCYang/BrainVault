@@ -336,6 +336,8 @@ const pageCommentParamsSchema = z.object({
 });
 
 const maxPageCommentsPerPage = 500;
+/** How long a deleted comment can still be brought back (see page_comment_deletions). */
+const pageCommentDeletionRetentionDays = 30;
 const pageCommentsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(100),
   cursor: z.string().min(1).max(256).optional()
@@ -932,6 +934,25 @@ collaborationRouter.delete(
             "This comment changed in another session. It was not deleted."
           );
         }
+        // Keep an undo copy first (a page owner may be deleting someone else's
+        // words), and let copies older than the undo window go.
+        await client.execute(
+          `INSERT INTO page_comment_deletions
+             (id, page_id, user_id, body, edit_version, created_at, updated_at, deleted_by)
+           SELECT id, page_id, user_id, body, edit_version, created_at, updated_at, ?
+           FROM page_comments WHERE page_id = ? AND id = ? AND edit_version = ?
+           ON DUPLICATE KEY UPDATE
+             page_id = VALUES(page_id), user_id = VALUES(user_id), body = VALUES(body),
+             edit_version = VALUES(edit_version), created_at = VALUES(created_at),
+             updated_at = VALUES(updated_at), deleted_by = VALUES(deleted_by),
+             deleted_at = CURRENT_TIMESTAMP(3)`,
+          [user.id, pageId, commentId, expectedVersion]
+        );
+        await client.execute(
+          `DELETE FROM page_comment_deletions
+           WHERE page_id = ? AND deleted_at < CURRENT_TIMESTAMP(3) - INTERVAL ? DAY`,
+          [pageId, pageCommentDeletionRetentionDays]
+        );
         const deletion = await client.execute<{ affectedRows: number }>(
           "DELETE FROM page_comments WHERE page_id = ? AND id = ? AND edit_version = ?",
           [pageId, commentId, expectedVersion]
@@ -945,6 +966,91 @@ collaborationRouter.delete(
         }
       });
       res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// Undo of a comment deletion: puts the original comment back (same author,
+// text and time) from the copy kept when it was deleted. Allowed for the
+// person who deleted it and for the page's owner or admins.
+collaborationRouter.post(
+  "/pages/:pageId/comments/:commentId/restore",
+  validate({ params: pageCommentParamsSchema }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      const pageId = String(req.params.pageId);
+      const commentId = String(req.params.commentId);
+      const admission = await capturePageCommentMutationAdmission(pageId, user.id);
+      const comment = await transaction(async (client) => {
+        await lockCollaborationMutationUsers(client, [user.id, admission.ownerId]);
+        await assertCurrentAuthSessionBoundary(user.id, authScope, client);
+        await assertPageCommentOwnerWorkspaceGeneration(admission, user.id, client);
+        const access = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
+        assertPageCommentMutationAdmission(admission, access);
+        assertPageCanEdit(access, "This shared collection is read-only for your account");
+        assertPageNotArchived(access.page, "Restore the page before restoring a comment");
+        const deleted = await client.queryOne<{
+          id: string;
+          user_id: string;
+          body: string;
+          edit_version: number | bigint;
+          created_at: string;
+          updated_at: string;
+          deleted_by: string;
+        }>(
+          `SELECT id, user_id, body, edit_version,
+                  DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at,
+                  DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at,
+                  deleted_by
+           FROM page_comment_deletions
+           WHERE page_id = ? AND id = ?
+             AND deleted_at >= CURRENT_TIMESTAMP(3) - INTERVAL ? DAY
+           FOR UPDATE`,
+          [pageId, commentId, pageCommentDeletionRetentionDays]
+        );
+        if (!deleted) {
+          throw new ApiError(404, "PAGE_COMMENT_RESTORE_UNAVAILABLE", "This deleted comment can no longer be restored");
+        }
+        const isAdministrator = access.role === "OWNER" || access.role === "ADMIN";
+        if (deleted.deleted_by !== user.id && !isAdministrator) {
+          throw new ApiError(403, "PAGE_COMMENT_RESTORE_FORBIDDEN", "You cannot restore this comment");
+        }
+        const existing = await client.queryOne<{ id: string }>(
+          "SELECT id FROM page_comments WHERE id = ? FOR UPDATE",
+          [commentId]
+        );
+        if (existing) {
+          throw new ApiError(409, "PAGE_COMMENT_ALREADY_RESTORED", "This comment is already back on the page");
+        }
+        const countRow = await client.queryOne<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM page_comments WHERE page_id = ?",
+          [pageId]
+        );
+        if (Number(countRow?.count ?? 0) >= maxPageCommentsPerPage) {
+          throw new ApiError(409, "PAGE_COMMENT_LIMIT_REACHED", `A page can contain up to ${maxPageCommentsPerPage} comments`);
+        }
+        // A new edit version: an edit or delete prepared against the comment
+        // before it was deleted must not apply to the restored one unseen.
+        const restoredVersion = Number(deleted.edit_version) + 1;
+        await client.execute(
+          `INSERT INTO page_comments (id, page_id, user_id, body, edit_version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [commentId, pageId, deleted.user_id, deleted.body, restoredVersion, deleted.created_at, deleted.updated_at]
+        );
+        await client.execute(
+          "DELETE FROM page_comment_deletions WHERE page_id = ? AND id = ?",
+          [pageId, commentId]
+        );
+        const restored = await getPageCommentRow(pageId, commentId, client);
+        if (!restored) throw notFound("Page comment");
+        return toPageCommentPayload(restored, { id: user.id, isOwner: isAdministrator });
+      });
+      res.setHeader("Cache-Control", "private, no-store");
+      res.status(201).json({ comment });
     } catch (error) {
       next(error);
     }

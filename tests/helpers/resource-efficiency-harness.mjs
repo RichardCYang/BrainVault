@@ -15,7 +15,15 @@ export function extractFunction(source, name) {
   return match[0];
 }
 // Helpers the current snapshot path calls that the baseline excerpt predates.
-const currentOnlyAppParts = ["getChangedEditorHistoryBlockKeys", "getBlockEditorHistoryKey", "getBlockEditorHistoryBaseline"];
+const currentOnlyAppParts = [
+  "getChangedEditorHistoryBlockKeys",
+  "getBlockEditorHistoryKey",
+  "getBlockEditorHistoryBaseline",
+  // The rebuild moved into its own function so it can wait for a structured
+  // field's pending keystrokes; with no focused field it renders at once.
+  "getPendingFocusedFieldMutation",
+  "renderCollaborationSnapshot"
+];
 export function getAppParts(mode = "current") {
   return mode === "baseline" ? { ...baseline.app } : Object.fromEntries(
     [...Object.keys(baseline.app), ...currentOnlyAppParts].map(name => [name, extractFunction(currentSources.app, name)])
@@ -55,6 +63,13 @@ export function makeAppHarness(mode = "current", { instrument = false } = {}) {
     const restoreCollaborationEditorFocus = focus => events.push(["restoreFocus", focus]);
     const renderSelectedPage = () => { events.push(["render", state.applyingCollaborationSnapshot]); if (renderError) throw renderError; };
     const requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+    // No field is focused in this harness, so no rebuild is deferred.
+    const document = { activeElement: null };
+    class HTMLElement {}
+    class HTMLTextAreaElement extends HTMLElement {}
+    const collaborationBlockMutationPromises = new Map();
+    const getBlockRow = () => null;
+    let deferredCollaborationRender = null;
     ${Object.values(parts).join("\n")}
     return {
       state, events, metrics, elements, historyForgets, build: buildCollaborationBlockTree, apply: applyCollaborationSnapshot,

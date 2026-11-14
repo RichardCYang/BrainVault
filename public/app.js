@@ -111,6 +111,20 @@ function takeCollaborationTextBase(row, current, payload) {
   if (typeof payload?.markdown === "string") collaborationTextBases.set(row, payload.markdown);
   return typeof base === "string" && typeof payload?.markdown === "string" ? base : null;
 }
+
+// The same for structured blocks (tables, boards, databases...): the metadata
+// this editor last sent. A peer's edit to another cell or card that lands
+// before this edit is applied is merged in, not overwritten by this copy.
+const collaborationMetadataBases = new WeakMap();
+
+function takeCollaborationMetadataBase(row, current, payload) {
+  const base = collaborationMetadataBases.has(row)
+    ? collaborationMetadataBases.get(row)
+    : (current?.metadata ?? null);
+  const next = payload?.metadata ?? null;
+  collaborationMetadataBases.set(row, next === null ? null : JSON.parse(JSON.stringify(next)));
+  return base;
+}
 import {
   assignRemoteCaretColors,
   getRemoteCaretClientKey,
@@ -2374,10 +2388,11 @@ function translateApiError(data, status) {
   return data?.error?.message ?? data?.message ?? t("errors.unknown");
 }
 
-function createApiRequestError(message, { status = 0, code = null, ambiguous = false, retryAfterMs = 0 } = {}) {
+function createApiRequestError(message, { status = 0, code = null, ambiguous = false, retryAfterMs = 0, details = null } = {}) {
   const error = new Error(message);
   error.status = status;
   error.code = code;
+  error.details = details;
   error.ambiguous = ambiguous;
   error.retryAfterMs = retryAfterMs;
   return error;
@@ -2523,6 +2538,9 @@ async function api(path, options = {}) {
     skipAuthReset = false,
     beforeFetch = null,
     mutationTimeoutMs = 0,
+    // Called with a successful response before its body is used, for callers
+    // that need a response header (none of the request options use it).
+    onResponse = null,
     ...requestOptions
   } = options;
   const authenticationScope = captureAuthenticatedSessionScope();
@@ -2598,7 +2616,10 @@ async function api(path, options = {}) {
   // The transport returns through multiple promise continuations after its body
   // callback. Revalidate once more in this continuation before status or JSON use.
   assertAuthenticationScopeCurrent();
-  if (response.status === 204) return null;
+  if (response.status === 204) {
+    onResponse?.(response);
+    return null;
+  }
   let data = null;
   try {
     data = text ? JSON.parse(text) : null;
@@ -2625,11 +2646,13 @@ async function api(path, options = {}) {
     throw createApiRequestError(translateApiError(data, response.status), {
       status: response.status,
       code: data?.error?.code ?? null,
+      details: data?.error?.details ?? null,
       retryAfterMs: Math.min(5_000, Math.max(0, Number(response.headers.get("Retry-After")) * 1_000)) || 0,
       ambiguous: response.status >= 500
     });
   }
 
+  onResponse?.(response);
   return data;
 }
 
@@ -2909,19 +2932,34 @@ async function downloadUserDataBackup({ operation = null } = {}) {
 
       const headers = new Headers();
       let response;
-      try {
-        response = await fetch("/api/data/export", { headers, credentials: "include" });
-      } catch {
-        throw new Error(t("errors.network"));
-      }
-
-      if (!response.ok) {
-        let data = null;
+      let data = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          response = await fetch("/api/data/export", { headers, credentials: "include" });
+        } catch {
+          throw new Error(t("errors.network"));
+        }
+        if (response.ok) break;
+        data = null;
         try {
           data = await response.json();
         } catch {
           // Use the localized fallback below when the response is not JSON.
         }
+        // A shared page can hold saved real-time edits that were not yet
+        // written into the page (everyone left before that step). Bring those
+        // pages up to date here and try once more instead of failing.
+        if (
+          attempt === 0
+          && data?.error?.code === "COLLABORATION_CHANGES_PENDING"
+          && isCurrentAccountDataOperation(activeOperation)
+          && await materializePendingCollaborationPages(data.error.details) > 0
+          && isCurrentAccountDataOperation(activeOperation)
+        ) continue;
+        break;
+      }
+
+      if (!response.ok) {
         if (
           response.status === 401
           && isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -2950,7 +2988,10 @@ async function downloadUserDataBackup({ operation = null } = {}) {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      return { applied: true };
+      // The server leaves out the oldest version history when the whole of it
+      // would not fit a backup; current content is always complete.
+      const historyEntriesOmitted = Number(response.headers.get("X-Backup-History-Entries-Omitted")) || 0;
+      return { applied: true, historyEntriesOmitted };
     })
   );
 }
@@ -2961,13 +3002,50 @@ function resetDataImportSelection() {
   syncAccountDataOperationControls();
 }
 
+/**
+ * Writes the saved real-time edits of each listed shared page into the page
+ * itself (the step a collaborator's browser normally does a moment after
+ * editing). Export and restore refuse while that step is pending. Returns how
+ * many pages were brought up to date.
+ */
+async function materializePendingCollaborationPages(details) {
+  const pages = Array.isArray(details?.pages) ? details.pages : [];
+  let materialized = 0;
+  for (const page of pages) {
+    const updateId = Number(page?.latestUpdateId);
+    if (typeof page?.pageId !== "string" || typeof page?.documentEpoch !== "string" || !(updateId >= 1)) continue;
+    try {
+      await api(`/api/pages/${encodeURIComponent(page.pageId)}/collaboration/snapshot`, {
+        method: "PUT",
+        body: { documentEpoch: page.documentEpoch, updateId }
+      });
+      materialized += 1;
+    } catch (error) {
+      console.warn("A shared page could not be brought up to date before the backup", page.pageId, error);
+    }
+  }
+  return materialized;
+}
+
 const restoreOperationStore = createRestoreOperationStore(() => window.sessionStorage);
 // The server saves the current workspace as an automatic snapshot before a
 // restore replaces it. If that safety copy cannot be made, nothing is replaced
 // and the person decides whether to go ahead without it.
 async function submitWorkspaceRestore(path, sourceKey, body, activeOperation) {
   try {
-    return await submitWorkspaceRestoreAttempt(path, sourceKey, body, activeOperation);
+    try {
+      return await submitWorkspaceRestoreAttempt(path, sourceKey, body, activeOperation);
+    } catch (error) {
+      // Saved real-time edits not yet written into their shared pages: bring
+      // those pages up to date (so the safety snapshot includes them) and retry.
+      if (
+        error?.code !== "COLLABORATION_CHANGES_PENDING"
+        || !isCurrentAccountDataOperation(activeOperation)
+        || await materializePendingCollaborationPages(error.details) === 0
+        || !isCurrentAccountDataOperation(activeOperation)
+      ) throw error;
+      return await submitWorkspaceRestoreAttempt(path, sourceKey, body, activeOperation);
+    }
   } catch (error) {
     if (error?.code !== "RESTORE_SAFETY_SNAPSHOT_FAILED" || !isCurrentAccountDataOperation(activeOperation)) throw error;
     const confirmed = await showConfirmDialog({
@@ -3261,10 +3339,10 @@ function renderWorkspaceSnapshots() {
     const heading = document.createElement("div");
     const title = document.createElement("h5");
     title.textContent = formatDate(snapshot.createdAt) || snapshot.createdAt;
-    if (snapshot.kind === "pre-restore") {
+    if (snapshot.kind === "pre-restore" || snapshot.kind === "pre-delete") {
       const kind = document.createElement("span");
       kind.className = "account-snapshot-kind";
-      kind.textContent = t("account.snapshotKindPreRestore");
+      kind.textContent = t(snapshot.kind === "pre-delete" ? "account.snapshotKindPreDelete" : "account.snapshotKindPreRestore");
       title.append(" ", kind);
     }
     const meta = document.createElement("p");
@@ -9962,9 +10040,18 @@ async function resetPageVersionHistory() {
   if (!requireWritablePage()) return;
 
   const title = page.title || t("newDocumentTitle");
+  // History holds the only copy of blocks deleted from this page. Say so when
+  // any loaded entry deleted a block, or when older entries are not loaded yet.
+  const deletedBlocks = history.versions.reduce(
+    (total, version) => total + (Number(version?.summary?.blocksDeleted ?? 0) || 0),
+    0
+  );
+  const message = deletedBlocks > 0 || history.nextCursor
+    ? `${t("versions.resetConfirm", { title })} ${t("versions.resetConfirmDeletedBlocks")}`
+    : t("versions.resetConfirm", { title });
   if (!await showConfirmDialog({
     title: t("dialog.deleteTitle"),
-    message: t("versions.resetConfirm", { title }),
+    message,
     confirmLabel: t("dialog.deleteHistory"),
     danger: true
   })) return;
@@ -10754,6 +10841,12 @@ async function submitPageDeleteTask(task, authenticationScope, { requestGuard = 
           return api(`/api/pages/${encodeURIComponent(task.pageId)}?permanent=true`, {
             method: "DELETE",
             body: { expectedSnapshot: task.expectedSnapshot, mutationId: task.mutationId },
+            headers: task.skipSafetySnapshot ? { "X-Delete-Skip-Safety-Snapshot": "1" } : undefined,
+            // The server saves the workspace first when this deletion takes a
+            // collection or nested pages; it names that snapshot here.
+            onResponse: (response) => {
+              task.safetySnapshotId = response.headers.get("X-Delete-Safety-Snapshot-Id") || null;
+            },
             beforeFetch: () => {
               if (
                 !isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -10770,6 +10863,22 @@ async function submitPageDeleteTask(task, authenticationScope, { requestGuard = 
         return data;
       } catch (error) {
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
+        if (error?.code === "DELETE_SAFETY_SNAPSHOT_FAILED" && !task.skipSafetySnapshot) {
+          // Nothing was deleted: the safety copy could not be made. Let the
+          // person decide, as a restore does, instead of deleting without it.
+          const confirmed = await showConfirmDialog({
+            title: t("dialog.deleteTitle"),
+            message: t("confirm.deleteWithoutSafetySnapshot"),
+            confirmLabel: t("dialog.delete"),
+            danger: true
+          });
+          if (!confirmed || !isCurrentAuthenticatedSessionScope(authenticationScope) || requestGuard?.() === false) {
+            if (pendingPageDeleteTasks.get(task.taskKey) === task) pendingPageDeleteTasks.delete(task.taskKey);
+            return skippedApiRequest;
+          }
+          task.skipSafetySnapshot = true;
+          continue;
+        }
         attempt += 1;
         if (!isAmbiguousApiError(error) || attempt >= 2) {
           if (!isAmbiguousApiError(error) && pendingPageDeleteTasks.get(task.taskKey) === task) {
@@ -10919,9 +11028,13 @@ async function deleteNavigationTarget() {
     const deleteMessageKey = isCollection
       ? (nestedPageCount > 0 ? "confirm.deleteCollectionWithPages" : "confirm.deleteEmptyCollection")
       : (nestedPageCount > 0 ? "confirm.deletePageWithSubpages" : "confirm.deleteSinglePage");
+    // The server saves the owner's workspace before deleting a collection or
+    // nested pages (only the owner's own workspace can be snapshotted).
+    const savesSafetySnapshot = (isCollection || nestedPageCount > 0) && deletionOwnerId === state.user?.id;
+    const deleteMessage = t(deleteMessageKey, { title: target.title, count: formatNumber(nestedPageCount) });
     const ok = await showConfirmDialog({
       title: t("dialog.deleteTitle"),
-      message: t(deleteMessageKey, { title: target.title, count: formatNumber(nestedPageCount) }),
+      message: savesSafetySnapshot ? `${deleteMessage} ${t("confirm.deleteSafetySnapshotNote")}` : deleteMessage,
       confirmLabel: t("dialog.delete"),
       danger: true
     }) && isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -10999,7 +11112,18 @@ async function deleteNavigationTarget() {
       if (!isCurrentWorkspaceNavigation(navigationGeneration)) return;
     }
 
-    setStatus(t(isCollection ? "status.collectionDeleted" : "status.pageDeleted"));
+    const deletedMessage = t(isCollection ? "status.collectionDeleted" : "status.pageDeleted");
+    if (task.safetySnapshotId) {
+      // Point to the undo: the snapshot saved just before this deletion.
+      setStatus(`${deletedMessage} ${t("status.deletedWithSafetySnapshot")}`, false, {
+        action: {
+          label: t("status.openSnapshots"),
+          onSelect: () => openAccountSettings("snapshots")
+        }
+      });
+    } else {
+      setStatus(deletedMessage);
+    }
   });
 }
 
@@ -11932,6 +12056,51 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
     return;
   }
 
+  renderCollaborationSnapshot(previousBlocks);
+}
+
+// A field outside the text body (a table cell, card title, database value...)
+// whose keystrokes are still waiting for durable storage. Rebuilding it now
+// would show the shared value without them; they reach the document a moment
+// later, but the rebuilt field would keep hiding them and the next keystroke
+// would be sent from that stale copy. The text body rebases instead.
+function getPendingFocusedFieldMutation({ includeTextBody = false } = {}) {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return null;
+  if (!includeTextBody && active instanceof HTMLTextAreaElement && active.name === "markdown") return null;
+  if (!("value" in active)) return null;
+  const blockId = getBlockRow(active)?.dataset.blockId;
+  return blockId ? collaborationBlockMutationPromises.get(blockId) ?? null : null;
+}
+
+let deferredCollaborationRender = null;
+
+function renderCollaborationSnapshot(previousBlocks, { deferred = false } = {}) {
+  // Once deferred, wait for every focused field (the text body too): the
+  // rebuild then happens when the screen and the document agree, so nothing
+  // needs rebasing and no keystroke is shown twice or hidden.
+  const pendingMutation = getPendingFocusedFieldMutation({ includeTextBody: deferred });
+  if (pendingMutation) {
+    // State already holds the peer's change; only the rebuild waits until this
+    // field's own keystrokes are in the document, then shows both.
+    const pageId = state.selectedPage?.id;
+    const session = state.collaborationSession;
+    const ticket = {};
+    deferredCollaborationRender = ticket;
+    void pendingMutation.catch(() => undefined).then(() => {
+      if (deferredCollaborationRender !== ticket) return;
+      deferredCollaborationRender = null;
+      if (
+        state.selectedPage?.id !== pageId
+        || state.collaborationSession !== session
+        || state.workspaceView !== "page"
+        || !isCollaborativePage()
+      ) return;
+      renderCollaborationSnapshot(state.selectedPage.blocks ?? [], { deferred: true });
+    });
+    return;
+  }
+  deferredCollaborationRender = null;
   const focus = captureCollaborationEditorFocus(previousBlocks);
   state.applyingCollaborationSnapshot = true;
   try {
@@ -12246,6 +12415,19 @@ async function startPageCollaboration(page = state.selectedPage) {
           renderCollaborationChrome();
           if (error?.code === "COLLABORATION_RECOVERY_WRITE_FAILED") {
             setStatus(t("status.localDraftStorageFailed"), true);
+          } else if (error?.code === "COLLABORATION_UPDATE_REJECTED") {
+            // The session stopped resending changes the server keeps refusing.
+            // They stay in this browser's recovery storage; say so plainly and
+            // offer a retry rather than a silent endless reconnect.
+            setStatus(t("status.collaborationUpdateRejected"), true, {
+              action: {
+                label: t("status.collaborationRetrySync"),
+                onSelect: () => {
+                  if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
+                  state.collaborationSession?.retrySynchronization?.();
+                }
+              }
+            });
           } else if (
             error?.code === "COLLABORATION_RECOVERY_INSPECTION_FAILED"
             || error?.code === "COLLABORATION_RECOVERY_DECODE_FAILED"
@@ -13089,6 +13271,15 @@ async function deletePageComment(commentId) {
     }
     state.pageComments.message = t("comments.deleted");
     state.pageComments.messageIsError = false;
+    // The server keeps the deleted comment for a while: offer to put it back.
+    setStatus(t("comments.deleted"), false, {
+      action: {
+        label: t("comments.undoDelete"),
+        onSelect: () => {
+          void restoreDeletedPageComment(pageId, commentId, navigationGeneration);
+        }
+      }
+    });
   } catch (error) {
     if (
       isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -13105,6 +13296,23 @@ async function deletePageComment(commentId) {
       state.pageComments.busyCommentId = null;
       renderPageComments();
     }
+  }
+}
+
+async function restoreDeletedPageComment(pageId, commentId, navigationGeneration) {
+  const authenticationScope = captureAuthenticatedSessionScope();
+  try {
+    const data = await api(
+      `/api/pages/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}/restore`,
+      { method: "POST" }
+    );
+    if (data === skippedApiRequest || !isCurrentAuthenticatedSessionScope(authenticationScope)) return;
+    setStatus(t("comments.restored"));
+    if (isCurrentPageCommentsContext(pageId, navigationGeneration)) {
+      await loadPageComments(pageId, navigationGeneration);
+    }
+  } catch (error) {
+    if (isCurrentAuthenticatedSessionScope(authenticationScope)) setStatus(error?.message || t("errors.unknown"), true);
   }
 }
 
@@ -17476,7 +17684,10 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
         ...historyPayload,
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
         sortOrder: Number(current.sortOrder ?? 0)
-      }, { baseMarkdown: takeCollaborationTextBase(row, current, historyPayload) });
+      }, {
+        baseMarkdown: takeCollaborationTextBase(row, current, historyPayload),
+        baseMetadata: takeCollaborationMetadataBase(row, current, historyPayload)
+      });
     } catch (error) {
       rejectLocalBlockMutation(row, error);
       return false;
@@ -17710,7 +17921,10 @@ async function saveBlockRow(row, options = {}) {
         ...payload,
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
         sortOrder: Number(current.sortOrder ?? 0)
-      }, { baseMarkdown: takeCollaborationTextBase(row, current, payload) });
+      }, {
+        baseMarkdown: takeCollaborationTextBase(row, current, payload),
+        baseMetadata: takeCollaborationMetadataBase(row, current, payload)
+      });
       // Direct saves and input-driven saves must share one completion owner.
       // A session/page fence alone cannot distinguish two edits in this session.
       collaborationBlockMutationPromises.set(blockId, mutation);
@@ -22564,7 +22778,9 @@ elements.accountDataExport.addEventListener("click", async () => {
     setAccountMessage(t("account.exportingData"));
     const result = await downloadUserDataBackup({ operation });
     if (result?.applied && isCurrentAccountDataOperation(operation)) {
-      setAccountMessage(t("account.exportReady"));
+      setAccountMessage(result.historyEntriesOmitted > 0
+        ? `${t("account.exportReady")} ${t("account.exportHistoryOmitted", { count: formatNumber(result.historyEntriesOmitted) })}`
+        : t("account.exportReady"));
     }
   } catch (error) {
     if (isCurrentAccountDataOperation(operation)) setAccountMessage(error.message, true);
@@ -22580,13 +22796,23 @@ elements.accountDataInput.addEventListener("change", () => {
   setAccountMessage();
 });
 
+// A restore puts the owner's whole workspace back, shared pages included, so
+// what collaborators wrote there since then goes too. Their own snapshots do
+// not cover it, so say it before they are affected.
+function withSharedPagesRestoreWarning(message) {
+  const sharedPages = (state.allPages ?? []).filter((page) => isPageOwner(page) && isCollaborativePage(page)).length;
+  return sharedPages > 0
+    ? `${message} ${t("account.restoreSharedPagesWarning", { count: formatNumber(sharedPages) })}`
+    : message;
+}
+
 elements.accountDataImport.addEventListener("click", async () => {
   if (state.accountDataOperationBusy) return;
   const [file] = elements.accountDataInput.files ?? [];
   const targetKey = getAccountAvatarTargetKey(state.user);
   if (!file || !targetKey) return;
   if (!await showConfirmDialog({
-    message: t("account.importConfirm"),
+    message: withSharedPagesRestoreWarning(t("account.importConfirm")),
     confirmLabel: t("dialog.import"),
     danger: true
   })) return;
@@ -22663,10 +22889,9 @@ elements.accountSnapshotList.addEventListener("click", async (event) => {
   if (action === "restore" || action === "delete") {
     const confirmed = await showConfirmDialog({
       title: action === "delete" ? t("dialog.deleteTitle") : t("dialog.confirmTitle"),
-      message: t(
-        action === "restore" ? "account.snapshotRestoreConfirm" : "account.snapshotDeleteConfirm",
-        { date: formatDate(snapshot.createdAt) }
-      ),
+      message: action === "restore"
+        ? withSharedPagesRestoreWarning(t("account.snapshotRestoreConfirm", { date: formatDate(snapshot.createdAt) }))
+        : t("account.snapshotDeleteConfirm", { date: formatDate(snapshot.createdAt) }),
       confirmLabel: action === "restore" ? t("dialog.restore") : t("dialog.delete"),
       danger: true
     });
