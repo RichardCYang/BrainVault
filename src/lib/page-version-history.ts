@@ -460,32 +460,97 @@ function describeOmittedHistoryValue(value: unknown) {
   };
 }
 
-function boundHistoryValue(value: unknown) {
-  if (measureJsonUtf8BytesWithinLimit(value, pageVersionValueInlineMaxBytes) !== null) return value;
+// A deleted block exists nowhere else once it is gone, and history is where a
+// person can bring it back from. Keep more of its structured content inline.
+export const pageVersionDeletedMetadataInlineMaxBytes = 128 * 1024;
+// Field values at most this size stay readable even when a row is reduced.
+const pageVersionReducedValueInlineMaxBytes = 256;
+
+type PageVersionBlockStateChange = Extract<PageVersionChange, { kind: "block-created" | "block-deleted" }>;
+
+function omitBlockStateMetadata(change: PageVersionBlockStateChange): PageVersionBlockStateChange {
+  if (change.block.metadata === null || change.block.metadata === undefined) return change;
+  const block: PageVersionBlockState = {
+    ...change.block, metadata: null, metadataOmitted: describeOmittedHistoryValue(change.block.metadata)
+  };
+  return { kind: change.kind, block };
+}
+
+function boundHistoryFieldValue(value: unknown, limit: number) {
+  if (isPageVersionOmittedValue(value)) return value;
+  if (measureJsonUtf8BytesWithinLimit(value, limit) !== null) return value;
   return { $pageVersionOmitted: true, ...describeOmittedHistoryValue(value) };
+}
+
+function boundHistoryChange(change: PageVersionChange, reduced: boolean): PageVersionChange {
+  if (change.kind === "block-created" || change.kind === "block-deleted") {
+    if (reduced) return omitBlockStateMetadata(change);
+    const limit = change.kind === "block-deleted"
+      ? pageVersionDeletedMetadataInlineMaxBytes
+      : pageVersionValueInlineMaxBytes;
+    return measureJsonUtf8BytesWithinLimit(change.block.metadata, limit) !== null
+      ? change
+      : omitBlockStateMetadata(change);
+  }
+  if (change.kind === "page-updated" || change.kind === "block-updated") {
+    const limit = reduced ? pageVersionReducedValueInlineMaxBytes : pageVersionValueInlineMaxBytes;
+    return { ...change, fields: change.fields.map((field) => ({
+      ...field,
+      before: boundHistoryFieldValue(field.before, limit),
+      after: boundHistoryFieldValue(field.after, limit)
+    })) };
+  }
+  return change;
+}
+
+function measureHistoryChange(change: PageVersionChange) {
+  return measureJsonUtf8BytesWithinLimit(change, pageVersionWriteMaxBytes) ?? Number.POSITIVE_INFINITY;
 }
 
 // History is an audit log, not the canonical block store. Explicitly describe
 // omitted values without rejecting a valid edit or silently showing it as null.
+//
+// When one mutation is too large for a history row (deleting a long subtree,
+// for example), keep as much as fits instead of dropping every detail: deleted
+// blocks come first, each change shrinks to a summary before it is left out,
+// and a DETAIL_LIMIT marker says that something was left out.
 export function boundPageVersionChanges(changes: PageVersionChange[]): PageVersionChange[] {
-  const omitted: PageVersionChange[] = [{ kind: "details-omitted", reason: "DETAIL_LIMIT" }];
+  const marker: PageVersionChange = { kind: "details-omitted", reason: "DETAIL_LIMIT" };
+  const omitted: PageVersionChange[] = [marker];
   try {
-    const bounded = changes.map((change): PageVersionChange => {
-      if (change.kind === "block-created" || change.kind === "block-deleted") {
-        if (measureJsonUtf8BytesWithinLimit(change.block.metadata, pageVersionValueInlineMaxBytes) !== null) return change;
-        return { ...change, block: {
-          ...change.block, metadata: null, metadataOmitted: describeOmittedHistoryValue(change.block.metadata)
-        } };
-      }
-      if (change.kind === "page-updated" || change.kind === "block-updated") {
-        return { ...change, fields: change.fields.map((field) => ({
-          ...field, before: boundHistoryValue(field.before), after: boundHistoryValue(field.after)
-        })) };
-      }
-      return change;
-    });
+    const full = changes.map((change) => boundHistoryChange(change, false));
+    if (measureJsonUtf8BytesWithinLimit(full, pageVersionWriteMaxBytes) !== null) {
+      // Use the same schema/depth/node validation as reads and backup restore.
+      return parsePageVersionChangesJson(full);
+    }
+
+    const reduced = changes.map((change) => boundHistoryChange(change, true));
+    const fullSizes = full.map(measureHistoryChange);
+    const reducedSizes = reduced.map(measureHistoryChange);
+    // Two array brackets, the marker, and one separator per kept element.
+    let remaining = pageVersionWriteMaxBytes - 2 - (measureJsonUtf8BytesWithinLimit(marker, 1024) ?? 64) - 1;
+    const order = changes
+      .map((change, index) => ({ index, deleted: change.kind === "block-deleted" }))
+      .sort((left, right) => Number(right.deleted) - Number(left.deleted) || left.index - right.index)
+      .map(({ index }) => index);
+    const chosen: Array<PageVersionChange | null> = changes.map(() => null);
+    for (const index of order) {
+      const cost = reducedSizes[index] + 1;
+      if (cost > remaining) continue;
+      chosen[index] = reduced[index];
+      remaining -= cost;
+    }
+    for (const index of order) {
+      if (chosen[index] === null) continue;
+      const extra = fullSizes[index] - reducedSizes[index];
+      if (extra <= 0 || extra > remaining) continue;
+      chosen[index] = full[index];
+      remaining -= extra;
+    }
+
+    const kept = chosen.filter((change): change is PageVersionChange => change !== null);
+    const bounded = kept.length < changes.length ? [...kept, marker] : kept;
     if (measureJsonUtf8BytesWithinLimit(bounded, pageVersionWriteMaxBytes) === null) return omitted;
-    // Use the same schema/depth/node validation as reads and backup restore.
     return parsePageVersionChangesJson(bounded);
   } catch (error) {
     if (error instanceof PageVersionHistoryIntegrityError || error instanceof RangeError) return omitted;

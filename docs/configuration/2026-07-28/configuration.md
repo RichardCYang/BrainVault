@@ -77,6 +77,7 @@ Never commit a real `.env` file.
 | `DATA_TRANSFER_MAX_MANIFEST_SIZE_MB` | `16` | Maximum JSON manifest size buffered and parsed during backup export or import |
 | `SNAPSHOT_MAX_COUNT` | `20` | Maximum private workspace snapshots per account; checked before archive preparation and again at insertion |
 | `SNAPSHOT_AUTO_MAX_COUNT` | `3` | Automatic snapshots kept per account. One is saved just before every restore or backup import; the oldest beyond this count is removed. They do not count toward `SNAPSHOT_MAX_COUNT` or `SNAPSHOT_TOTAL_MAX_MB` |
+| `SNAPSHOT_AUTO_RETENTION_HOURS` | `168` | Automatic snapshots younger than this many hours are kept even beyond `SNAPSHOT_AUTO_MAX_COUNT`, up to 20 in all, so several restores in a row cannot prune the workspace as it was before the first one. `0` keeps only the count rule |
 | `SNAPSHOT_MAX_ARCHIVE_MB` | `2048` | Maximum complete ZIP size for a new snapshot, including ZIP overhead; also bounds file staging |
 | `SNAPSHOT_TOTAL_MAX_MB` | `8192` | Maximum sum of snapshot archive bytes per account; checked under the user row lock |
 | `SNAPSHOT_MAX_MANIFEST_MB` | `16` | Maximum JSON manifest size when creating a snapshot; independent of network backup limits |

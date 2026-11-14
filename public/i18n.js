@@ -10632,9 +10632,92 @@ for (const entries of Object.values(apiErrorAndRecoveryTranslations)) {
   for (const [alias, source] of Object.entries(apiErrorTranslationAliases)) entries[alias] = entries[source];
 }
 
+// 2026-11-14 data-loss review: refused over-long pastes, deleting a block
+// with nested blocks, and putting a deleted block back from version history.
+const dataLossGuardTranslations = {
+  en: {
+    "status.pasteTooLong": "Nothing was pasted: this field holds up to {max} characters, and the paste would go {over} over. Your clipboard still has all of it; paste a shorter part.",
+    "confirm.deleteBlockWithChildren": "This block has {count} nested blocks. Deleting everything removes them too, and it cannot be undone.",
+    "dialog.deleteBlockAndChildren": "Delete everything",
+    "dialog.deleteBlockKeepChildren": "Delete only this block",
+    "status.blockDeletedChildrenKept": "Block deleted. Its nested blocks moved up a level.",
+    "versions.restoreBlock": "Restore block",
+    "versions.blockRestoredFromHistory": "Restored",
+    "status.blockRestoredFromHistory": "The deleted block is back on the page.",
+    "status.blockRestoreFromHistoryFailed": "The block could not be restored. Check your connection and try again."
+  },
+  ja: {
+    "status.pasteTooLong": "貼り付けませんでした。この欄は {max} 文字までで、貼り付けると {over} 文字超えます。クリップボードの内容はそのまま残っているので、短く分けて貼り付けてください。",
+    "confirm.deleteBlockWithChildren": "このブロックには {count} 個のブロックが入れ子になっています。すべて削除するとそれらも削除され、元に戻せません。",
+    "dialog.deleteBlockAndChildren": "すべて削除",
+    "dialog.deleteBlockKeepChildren": "このブロックだけ削除",
+    "status.blockDeletedChildrenKept": "ブロックを削除しました。入れ子のブロックは1つ上の階層に移動しました。",
+    "versions.restoreBlock": "ブロックを復元",
+    "versions.blockRestoredFromHistory": "復元済み",
+    "status.blockRestoredFromHistory": "削除したブロックをページに戻しました。",
+    "status.blockRestoreFromHistoryFailed": "ブロックを復元できませんでした。接続を確認して、もう一度お試しください。"
+  },
+  ko: {
+    "status.pasteTooLong": "붙여넣지 않았습니다. 이 칸은 최대 {max}자까지인데, 붙여넣으면 {over}자가 넘칩니다. 클립보드 내용은 그대로 남아 있으니 짧게 나눠 붙여넣어 주세요.",
+    "confirm.deleteBlockWithChildren": "이 블록 안에 블록 {count}개가 들어 있습니다. 모두 삭제하면 그 블록들도 함께 삭제되며 되돌릴 수 없습니다.",
+    "dialog.deleteBlockAndChildren": "모두 삭제",
+    "dialog.deleteBlockKeepChildren": "이 블록만 삭제",
+    "status.blockDeletedChildrenKept": "블록을 삭제했습니다. 안에 있던 블록은 한 단계 위로 옮겼습니다.",
+    "versions.restoreBlock": "블록 복원",
+    "versions.blockRestoredFromHistory": "복원됨",
+    "status.blockRestoredFromHistory": "삭제한 블록을 페이지에 되살렸습니다.",
+    "status.blockRestoreFromHistoryFailed": "블록을 복원하지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요."
+  },
+  fr: {
+    "status.pasteTooLong": "Rien n’a été collé : ce champ accepte {max} caractères au maximum et le collage le dépasserait de {over}. Votre presse-papiers contient toujours tout le texte ; collez-en une partie plus courte.",
+    "confirm.deleteBlockWithChildren": "Ce bloc contient {count} blocs imbriqués. Tout supprimer les supprime aussi, sans possibilité d’annuler.",
+    "dialog.deleteBlockAndChildren": "Tout supprimer",
+    "dialog.deleteBlockKeepChildren": "Supprimer ce bloc seulement",
+    "status.blockDeletedChildrenKept": "Bloc supprimé. Ses blocs imbriqués sont remontés d’un niveau.",
+    "versions.restoreBlock": "Restaurer le bloc",
+    "versions.blockRestoredFromHistory": "Restauré",
+    "status.blockRestoredFromHistory": "Le bloc supprimé est de retour sur la page.",
+    "status.blockRestoreFromHistoryFailed": "Le bloc n’a pas pu être restauré. Vérifiez votre connexion et réessayez."
+  },
+  de: {
+    "status.pasteTooLong": "Nichts eingefügt: Dieses Feld fasst höchstens {max} Zeichen, das Einfügen läge {over} darüber. Die Zwischenablage enthält weiterhin alles; fügen Sie einen kürzeren Teil ein.",
+    "confirm.deleteBlockWithChildren": "Dieser Block enthält {count} verschachtelte Blöcke. „Alles löschen“ entfernt auch diese und lässt sich nicht rückgängig machen.",
+    "dialog.deleteBlockAndChildren": "Alles löschen",
+    "dialog.deleteBlockKeepChildren": "Nur diesen Block löschen",
+    "status.blockDeletedChildrenKept": "Block gelöscht. Die verschachtelten Blöcke wurden eine Ebene nach oben verschoben.",
+    "versions.restoreBlock": "Block wiederherstellen",
+    "versions.blockRestoredFromHistory": "Wiederhergestellt",
+    "status.blockRestoredFromHistory": "Der gelöschte Block ist wieder auf der Seite.",
+    "status.blockRestoreFromHistoryFailed": "Der Block konnte nicht wiederhergestellt werden. Prüfen Sie die Verbindung und versuchen Sie es erneut."
+  },
+  es: {
+    "status.pasteTooLong": "No se pegó nada: este campo admite hasta {max} caracteres y lo pegado lo superaría en {over}. El portapapeles conserva todo el texto; pega una parte más corta.",
+    "confirm.deleteBlockWithChildren": "Este bloque contiene {count} bloques anidados. Eliminarlo todo también los elimina y no se puede deshacer.",
+    "dialog.deleteBlockAndChildren": "Eliminar todo",
+    "dialog.deleteBlockKeepChildren": "Eliminar solo este bloque",
+    "status.blockDeletedChildrenKept": "Bloque eliminado. Sus bloques anidados subieron un nivel.",
+    "versions.restoreBlock": "Restaurar bloque",
+    "versions.blockRestoredFromHistory": "Restaurado",
+    "status.blockRestoredFromHistory": "El bloque eliminado volvió a la página.",
+    "status.blockRestoreFromHistoryFailed": "No se pudo restaurar el bloque. Comprueba la conexión e inténtalo de nuevo."
+  },
+  pt: {
+    "status.pasteTooLong": "Nada foi colado: este campo aceita até {max} caracteres e a colagem passaria {over} do limite. A área de transferência ainda tem todo o texto; cole uma parte menor.",
+    "confirm.deleteBlockWithChildren": "Este bloco contém {count} blocos aninhados. Excluir tudo também os remove, e não é possível desfazer.",
+    "dialog.deleteBlockAndChildren": "Excluir tudo",
+    "dialog.deleteBlockKeepChildren": "Excluir só este bloco",
+    "status.blockDeletedChildrenKept": "Bloco excluído. Os blocos aninhados subiram um nível.",
+    "versions.restoreBlock": "Restaurar bloco",
+    "versions.blockRestoredFromHistory": "Restaurado",
+    "status.blockRestoredFromHistory": "O bloco excluído voltou para a página.",
+    "status.blockRestoreFromHistoryFailed": "Não foi possível restaurar o bloco. Verifique a conexão e tente novamente."
+  }
+};
+
 for (const [language, entries] of [
   ...Object.entries(catalogCompletionTranslations),
-  ...Object.entries(apiErrorAndRecoveryTranslations)
+  ...Object.entries(apiErrorAndRecoveryTranslations),
+  ...Object.entries(dataLossGuardTranslations)
 ]) {
   const catalog = translationCatalogs[language];
   if (!catalog) continue;

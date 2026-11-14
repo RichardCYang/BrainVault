@@ -127,6 +127,7 @@ const envSchema = z.object({
   SNAPSHOT_TOTAL_MAX_MB: z.coerce.number().int().min(1).max(1_048_576).default(8_192),
   SNAPSHOT_MAX_MANIFEST_MB: z.coerce.number().int().min(1).max(64).default(16),
   SNAPSHOT_AUTO_MAX_COUNT: z.coerce.number().int().min(1).max(20).default(3),
+  SNAPSHOT_AUTO_RETENTION_HOURS: z.coerce.number().int().min(0).max(24 * 366).default(7 * 24),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   TRUST_PROXY_ALLOW_PRIVATE_CLIENTS: disabledByDefault,
   TRUST_PROXY_ADDRESSES: z.string().trim().max(2_048).default("")

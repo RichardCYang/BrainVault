@@ -90,7 +90,7 @@ import { planConfirmedBlockInsertion } from "./block-insertion-result.js";
 import { createAccountProfileMutationQueue } from "./account-profile-mutation-queue.js";
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { createRestoreOperationStore } from "./restore-operation.js";
-import { showConfirmDialog, showPromptDialog } from "./app-dialog.js";
+import { showChoiceDialog, showConfirmDialog, showPromptDialog } from "./app-dialog.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 import {
   createPageCollaboration,
@@ -9566,6 +9566,7 @@ function createPageVersionChangeCard(change) {
   const meta = document.createElement("span");
   const fields = document.createElement("div");
   fields.className = "page-version-field-list";
+  let restoreButton = null;
 
   if (change.kind === "details-omitted") {
     title.textContent = t("versions.detailsOmitted");
@@ -9592,6 +9593,25 @@ function createPageVersionChangeCard(change) {
     meta.textContent = t("versions.blockLabel", {
       type: t(blockTypeLabels[change.block?.type] ?? String(change.block?.type ?? ""))
     });
+    if (!created && canRestoreBlockFromPageVersion(change.block)) {
+      restoreButton = document.createElement("button");
+      restoreButton.type = "button";
+      restoreButton.className = "secondary page-version-restore-block";
+      restoreButton.textContent = t("versions.restoreBlock");
+      const button = restoreButton;
+      button.addEventListener("click", () => {
+        button.disabled = true;
+        restoreBlockFromPageVersion(change.block)
+          .then((restored) => {
+            if (restored) button.textContent = t("versions.blockRestoredFromHistory");
+            else button.disabled = false;
+          })
+          .catch((error) => {
+            button.disabled = false;
+            setStatus(error.message, true);
+          });
+      });
+    }
     for (const field of ["type", "markdown", "checked", "parentBlockId", "sortOrder", "metadata"]) {
       const value = field === "metadata" && change.block?.metadataOmitted
         ? { $pageVersionOmitted: true, ...change.block.metadataOmitted }
@@ -9611,8 +9631,49 @@ function createPageVersionChangeCard(change) {
   }
 
   header.append(title, meta);
+  if (restoreButton) header.append(restoreButton);
   card.append(header, fields);
   return card;
+}
+
+// A deleted block's history entry holds everything needed to recreate it,
+// except an attachment's file (removed with the block) and structured content
+// too large to keep in history. Those cannot be put back faithfully.
+function canRestoreBlockFromPageVersion(block) {
+  return Boolean(
+    block
+    && typeof block.type === "string"
+    && Object.hasOwn(blockTypeLabels, block.type)
+    && block.type !== "ATTACHMENT"
+    && !block.metadataOmitted
+    && typeof block.markdown === "string"
+  );
+}
+
+// Brings a deleted block back as a new block: under its old parent when that
+// still exists, otherwise at the end of the page.
+async function restoreBlockFromPageVersion(block) {
+  const pageId = state.pageVersionHistory.pageId;
+  if (!pageId || state.selectedPage?.id !== pageId || !canRestoreBlockFromPageVersion(block)) return false;
+  if (!requireWritablePage()) return false;
+  const options = {
+    type: block.type,
+    markdown: block.markdown,
+    metadata: block.metadata ?? undefined,
+    announce: false
+  };
+  const parentBlockId = normalizeParentBlockId(block.parentBlockId);
+  const parentSiblingRows = parentBlockId && getBlockById(parentBlockId) ? getSiblingRows(parentBlockId) : [];
+  const anchorRow = parentSiblingRows.at(-1) ?? null;
+  const created = anchorRow
+    ? await insertBlockRelative(anchorRow, "after", options)
+    : await appendBlock(null, options);
+  if (!created?.block?.id) {
+    setStatus(t("status.blockRestoreFromHistoryFailed"), true);
+    return false;
+  }
+  setStatus(t("status.blockRestoredFromHistory"));
+  return true;
 }
 
 const pageVersionResetRequestTimeoutMs = 15_000;
@@ -12226,8 +12287,8 @@ function getPageCommentEditDraft() {
 }
 
 function hasUnsentPageCommentDraft() {
-  // Drafts kept through an ended session are only in memory; closing the tab
-  // on the sign-in screen would still lose them.
+  // Drafts kept through an ended session live in memory and this tab's
+  // sessionStorage; closing the tab on the sign-in screen would still lose them.
   if (!state.user) return pageCommentDrafts.size > 0;
   return Boolean(
     elements.pageCommentsInput.value.trim()
@@ -12257,6 +12318,112 @@ function clearPageCommentDrafts() {
   pageCommentDrafts.clear();
   pageCommentDraftOwnerId = null;
   clearPageCommentEditor();
+  // Signing out on purpose removes the stored copy even before this page
+  // load had read it back.
+  pageCommentDraftStorageReady = true;
+  persistPageCommentDrafts();
+}
+
+// Unsent comments are also kept in this tab's sessionStorage, so a reload, a
+// browser crash, or a phone discarding the tab in the background does not lose
+// them. sessionStorage stays with the tab and is cleared when it closes; a
+// deliberate sign-out clears it at once.
+const pageCommentDraftStorageKey = "brainvault.pageCommentDrafts.v1";
+const pageCommentDraftMaxStoredLength = 2000;
+let pageCommentDraftPersistTimer = null;
+// Until the signed-in account is known and stored drafts were read back, an
+// empty in-memory state must not overwrite what the last page load stored.
+let pageCommentDraftStorageReady = false;
+
+function normalizeStoredPageCommentDraft(value) {
+  if (!value || typeof value !== "object" || typeof value.body !== "string") return null;
+  if (value.body.length > pageCommentDraftMaxStoredLength) return null;
+  let edit = null;
+  if (value.edit !== null && value.edit !== undefined) {
+    const version = getPositiveVersion(value.edit?.version);
+    if (
+      typeof value.edit?.id !== "string"
+      || !value.edit.id
+      || typeof value.edit.body !== "string"
+      || value.edit.body.length > pageCommentDraftMaxStoredLength
+      || version === null
+    ) return null;
+    edit = { id: value.edit.id, body: value.edit.body, version };
+  }
+  if (!value.body.trim() && !edit) return null;
+  return { body: value.body, edit };
+}
+
+function readStoredPageCommentDrafts() {
+  try {
+    const raw = window.sessionStorage.getItem(pageCommentDraftStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.ownerId !== "string" || !parsed.drafts || typeof parsed.drafts !== "object") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function collectPageCommentDraftsForStorage() {
+  const drafts = new Map(pageCommentDrafts);
+  const pageId = state.pageComments.pageId;
+  if (pageId && state.user?.id) {
+    const body = elements.pageCommentsInput.value;
+    const edit = getPageCommentEditDraft();
+    if (body.trim() || edit) drafts.set(pageId, { body, edit });
+    else drafts.delete(pageId);
+  }
+  return drafts;
+}
+
+function persistPageCommentDrafts() {
+  window.clearTimeout(pageCommentDraftPersistTimer);
+  pageCommentDraftPersistTimer = null;
+  if (!pageCommentDraftStorageReady) return;
+  const ownerId = pageCommentDraftOwnerId ?? state.user?.id ?? null;
+  const drafts = ownerId ? collectPageCommentDraftsForStorage() : new Map();
+  try {
+    if (!drafts.size) {
+      window.sessionStorage.removeItem(pageCommentDraftStorageKey);
+      return;
+    }
+    window.sessionStorage.setItem(pageCommentDraftStorageKey, JSON.stringify({
+      ownerId,
+      drafts: Object.fromEntries(drafts)
+    }));
+  } catch {
+    // Storage can be unavailable or full; the in-memory draft and the
+    // leave-page warning still protect the text in this tab.
+  }
+}
+
+function schedulePageCommentDraftPersist() {
+  if (!pageCommentDraftStorageReady || pageCommentDraftPersistTimer !== null) return;
+  pageCommentDraftPersistTimer = window.setTimeout(persistPageCommentDrafts, 300);
+}
+
+// Brings back drafts this tab stored before a reload. Text already in memory
+// is newer and wins. Drafts stored for another account are dropped.
+function restoreStoredPageCommentDrafts(userId) {
+  if (!userId) return;
+  pageCommentDraftStorageReady = true;
+  const stored = readStoredPageCommentDrafts();
+  if (!stored) return;
+  if (stored.ownerId !== userId) {
+    persistPageCommentDrafts();
+    return;
+  }
+  for (const [pageId, value] of Object.entries(stored.drafts)) {
+    if (!pageId || pageCommentDrafts.has(pageId) || pageId === state.pageComments.pageId) continue;
+    const draft = normalizeStoredPageCommentDraft(value);
+    if (draft) pageCommentDrafts.set(pageId, draft);
+  }
+  if (pageCommentDrafts.size) pageCommentDraftOwnerId = userId;
+  syncBeforeUnloadProtection();
 }
 
 // The session ended without the person signing out. Keep what they were
@@ -12275,6 +12442,7 @@ function adoptPageCommentDraftsForUser(userId) {
     pageCommentDraftOwnerId = null;
     syncBeforeUnloadProtection();
   }
+  restoreStoredPageCommentDrafts(userId);
 }
 
 function clearPageCommentEditor() {
@@ -12443,6 +12611,7 @@ function renderPageCommentItem(comment) {
 }
 
 function renderPageComments() {
+  schedulePageCommentDraftPersist();
   const page = state.workspaceView === "page" ? state.selectedPage : null;
   const hasPage = Boolean(page);
   elements.pageComments.classList.toggle("hidden", !hasPage);
@@ -12586,7 +12755,11 @@ async function refreshPageCommentsInBackground() {
 window.setInterval(() => void refreshPageCommentsInBackground(), pageCommentsBackgroundRefreshMs);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") void refreshPageCommentsInBackground();
+  // A hidden tab may be discarded without another event; store the draft now.
+  else persistPageCommentDrafts();
 });
+
+window.addEventListener("pagehide", () => persistPageCommentDrafts());
 
 async function loadPageComments(
   pageId,
@@ -21756,6 +21929,7 @@ async function boot() {
     isCurrent,
     initializeAuthenticatedUi: async () => {
       if (!isCurrent()) return;
+      adoptPageCommentDraftsForUser(state.user?.id ?? null);
       applyUserTheme();
       await applyUserPreferredLanguage();
     },
@@ -23566,6 +23740,7 @@ elements.pageCommentsInput.addEventListener("input", () => {
   elements.pageCommentsLength.textContent = `${formatNumber(elements.pageCommentsInput.value.length)} / ${formatNumber(2000)}`;
   announcePageCommentLength(elements.pageCommentsInput.value.length);
   syncBeforeUnloadProtection();
+  schedulePageCommentDraftPersist();
   elements.pageCommentsSubmit.disabled = Boolean(
     state.pageComments.loading
       || state.pageComments.submitting
@@ -23587,6 +23762,7 @@ elements.pageCommentsList.addEventListener("input", (event) => {
   if (!textarea || state.pageComments.editingId !== textarea.dataset.commentEditInput) return;
   state.pageComments.editingDraft = textarea.value;
   syncBeforeUnloadProtection();
+  schedulePageCommentDraftPersist();
   const form = textarea.closest("form[data-comment-edit-id]");
   const submit = form?.querySelector('button[type="submit"]');
   if (submit) submit.disabled = Boolean(state.pageComments.busyCommentId || !textarea.value.trim());
@@ -24915,6 +25091,47 @@ elements.blockList.addEventListener("dragend", () => {
   activeKanbanCardDrag = null;
 });
 
+// A browser silently cuts pasted text at a field's maxlength, so a long paste
+// would lose its end without a word. If someone had cut that text from
+// elsewhere, it would be gone. Refuse such a paste instead: the clipboard keeps
+// every character, and the notice says how much has to go.
+function getPasteLengthGuardField(target) {
+  if (target instanceof HTMLTextAreaElement) {
+    // The page view holds the title, every block editor, and the comments.
+    return elements.pageView.contains(target) ? target : null;
+  }
+  if (target instanceof HTMLInputElement && (target.type === "text" || target.type === "search")) {
+    return elements.blockList.contains(target) ? target : null;
+  }
+  return null;
+}
+
+function getLengthAfterPaste(field, text) {
+  // Text fields drop line breaks; text areas store each as a single "\n".
+  const pasted = field instanceof HTMLTextAreaElement
+    ? text.replace(/\r\n?/g, "\n")
+    : text.replace(/[\r\n]+/g, "");
+  const length = field.value.length;
+  const start = Math.min(field.selectionStart ?? length, length);
+  const end = Math.min(Math.max(field.selectionEnd ?? start, start), length);
+  return length - (end - start) + pasted.length;
+}
+
+document.addEventListener("paste", (event) => {
+  const field = getPasteLengthGuardField(event.target);
+  if (!field || field.readOnly || field.disabled || !(field.maxLength > 0) || !event.clipboardData) return;
+  const text = event.clipboardData.getData("text/plain") ?? "";
+  if (!text) return;
+  const nextLength = getLengthAfterPaste(field, text);
+  if (nextLength <= field.maxLength) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  setStatus(t("status.pasteTooLong", {
+    max: formatNumber(field.maxLength),
+    over: formatNumber(nextLength - field.maxLength)
+  }), true);
+}, true);
+
 // Pasting an image or file adds it as an attachment, and pasting a URL over
 // selected text links that text, as in other block editors.
 elements.blockList.addEventListener("paste", (event) => {
@@ -26105,6 +26322,21 @@ const confirmFreeDeleteBlockTypes = new Set([
   "TODO", "UNORDERED_LIST", "ORDERED_LIST", "QUOTE"
 ]);
 
+function countBlockDescendants(blockId) {
+  const pending = [...(getBlockById(blockId)?.children ?? [])];
+  let count = 0;
+  while (pending.length) {
+    const child = pending.pop();
+    count += 1;
+    if (Array.isArray(child?.children)) pending.push(...child.children);
+  }
+  if (count > 0) return count;
+  // A child row rendered before state caught up still belongs to the subtree.
+  return elements.blockList.querySelectorAll(
+    `.editor-block-row[data-parent-block-id="${CSS.escape(blockId)}"]`
+  ).length;
+}
+
 function isBlockDeletionTrivial(row, blockId) {
   if (!confirmFreeDeleteBlockTypes.has(row.dataset.blockType ?? "MARKDOWN")) return false;
   const blocks = state.selectedPage?.blocks ?? [];
@@ -26202,15 +26434,40 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
       // instead. Anything with children or structured content still asks.
       const pageIdAtIntent = state.selectedPage.id;
       const undoSnapshot = isBlockDeletionTrivial(row, blockId) ? null : captureBlockDeletionUndo(row, blockId);
-      const ok = isBlockDeletionTrivial(row, blockId) || Boolean(undoSnapshot) || await showConfirmDialog({
-        title: t("dialog.deleteTitle"),
-        message: t("confirm.deleteBlock"),
-        confirmLabel: t("dialog.delete"),
-        danger: true
-      });
-      if (!ok) return;
+      // Deleting a block also deletes every block nested under it, with no
+      // Undo. Say how many, and offer to keep them (they move up a level, as
+      // Backspace in an empty block does).
+      const descendantCount = countBlockDescendants(blockId);
+      let deleteChoice = "confirm";
+      if (!isBlockDeletionTrivial(row, blockId) && !undoSnapshot) {
+        deleteChoice = descendantCount > 0
+          ? await showChoiceDialog({
+              title: t("dialog.deleteTitle"),
+              message: t("confirm.deleteBlockWithChildren", { count: formatNumber(descendantCount) }),
+              confirmLabel: t("dialog.deleteBlockAndChildren"),
+              alternateLabel: t("dialog.deleteBlockKeepChildren"),
+              danger: true
+            })
+          : (await showConfirmDialog({
+              title: t("dialog.deleteTitle"),
+              message: t("confirm.deleteBlock"),
+              confirmLabel: t("dialog.delete"),
+              danger: true
+            })) ? "confirm" : "cancel";
+      }
+      if (deleteChoice === "cancel") return;
       if (state.selectedPage?.id !== pageIdAtIntent || !getBlockById(blockId)) {
         closeBlockContextMenu();
+        return;
+      }
+      if (deleteChoice === "alternate") {
+        closeBlockContextMenu();
+        // deleteEmptyBlock() removes only this block and promotes its children.
+        // The person already confirmed losing this block's own content.
+        await deleteEmptyBlock(row, { announce: false });
+        if (state.selectedPage?.id === pageIdAtIntent && !findRenderedBlockRow(blockId)) {
+          setStatus(t("status.blockDeletedChildrenKept"));
+        }
         return;
       }
       const authenticationScope = captureAuthenticatedSessionScope();

@@ -4260,6 +4260,18 @@ body.is-kanban-column-dragging {
   font-size: 0.75rem;
 }
 
+.page-version-change-card-header {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.page-version-restore-block {
+  margin-left: auto;
+  min-height: 2rem;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.75rem;
+}
+
 .page-version-field-list {
   display: grid;
   gap: 0.55rem;
@@ -5002,6 +5014,11 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   .app-dialog-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  /* Three choices stack so each label stays readable on a phone. */
+  .app-dialog-actions.has-alternate {
+    grid-template-columns: 1fr;
   }
 
   .app-dialog-actions button {

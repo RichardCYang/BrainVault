@@ -18,7 +18,17 @@ function stopEventFromReachingWorkspace(event) {
   event.stopPropagation();
 }
 
-function openDialog({ title, message, field = null, cancelLabel, confirmLabel, danger = false, initialFocus, readResult }) {
+function openDialog({
+  title,
+  message,
+  field = null,
+  cancelLabel,
+  confirmLabel,
+  alternateLabel = null,
+  danger = false,
+  initialFocus,
+  readResult
+}) {
   const run = () => new Promise((resolve) => {
     const id = `app-dialog-${++dialogSequence}`;
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -62,7 +72,19 @@ function openDialog({ title, message, field = null, cancelLabel, confirmLabel, d
     confirm.value = "confirm";
     confirm.className = danger ? "app-dialog-danger" : "";
     confirm.textContent = confirmLabel;
-    actions.append(cancel, confirm);
+    // An optional middle choice, such as "delete only this block" next to
+    // "delete everything". It is never the default, so Enter cannot pick it.
+    if (alternateLabel) {
+      actions.classList.add("has-alternate");
+      const alternate = document.createElement("button");
+      alternate.type = "button";
+      alternate.className = "secondary";
+      alternate.textContent = alternateLabel;
+      alternate.addEventListener("click", () => dialog.close("alternate"));
+      actions.append(cancel, alternate, confirm);
+    } else {
+      actions.append(cancel, confirm);
+    }
     form.append(actions);
     dialog.append(form);
 
@@ -113,6 +135,28 @@ export function showConfirmDialog({
     // Destructive actions start on Cancel so a stray Enter cannot confirm them.
     initialFocus: danger ? "cancel" : "confirm",
     readResult: (value) => value === "confirm"
+  });
+}
+
+// Like showConfirmDialog, with a second, less destructive way to go ahead.
+// Resolves to "confirm", "alternate" or "cancel".
+export function showChoiceDialog({
+  title = t("dialog.confirmTitle"),
+  message = "",
+  confirmLabel = t("dialog.confirm"),
+  alternateLabel,
+  cancelLabel = t("dialog.cancel"),
+  danger = false
+} = {}) {
+  return openDialog({
+    title,
+    message,
+    cancelLabel,
+    confirmLabel,
+    alternateLabel,
+    danger,
+    initialFocus: danger ? "cancel" : "confirm",
+    readResult: (value) => (value === "confirm" || value === "alternate" ? value : "cancel")
   });
 }
 

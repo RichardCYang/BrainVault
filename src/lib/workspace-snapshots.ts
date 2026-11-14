@@ -20,6 +20,7 @@ import { db, transaction, TransactionCommitOutcomeUnknownError, type DbClient } 
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
 import { diffWorkspaceManifests } from "./workspace-snapshot-diff.js";
+import { selectAutomaticSnapshotsToPrune } from "./automatic-snapshot-retention.js";
 
 const snapshotIdPattern = /^snapshot_[a-f0-9]{32}$/;
 const snapshotStorageRoot = path.join(attachmentUploadRoot, ".workspace-snapshots");
@@ -337,11 +338,6 @@ export async function createPreRestoreSafetySnapshot(
 }
 
 /**
- * Keeps the newest SNAPSHOT_AUTO_MAX_COUNT automatic snapshots. `keepIds`
- * (the safety copy just taken, the snapshot that was restored) always stay and
- * count toward that limit first. Pruning never fails the caller.
- */
-/**
  * A committed restore advances the workspace generation, so the request's own
  * scope no longer passes the session boundary. Pruning happens after that
  * commit and must act under the generation the restore produced.
@@ -356,28 +352,31 @@ export function authScopeAfterRestore<T extends AuthSessionBoundaryScope>(
     : authScope;
 }
 
+/**
+ * Keeps the newest SNAPSHOT_AUTO_MAX_COUNT automatic snapshots plus every one
+ * younger than SNAPSHOT_AUTO_RETENTION_HOURS (see
+ * selectAutomaticSnapshotsToPrune). Pruning never fails the caller.
+ */
 export async function pruneAutomaticSnapshots(
   userId: string,
   authScope: AuthSessionBoundaryScope,
   keepIds: Array<string | null | undefined> = []
 ) {
-  const keep = new Set(keepIds.filter((id): id is string => typeof id === "string" && id.length > 0));
+  const keep = keepIds.filter((id): id is string => typeof id === "string" && id.length > 0);
   try {
-    const rows = await db.query<{ id: string }>(
-      `SELECT id FROM workspace_snapshots
+    const rows = await db.query<{ id: string; recent: number | null }>(
+      `SELECT id, (created_at >= CURRENT_TIMESTAMP(3) - INTERVAL ? HOUR) AS recent
+       FROM workspace_snapshots
        WHERE user_id = ? AND kind = 'PRE_RESTORE'
        ORDER BY created_at DESC, id DESC`,
-      [userId]
+      [env.SNAPSHOT_AUTO_RETENTION_HOURS, userId]
     );
-    let kept = rows.filter((row) => keep.has(row.id)).length;
-    for (const row of rows) {
-      if (keep.has(row.id)) continue;
-      if (kept < env.SNAPSHOT_AUTO_MAX_COUNT) {
-        kept += 1;
-        continue;
-      }
-      await deleteWorkspaceSnapshot(userId, row.id, authScope).catch((error) => {
-        console.error("Old automatic snapshot could not be pruned; keeping it", { userId, snapshotId: row.id, error });
+    const pruneIds = selectAutomaticSnapshotsToPrune(rows, keep, {
+      maxCount: env.SNAPSHOT_AUTO_MAX_COUNT
+    });
+    for (const snapshotId of pruneIds) {
+      await deleteWorkspaceSnapshot(userId, snapshotId, authScope).catch((error) => {
+        console.error("Old automatic snapshot could not be pruned; keeping it", { userId, snapshotId, error });
       });
     }
   } catch (error) {
