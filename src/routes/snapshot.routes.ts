@@ -4,7 +4,9 @@ import {
   deleteWorkspaceSnapshot,
   diffWorkspaceSnapshot,
   listWorkspaceSnapshots,
-  restoreWorkspaceSnapshot
+  restoreSafetySnapshotSkipHeader,
+  restoreWorkspaceSnapshot,
+  wantsRestoreWithoutSafetySnapshot
 } from "../lib/workspace-snapshots.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { requireRestoreOperationId } from "../lib/data-restore-operation.js";
@@ -53,8 +55,15 @@ snapshotRouter.post<SnapshotRouteParams>(
       const user = requireUser(req.user);
       const authScope = requireRequestAuthScope(req);
       const operationId = requireRestoreOperationId(req.header("X-Restore-Operation-Id"));
-      const result = await restoreWorkspaceSnapshot(user.id, req.params.snapshotId, authScope, operationId);
-      res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing });
+      const result = await restoreWorkspaceSnapshot(user.id, req.params.snapshotId, authScope, operationId, {
+        safetySnapshot: !wantsRestoreWithoutSafetySnapshot(req.header(restoreSafetySnapshotSkipHeader))
+      });
+      res.json({
+        user: toPublicUser(result.user),
+        counts: result.counts,
+        sharing: result.sharing,
+        safetySnapshotId: "safetySnapshotId" in result ? result.safetySnapshotId : null
+      });
     } finally {
       releaseDataImport?.();
     }

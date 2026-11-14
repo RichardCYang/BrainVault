@@ -100,7 +100,7 @@ test("editor commands record one structural step each", () => {
   assert.match(merge, /op: "merge"/);
   assert.match(functionSource("deleteEmptyBlockWithHistory", "focusPendingBlock"), /op: "delete"/);
   assert.match(functionSource("finishBlockDrag", "getBlockStepMoveAvailability"), /op: "move"/);
-  assert.match(source, /recordStructuralEditorHistory\(\{ op: "create", blockId: inserted\.block\.id, snapshot: null \}\)/);
+  assert.match(source, /op: "create",\s*blockId: inserted\.block\.id,\s*snapshot: null,\s*insertedType:/);
 });
 
 test("replaying a structural step never records new steps and validates the page first", () => {
@@ -110,7 +110,10 @@ test("replaying a structural step never records new steps and validates the page
   assert.match(join, /upper\.value !== meta\.head \|\| lower\.value !== meta\.tail\) return \{ status: "stale" \}/);
   assert.match(join, /getBlockMergeTarget\(lower\.row\) !== upper\.row/);
   const remove = functionSource("removeBlockForEditorHistory", "restoreBlockForEditorHistory");
-  assert.match(remove, /snapshot\.markdown !== meta\.snapshot\.markdown/);
+  assert.match(remove, /snapshot\.markdown !== expected\.markdown/);
+  // An insert step has no snapshot; it may only remove a block that is still empty.
+  assert.match(remove, /const expected = meta\.snapshot \?\? \{[\s\S]*markdown: ""/);
+  assert.doesNotMatch(remove, /if \(meta\.snapshot && \(/);
   const runner = functionSource("runStructuralEditorHistoryEntry", "normalizeParentBlockId");
   assert.match(runner, /structuralEditorHistoryReplayDepth \+= 1/);
   assert.match(runner, /pageEditorHistory\.discard\(pageId, direction, \{ id: entry\.id \}\)/);

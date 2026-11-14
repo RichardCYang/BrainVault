@@ -14438,6 +14438,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
 }
 
 .account-snapshot-integrity,
+.account-snapshot-kind,
 .account-snapshot-change-badge {
   display: inline-flex;
   align-items: center;

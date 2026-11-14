@@ -364,6 +364,9 @@ export async function createIndexedDbRecoveryStorage(
   let changeSequence = 0;
   const writeErrorListeners = new Set();
   const changeListeners = new Set();
+  // Told when the write queue drains. Callers that show "saving" while a
+  // recovery write is in flight need this to show "saved" again afterwards.
+  const idleListeners = new Set();
   const instanceId = globalThis.crypto?.randomUUID?.()
     ?? `recovery-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const changeSignalKey = `brainvault.recoveryChange.v1:${databaseName}:${storeName}`;
@@ -598,18 +601,31 @@ export async function createIndexedDbRecoveryStorage(
     }
   }
 
+  function notifyIdleIfSettled() {
+    if (pendingWrites > 0 || uncommittedWrites.size > 0) return;
+    for (const listener of idleListeners) {
+      try {
+        listener();
+      } catch (listenerError) {
+        console.error("Recovery storage idle listener failed", listenerError);
+      }
+    }
+  }
+
   function enqueue(operation, context, { reportFailure = true } = {}) {
     pendingWrites += 1;
     const run = tail.then(operation, operation);
     tail = run.then(
       () => {
         pendingWrites -= 1;
+        notifyIdleIfSettled();
       },
       (error) => {
         pendingWrites -= 1;
         failureSequence += 1;
         lastFailure = error instanceof Error ? error : new Error(String(error));
         if (reportFailure) notifyWriteError(lastFailure, context);
+        notifyIdleIfSettled();
       }
     );
     return run;
@@ -1241,6 +1257,11 @@ export async function createIndexedDbRecoveryStorage(
       changeListeners.add(listener);
       return () => changeListeners.delete(listener);
     },
+    onIdle(listener) {
+      if (typeof listener !== "function") return () => {};
+      idleListeners.add(listener);
+      return () => idleListeners.delete(listener);
+    },
     async refresh() {
       const localSequenceAtRefresh = localMutationSequence;
       await tail.catch(() => undefined);
@@ -1353,6 +1374,9 @@ export function createReadOnlyRecoveryStorage(storage) {
       return () => {};
     },
     subscribe() {
+      return () => {};
+    },
+    onIdle() {
       return () => {};
     },
     async refresh() {

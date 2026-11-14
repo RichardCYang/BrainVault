@@ -32,7 +32,7 @@ async function assertSnapshotCapacity(userId: string, client: DbClient, addition
   // That user lock serializes create/delete quota decisions across callers.
   const usage = await client.queryOne<{ snapshot_count: number; total_bytes: string | number | bigint }>(
     `SELECT COUNT(*) AS snapshot_count, COALESCE(SUM(archive_size), 0) AS total_bytes
-     FROM workspace_snapshots WHERE user_id = ?`,
+     FROM workspace_snapshots WHERE user_id = ? AND kind = 'MANUAL'`,
     [userId]
   );
   const snapshotCount = Number(usage?.snapshot_count ?? 0);
@@ -46,9 +46,12 @@ async function assertSnapshotCapacity(userId: string, client: DbClient, addition
   return remainingBytes;
 }
 
+type SnapshotKind = "MANUAL" | "PRE_RESTORE";
+
 type SnapshotRow = {
   id: string;
   user_id: string;
+  kind?: SnapshotKind | null;
   archive_size: string | number | bigint;
   archive_sha256: string;
   page_count: number;
@@ -108,6 +111,7 @@ function toSnapshotInfo(row: SnapshotRow, integrity: "ok" | "missing" | "size-mi
     blocks: Number(row.block_count),
     attachments: Number(row.attachment_count),
     pageVersions: Number(row.page_version_count),
+    kind: row.kind === "PRE_RESTORE" ? "pre-restore" : "manual",
     integrity
   };
 }
@@ -115,7 +119,7 @@ function toSnapshotInfo(row: SnapshotRow, integrity: "ok" | "missing" | "size-mi
 async function getOwnedSnapshotRow(userId: string, snapshotId: string, client: DbClient = db, lock = false) {
   const id = safeSnapshotId(snapshotId);
   const row = await client.queryOne<SnapshotRow>(
-    `SELECT id, user_id, archive_size, archive_sha256, page_count, block_count,
+    `SELECT id, user_id, kind, archive_size, archive_sha256, page_count, block_count,
             attachment_count, page_version_count,
             DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
      FROM workspace_snapshots
@@ -199,7 +203,7 @@ async function writeSnapshotArchive(userId: string, snapshotId: string, remainin
 
 export async function listWorkspaceSnapshots(userId: string) {
   const rows = await db.query<SnapshotRow>(
-    `SELECT id, user_id, archive_size, archive_sha256, page_count, block_count,
+    `SELECT id, user_id, kind, archive_size, archive_sha256, page_count, block_count,
             attachment_count, page_version_count,
             DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
      FROM workspace_snapshots
@@ -225,14 +229,17 @@ export async function listWorkspaceSnapshots(userId: string) {
 
 export async function createWorkspaceSnapshot(
   userId: string,
-  authScope: AuthSessionBoundaryScope
+  authScope: AuthSessionBoundaryScope,
+  kind: SnapshotKind = "MANUAL"
 ) {
   // Reject full accounts before staging/copying any workspace files. The HTTP
   // export gate permits one operation per user; the final locked recheck also
   // covers direct callers and quota changes during archive preparation.
+  // Automatic pre-restore snapshots are bounded by SNAPSHOT_AUTO_MAX_COUNT
+  // instead, so a full manual quota never blocks the safety copy.
   const remainingBytes = await transaction(async (client) => {
     await assertCurrentAuthSessionBoundary(userId, authScope, client);
-    return assertSnapshotCapacity(userId, client);
+    return kind === "MANUAL" ? assertSnapshotCapacity(userId, client) : maxSnapshotArchiveBytes;
   });
   const snapshotId = createId("snapshot");
   const { finalPath, inspection, counts } = await writeSnapshotArchive(userId, snapshotId, remainingBytes);
@@ -243,11 +250,11 @@ export async function createWorkspaceSnapshot(
       // Revalidate the exact credential/device session at the durable insertion
       // boundary so a request admitted before revocation cannot persist recovery data.
       await assertCurrentAuthSessionBoundary(userId, authScope, client);
-      await assertSnapshotCapacity(userId, client, inspection.size);
+      if (kind === "MANUAL") await assertSnapshotCapacity(userId, client, inspection.size);
       await client.execute(
         `INSERT INTO workspace_snapshots
-           (id, user_id, archive_size, archive_sha256, page_count, block_count, attachment_count, page_version_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, user_id, archive_size, archive_sha256, page_count, block_count, attachment_count, page_version_count, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           snapshotId,
           userId,
@@ -256,7 +263,8 @@ export async function createWorkspaceSnapshot(
           counts.pages,
           counts.blocks,
           counts.attachments,
-          counts.pageVersions
+          counts.pageVersions,
+          kind
         ]
       );
     });
@@ -264,7 +272,7 @@ export async function createWorkspaceSnapshot(
     let persisted: SnapshotRow | undefined;
     try {
       persisted = await db.queryOne<SnapshotRow>(
-        `SELECT id, user_id, archive_size, archive_sha256, page_count, block_count,
+        `SELECT id, user_id, kind, archive_size, archive_sha256, page_count, block_count,
                 attachment_count, page_version_count,
                 DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f') AS created_at
          FROM workspace_snapshots WHERE id = ? AND user_id = ?`,
@@ -290,6 +298,92 @@ export async function createWorkspaceSnapshot(
 
   const row = await getOwnedSnapshotRow(userId, snapshotId);
   return toSnapshotInfo(row);
+}
+
+export const restoreSafetySnapshotSkipHeader = "X-Restore-Skip-Safety-Snapshot";
+
+export function wantsRestoreWithoutSafetySnapshot(headerValue: string | undefined) {
+  return headerValue === "1";
+}
+
+/**
+ * Saves the workspace as it is right now, just before a restore or backup
+ * import replaces it, so replacing the wrong workspace can itself be undone.
+ * Old automatic snapshots are pruned only after the restore succeeded (see
+ * pruneAutomaticSnapshots), so a failed restore never costs a recovery point.
+ *
+ * Any failure stops the restore with RESTORE_SAFETY_SNAPSHOT_FAILED. The person
+ * can then choose to restore without the safety copy.
+ */
+export async function createPreRestoreSafetySnapshot(
+  userId: string,
+  authScope: AuthSessionBoundaryScope
+) {
+  let created;
+  try {
+    created = await createWorkspaceSnapshot(userId, authScope, "PRE_RESTORE");
+  } catch (error) {
+    // A revoked or expired session is not a storage problem; keep its answer.
+    if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) throw error;
+    console.error("Pre-restore safety snapshot failed; the restore was not started", { userId, error });
+    throw new ApiError(
+      409,
+      "RESTORE_SAFETY_SNAPSHOT_FAILED",
+      "The current workspace could not be saved as a snapshot before restoring. Nothing was replaced."
+    );
+  }
+
+  return created;
+}
+
+/**
+ * Keeps the newest SNAPSHOT_AUTO_MAX_COUNT automatic snapshots. `keepIds`
+ * (the safety copy just taken, the snapshot that was restored) always stay and
+ * count toward that limit first. Pruning never fails the caller.
+ */
+/**
+ * A committed restore advances the workspace generation, so the request's own
+ * scope no longer passes the session boundary. Pruning happens after that
+ * commit and must act under the generation the restore produced.
+ */
+export function authScopeAfterRestore<T extends AuthSessionBoundaryScope>(
+  authScope: T,
+  user: { attachment_generation?: number | bigint | string | null } | null | undefined
+): T {
+  const generation = Number(user?.attachment_generation ?? authScope.workspaceGeneration);
+  return Number.isSafeInteger(generation) && generation >= 1
+    ? { ...authScope, workspaceGeneration: generation }
+    : authScope;
+}
+
+export async function pruneAutomaticSnapshots(
+  userId: string,
+  authScope: AuthSessionBoundaryScope,
+  keepIds: Array<string | null | undefined> = []
+) {
+  const keep = new Set(keepIds.filter((id): id is string => typeof id === "string" && id.length > 0));
+  try {
+    const rows = await db.query<{ id: string }>(
+      `SELECT id FROM workspace_snapshots
+       WHERE user_id = ? AND kind = 'PRE_RESTORE'
+       ORDER BY created_at DESC, id DESC`,
+      [userId]
+    );
+    let kept = rows.filter((row) => keep.has(row.id)).length;
+    for (const row of rows) {
+      if (keep.has(row.id)) continue;
+      if (kept < env.SNAPSHOT_AUTO_MAX_COUNT) {
+        kept += 1;
+        continue;
+      }
+      await deleteWorkspaceSnapshot(userId, row.id, authScope).catch((error) => {
+        console.error("Old automatic snapshot could not be pruned; keeping it", { userId, snapshotId: row.id, error });
+      });
+    }
+  } catch (error) {
+    // Keeping one more snapshot than configured is harmless.
+    console.error("Automatic snapshot pruning failed; keeping every snapshot", { userId, error });
+  }
 }
 
 export async function deleteWorkspaceSnapshot(
@@ -375,7 +469,8 @@ export async function restoreWorkspaceSnapshot(
   userId: string,
   snapshotId: string,
   authScope: DataRestoreAuthScope,
-  operationId = createId("restore")
+  operationId = createId("restore"),
+  { safetySnapshot = true }: { safetySnapshot?: boolean } = {}
 ) {
   const id = safeSnapshotId(snapshotId);
   const admission = await admitDataRestore(userId, authScope, operationId, `snapshot:${id}`);
@@ -383,7 +478,8 @@ export async function restoreWorkspaceSnapshot(
   if (completed) return completed;
   const row = await getOwnedSnapshotRow(userId, snapshotId);
   const filePath = await ensureSnapshotArchiveIntegrity(userId, row);
-  return importUserDataBackup(userId, filePath, authScope, async (client) => {
+  let safetyCopy: Awaited<ReturnType<typeof createPreRestoreSafetySnapshot>> | null = null;
+  const result = await importUserDataBackup(userId, filePath, authScope, async (client) => {
     let current: SnapshotRow;
     try {
       // Keep the source row locked through the destructive restore transaction.
@@ -411,7 +507,21 @@ export async function restoreWorkspaceSnapshot(
         "The snapshot changed while the restore was being prepared. No data was replaced."
       );
     }
-  }, { ...snapshotDataTransferOptions, admission });
+  }, {
+    ...snapshotDataTransferOptions,
+    admission,
+    // Runs only when this operation has not committed yet, so a retry never
+    // saves the already restored state as the "before" copy.
+    beforeReplace: safetySnapshot
+      ? async () => { safetyCopy = await createPreRestoreSafetySnapshot(userId, authScope); }
+      : undefined
+  });
+  // Assigned inside the hook; widen it back from the narrowed initializer.
+  const safetySnapshotId = (safetyCopy as { id: string } | null)?.id ?? null;
+  if (safetySnapshotId) {
+    await pruneAutomaticSnapshots(userId, authScopeAfterRestore(authScope, result.user), [safetySnapshotId, row.id]);
+  }
+  return { ...result, safetySnapshotId };
 }
 
 export async function diffWorkspaceSnapshot(userId: string, snapshotId: string) {

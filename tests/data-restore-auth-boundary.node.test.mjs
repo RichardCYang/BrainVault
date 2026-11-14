@@ -18,13 +18,13 @@ test("workspace restore carries and revalidates auth, device-session, and worksp
 
   assert.match(routes, /import \{ requireAuth, requireRequestAuthScope, requireSameOriginCookieRequest \} from "\.\.\/middleware\/auth\.js"/);
   assert.match(routes, /const authScope = requireRequestAuthScope\(req\)/);
-  assert.match(routes, /importUserDataBackup\(user\.id, uploadPath, authScope, undefined, \{ admission \}\)/);
+  assert.match(routes, /importUserDataBackup\(user\.id, uploadPath, authScope, undefined, \{\s*admission,/);
 
   assert.match(snapshotRoutes, /import \{ requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js"/);
   assert.match(snapshotRoutes, /const authScope = requireRequestAuthScope\(req\)/);
   assert.match(
     snapshotRoutes,
-    /restoreWorkspaceSnapshot\(user\.id, req\.params\.snapshotId, authScope, operationId\)/
+    /restoreWorkspaceSnapshot\(user\.id, req\.params\.snapshotId, authScope, operationId, \{/
   );
   assert.match(authMiddleware, /attachment_generation/);
   assert.match(authMiddleware, /req\.auth = \{ authVersion, workspaceGeneration \}/);
@@ -33,7 +33,7 @@ test("workspace restore carries and revalidates auth, device-session, and worksp
     authMiddleware,
     /return Object\.freeze\(\{ authVersion, workspaceGeneration, sessionId \}\)/
   );
-  assert.match(snapshotLib, /return importUserDataBackup\(userId, filePath, authScope, async \(client\) =>/);
+  assert.match(snapshotLib, /const result = await importUserDataBackup\(userId, filePath, authScope, async \(client\) =>/);
 
   assert.match(
     transfer,

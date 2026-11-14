@@ -2,6 +2,15 @@ import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, formatNumber, t } from "./i18n.js";
 import { showConfirmDialog } from "./app-dialog.js";
 
+// Entries added in this tab, with the slot they were given. An entry still in
+// that slot and otherwise blank holds nothing a person set.
+const untouchedNewTimetableEntrySlots = new Map();
+
+function timetableEntrySlotKey(entry) {
+  const { id: _id, title: _title, note: _note, completed: _completed, ...slot } = entry ?? {};
+  return JSON.stringify(Object.keys(slot).sort().map((key) => [key, slot[key]]));
+}
+
 export const timetableLimits = Object.freeze({
   titleLength: 120,
   entries: 200,
@@ -490,6 +499,7 @@ export function createTimetableEditor(row, value, { onDirty = () => {} } = {}) {
         completed: false
       };
       timetable.entries.push(entry);
+      untouchedNewTimetableEntrySlots.set(entry.id, timetableEntrySlotKey(entry));
       sortEntries(timetable.entries);
       replaceEditor({ entryId: entry.id, field: "title" });
     } else if (action === "timetable-delete-entry") {
@@ -497,7 +507,14 @@ export function createTimetableEditor(row, value, { onDirty = () => {} } = {}) {
       if (!entry) return;
       // A time slot with no title, note, or check mark loses nothing, so it
       // goes at once, as blank blocks and Kanban cards do.
-      if (!String(entry.title ?? "").trim() && !String(entry.note ?? "").trim() && !entry.completed) {
+      // Only an entry added in this tab and still in the slot it was given
+      // counts: a slot someone moved or resized is a plan, so it asks first.
+      if (
+        !String(entry.title ?? "").trim()
+        && !String(entry.note ?? "").trim()
+        && !entry.completed
+        && untouchedNewTimetableEntrySlots.get(entry.id) === timetableEntrySlotKey(entry)
+      ) {
         timetable.entries = timetable.entries.filter((item) => item.id !== entry.id);
         replaceEditor();
         return;

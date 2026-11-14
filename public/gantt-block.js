@@ -2,6 +2,10 @@ import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, formatNumber, t } from "./i18n.js";
 import { showConfirmDialog } from "./app-dialog.js";
 
+// Tasks added in this tab, with the dates they were given. A task still on
+// those dates and otherwise blank holds nothing a person set.
+const untouchedNewGanttTaskDates = new Map();
+
 export const ganttLimits = Object.freeze({
   titleLength: 120,
   tasks: 200,
@@ -818,6 +822,7 @@ export function createGanttEditor(row, value, { onDirty = () => {} } = {}) {
         assignee: ""
       };
       gantt.tasks.push(task);
+      untouchedNewGanttTaskDates.set(task.id, { start: task.start, end: task.end });
       ensureTaskVisible(gantt, task);
       replaceEditor({ taskId: task.id, field: "title" });
     } else if (action === "gantt-delete-task") {
@@ -826,10 +831,15 @@ export function createGanttEditor(row, value, { onDirty = () => {} } = {}) {
       // An untouched task (default title, no assignee, no progress) loses
       // nothing, so it goes at once, as blank blocks and Kanban cards do.
       const title = String(task.title ?? "").trim();
+      // Dates are always filled in, so only a task added in this tab whose
+      // dates were never moved counts; a task someone scheduled asks first.
+      const addedDates = untouchedNewGanttTaskDates.get(task.id);
       const isBlankTask = (!title || title === t("gantt.untitledTask"))
         && !String(task.assignee ?? "").trim()
         && !Number(task.progress)
-        && task.status === "not_started";
+        && task.status === "not_started"
+        && addedDates?.start === task.start
+        && addedDates?.end === task.end;
       if (isBlankTask) {
         gantt.tasks = gantt.tasks.filter((item) => item.id !== task.id);
         replaceEditor();

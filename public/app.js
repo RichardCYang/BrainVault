@@ -95,8 +95,21 @@ import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-re
 import {
   createPageCollaboration,
   decodeCollaborationRecoveryRecords,
-  getCollaborativeDeleteSubtreeSnapshot
+  getCollaborativeDeleteSubtreeSnapshot,
+  rebaseTextEdit,
+  transformTextCaret
 } from "./collaboration.js";
+
+// The shared text each collaborative block editor last showed or sent. Edits
+// are sent relative to it, so a peer's change that arrived after the keystroke
+// (local edits wait for durable recovery storage first) is kept, not erased.
+const collaborationTextBases = new WeakMap();
+
+function takeCollaborationTextBase(row, current, payload) {
+  const base = collaborationTextBases.get(row) ?? current?.markdown;
+  if (typeof payload?.markdown === "string") collaborationTextBases.set(row, payload.markdown);
+  return typeof base === "string" && typeof payload?.markdown === "string" ? base : null;
+}
 import {
   assignRemoteCaretColors,
   getRemoteCaretClientKey,
@@ -1197,8 +1210,11 @@ let statusActionVisible = false;
 // focus is on the toast. Errors stay until dismissed or replaced (WCAG 2.2.1).
 // Unsent comment text is kept per page for this signed-in session, so moving
 // to another page and back does not throw away a half-written comment or an
-// unsaved comment edit. Signing out clears it.
+// unsaved comment edit. Signing out clears it. A session that ends on its own
+// (expired, revoked elsewhere, password changed) keeps it for the same
+// account to find again after signing back in; another account never sees it.
 const pageCommentDrafts = new Map();
+let pageCommentDraftOwnerId = null;
 const statusDismissDelay = 4000;
 const statusActionDismissDelay = 8000;
 const statusErrorDismissDelay = 0;
@@ -2945,7 +2961,25 @@ function resetDataImportSelection() {
 }
 
 const restoreOperationStore = createRestoreOperationStore(() => window.sessionStorage);
+// The server saves the current workspace as an automatic snapshot before a
+// restore replaces it. If that safety copy cannot be made, nothing is replaced
+// and the person decides whether to go ahead without it.
 async function submitWorkspaceRestore(path, sourceKey, body, activeOperation) {
+  try {
+    return await submitWorkspaceRestoreAttempt(path, sourceKey, body, activeOperation);
+  } catch (error) {
+    if (error?.code !== "RESTORE_SAFETY_SNAPSHOT_FAILED" || !isCurrentAccountDataOperation(activeOperation)) throw error;
+    const confirmed = await showConfirmDialog({
+      message: t("account.restoreWithoutSafetySnapshotConfirm"),
+      confirmLabel: t("account.restoreWithoutSafetySnapshot"),
+      danger: true
+    });
+    if (!confirmed || !isCurrentAccountDataOperation(activeOperation)) return skippedApiRequest;
+    return submitWorkspaceRestoreAttempt(path, sourceKey, body, activeOperation, { skipSafetySnapshot: true });
+  }
+}
+
+async function submitWorkspaceRestoreAttempt(path, sourceKey, body, activeOperation, { skipSafetySnapshot = false } = {}) {
   const targetKey = getAccountAvatarTargetKey(state.user);
   const authenticationScope = captureAuthenticatedSessionScope();
   let operationId;
@@ -2962,7 +2996,10 @@ async function submitWorkspaceRestore(path, sourceKey, body, activeOperation) {
       try {
         const data = await api(path, {
           method: "POST", body,
-          headers: { "X-Restore-Operation-Id": operationId },
+          headers: {
+            "X-Restore-Operation-Id": operationId,
+            ...(skipSafetySnapshot ? { "X-Restore-Skip-Safety-Snapshot": "1" } : {})
+          },
           beforeFetch: isCurrent
         });
         if (data === skippedApiRequest) return data;
@@ -3008,6 +3045,7 @@ async function restoreUserDataBackup(file, { operation = null } = {}) {
       // Preserve durable drafts from every tab. Restored rows receive fresh edit versions,
       // so pre-restore drafts are recovered as explicit conflicts instead of overwriting data.
       const applied = await applyRestoredWorkspaceData(restored.data, targetKey, activeOperation);
+      if (applied.applied) applied.safetySnapshotId = restored.data.safetySnapshotId ?? null;
       // Keep the receipt until the refreshed workspace is visible. A failed
       // post-restore reload must not turn the next click into a second restore.
       if (applied.applied) restoreOperationStore.complete(targetKey, sourceKey, restored.operationId);
@@ -3222,6 +3260,12 @@ function renderWorkspaceSnapshots() {
     const heading = document.createElement("div");
     const title = document.createElement("h5");
     title.textContent = formatDate(snapshot.createdAt) || snapshot.createdAt;
+    if (snapshot.kind === "pre-restore") {
+      const kind = document.createElement("span");
+      kind.className = "account-snapshot-kind";
+      kind.textContent = t("account.snapshotKindPreRestore");
+      title.append(" ", kind);
+    }
     const meta = document.createElement("p");
     meta.textContent = t("account.snapshotItemMeta", {
       pages: formatNumber(snapshot.pages ?? 0),
@@ -3386,6 +3430,7 @@ async function restoreWorkspaceSnapshotClient(snapshotId, { operation = null } =
       );
       if (restored === skippedApiRequest) return { applied: false };
       const applied = await applyRestoredWorkspaceData(restored.data, targetKey, activeOperation);
+      if (applied.applied) applied.safetySnapshotId = restored.data.safetySnapshotId ?? null;
       if (applied.applied) restoreOperationStore.complete(targetKey, sourceKey, restored.operationId);
       return applied;
     })
@@ -3437,7 +3482,9 @@ function renderShell() {
   syncDocumentTitle();
 }
 
-function resetAuthenticationSessionState({ render = true } = {}) {
+// `clearCommentDrafts` is for a person signing out on purpose. Every other
+// reset (a 401, a revoked session) keeps unsent comment text for that account.
+function resetAuthenticationSessionState({ render = true, clearCommentDrafts = false } = {}) {
   workspaceNavigationGeneration += 1;
   cancelPendingPageRead();
   authenticationSessionGeneration += 1;
@@ -3467,7 +3514,8 @@ function resetAuthenticationSessionState({ render = true } = {}) {
   pendingBlockMoveTasks.clear();
   pendingPageDeleteTasks.clear();
   pendingAttachmentCreateTasks.clear();
-  clearPageCommentDrafts();
+  if (clearCommentDrafts) clearPageCommentDrafts();
+  else retainPageCommentDraftsAcrossSignIn();
   pageModeMutationFences.clear();
   pageWriteOutcomeFences.clear();
   discardNavigationPreferenceSaves();
@@ -3799,7 +3847,8 @@ async function revokeActiveSession(sessionId) {
       const data = await api(`/api/auth/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
       if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) return;
       if (data?.currentSession) {
-        resetAuthenticationSessionState();
+        // Ending this session from the session list is signing out on purpose.
+        resetAuthenticationSessionState({ clearCommentDrafts: true });
         setStatus(t("status.loggedOut"));
         return;
       }
@@ -5384,6 +5433,7 @@ async function completeAuthenticatedLogin(data) {
   resetAuthenticationSessionState({ render: false });
   setAuthenticated(true);
   state.user = data.user;
+  adoptPageCommentDraftsForUser(data.user?.id ?? null);
   const targetKey = getAccountAvatarTargetKey(state.user);
   if (!targetKey || getUserWorkspaceGeneration(state.user) === null) {
     const error = new Error(t("errors.invalidResponse"));
@@ -5430,7 +5480,7 @@ async function logout() {
       const headers = new Headers();
       await fetch("/api/auth/logout", { method: "POST", credentials: "include", headers });
     } finally {
-      resetAuthenticationSessionState();
+      resetAuthenticationSessionState({ clearCommentDrafts: true });
       setStatus(t("status.loggedOut"));
     }
   });
@@ -8208,6 +8258,17 @@ function syncReadModeTodoToggle(row) {
   rendered.setAttribute("aria-label", t("block.completed"));
 }
 
+function syncReadModeTodoToggles() {
+  const toggles = elements.blockList.querySelectorAll(".read-mode-todo-toggle");
+  if (!toggles.length) return;
+  const allowed = canToggleTodoInReadMode();
+  for (const toggle of toggles) {
+    const source = getBlockRow(toggle)?.querySelector('input[name="checked"]');
+    if (source) toggle.checked = source.checked;
+    toggle.disabled = !allowed;
+  }
+}
+
 async function toggleTodoFromReadMode(rendered) {
   const row = getBlockRow(rendered);
   const source = row?.querySelector('input[name="checked"]');
@@ -8234,6 +8295,40 @@ async function toggleTodoFromReadMode(rendered) {
   }
 }
 
+// A tick saved from read mode can fail (offline, server error). The page stays
+// in read mode, where the normal flush and "Retry save" refuse to write, so
+// without this the tick would sit unsaved until the person started editing.
+function getPendingReadModeTodoRows() {
+  if (state.pageMode !== pageModes.READ || isCollaborativePage()) return [];
+  return [...elements.blockList.querySelectorAll(
+    '.editor-block-row[data-block-type="TODO"].is-dirty, .editor-block-row[data-block-type="TODO"].save-error'
+  )].filter((row) => row.dataset.blockId && row.dataset.deleting !== "true" && row.dataset.draftConflict !== "true");
+}
+
+function hasPendingReadModeTodoSaves() {
+  return getPendingReadModeTodoRows().length > 0;
+}
+
+async function retryReadModeTodoSaves() {
+  const rows = getPendingReadModeTodoRows();
+  if (!rows.length || !canToggleTodoInReadMode()) return false;
+  readModeTodoWriteDepth += 1;
+  try {
+    for (const row of rows) {
+      const current = findRenderedBlockRow(row.dataset.blockId);
+      if (current) await saveBlockRow(current, { quiet: true });
+    }
+  } finally {
+    readModeTodoWriteDepth -= 1;
+    for (const row of rows) {
+      const current = findRenderedBlockRow(row.dataset.blockId);
+      if (current) syncReadModeTodoToggle(current);
+    }
+    syncBeforeUnloadProtection();
+  }
+  return true;
+}
+
 function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageInteractionLocked()) {
   if (!row) return;
   row.classList.toggle("is-read-only", readOnly);
@@ -8244,6 +8339,10 @@ function syncBlockReadOnlyState(row, readOnly = isPageReadOnly() || isPageIntera
   // reshuffle focus order under the writer.
   const removeFieldTabStops = readOnly && isPageReadOnly();
   for (const control of row.querySelectorAll("input, textarea, select, button")) {
+    // The read view's to-do checkbox is enabled by syncReadModeTodoToggle
+    // exactly when ticking is allowed. Disabling it here with every other
+    // read-mode control made ticking to-dos while reading impossible.
+    if (control.classList.contains("read-mode-todo-toggle")) continue;
     setControlReadOnlyState(control, readOnly);
     const isTextField = control instanceof HTMLTextAreaElement
       || (control instanceof HTMLInputElement && !readModeDisabledInputTypes.has(control.type));
@@ -8375,6 +8474,11 @@ function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
   elements.pageModeBadgeIcon.textContent = readOnly ? "✎" : "✓";
   elements.pageModeBadgeLabel.textContent = t(readOnly ? "page.startEditing" : "page.finishEditing");
   syncPageCoverControls();
+
+  // While reading, controlsReadOnly stays true as load and mode-change locks
+  // come and go, so the walk below never reruns when ticking becomes allowed.
+  // Refresh just the to-do checkboxes on every pass; there are few of them.
+  syncReadModeTodoToggles();
 
   // syncPageModeUi() is also the cheap status/lock refresh path. Only walk every
   // block control when the effective interaction state or rendered content has
@@ -11554,7 +11658,9 @@ function getCollaborationBlockSignature(blocks) {
   return JSON.stringify(values);
 }
 
-function captureCollaborationEditorFocus() {
+// `previousBlocks` is the shared state the editor showed before a peer's
+// update; the focused field's text beyond it is this editor's own in-flight input.
+function captureCollaborationEditorFocus(previousBlocks = null) {
   const active = document.activeElement;
   if (!(active instanceof HTMLElement)) return null;
   if (active === elements.pageTitle) {
@@ -11573,7 +11679,11 @@ function captureCollaborationEditorFocus() {
     blockId: row.dataset.blockId,
     controlIndex: index,
     start: "selectionStart" in active ? active.selectionStart : null,
-    end: "selectionEnd" in active ? active.selectionEnd : null
+    end: "selectionEnd" in active ? active.selectionEnd : null,
+    value: typeof active.value === "string" ? active.value : null,
+    textBase: active.name === "markdown" && previousBlocks
+      ? (flattenBlocks(previousBlocks).find((block) => block.id === row.dataset.blockId)?.markdown ?? null)
+      : null
   };
 }
 
@@ -11586,6 +11696,24 @@ function restoreCollaborationEditorFocus(focus) {
     control = [...(row?.querySelectorAll("input, textarea, select, button, summary") ?? [])][focus.controlIndex] ?? null;
   }
   if (!(control instanceof HTMLElement) || control.disabled) return;
+  // The rebuilt field shows the shared text, which does not yet contain
+  // keystrokes still waiting for durable storage. Keep them on screen, placed
+  // relative to the peer's change, and treat that text as this editor's base.
+  if (
+    typeof focus.textBase === "string"
+    && typeof focus.value === "string"
+    && control instanceof HTMLTextAreaElement
+    && control.name === "markdown"
+    && focus.value !== focus.textBase
+  ) {
+    const merged = rebaseTextEdit(focus.textBase, control.value, focus.value);
+    if (merged !== control.value) {
+      control.value = merged;
+      autoGrowTextarea(control);
+    }
+    const row = getBlockRow(control);
+    if (row) collaborationTextBases.set(row, merged);
+  }
   control.focus({ preventScroll: true });
   if (
     Number.isInteger(focus.start) &&
@@ -11594,7 +11722,12 @@ function restoreCollaborationEditorFocus(focus) {
     typeof control.setSelectionRange === "function"
   ) {
     const length = typeof control.value === "string" ? control.value.length : 0;
-    control.setSelectionRange(Math.min(focus.start, length), Math.min(focus.end, length));
+    // A peer's text before the caret moves it along, so the next keystroke
+    // lands where the person was typing rather than at the old index.
+    const moved = typeof focus.value === "string" && typeof control.value === "string" && focus.value !== control.value;
+    const start = moved ? transformTextCaret(focus.value, control.value, focus.start) : focus.start;
+    const end = moved ? transformTextCaret(focus.value, control.value, focus.end) : focus.end;
+    control.setSelectionRange(Math.min(start, length), Math.min(end, length));
   }
 }
 
@@ -11682,17 +11815,17 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
     return;
   }
 
-  const focus = captureCollaborationEditorFocus();
+  const focus = captureCollaborationEditorFocus(previousBlocks);
   state.applyingCollaborationSnapshot = true;
   try {
     renderSelectedPage();
   } finally {
     state.applyingCollaborationSnapshot = false;
   }
-  requestAnimationFrame(() => {
-    restoreCollaborationEditorFocus(focus);
-    renderCollaborationPresence();
-  });
+  // Put the caret back in the same task. Waiting for the next frame left the
+  // page without a focused field in between, and keys pressed then were lost.
+  restoreCollaborationEditorFocus(focus);
+  requestAnimationFrame(() => renderCollaborationPresence());
 }
 
 function applyCollaborationMaterialization(result) {
@@ -12093,7 +12226,9 @@ function getPageCommentEditDraft() {
 }
 
 function hasUnsentPageCommentDraft() {
-  if (!state.user) return false;
+  // Drafts kept through an ended session are only in memory; closing the tab
+  // on the sign-in screen would still lose them.
+  if (!state.user) return pageCommentDrafts.size > 0;
   return Boolean(
     elements.pageCommentsInput.value.trim()
       || getPageCommentEditDraft()
@@ -12106,12 +12241,43 @@ function stashPageCommentDraft() {
   if (!pageId) return;
   const body = elements.pageCommentsInput.value;
   const edit = getPageCommentEditDraft();
-  if (body.trim() || edit) pageCommentDrafts.set(pageId, { body, edit });
-  else pageCommentDrafts.delete(pageId);
+  if (body.trim() || edit) {
+    if (!state.user?.id) return;
+    if (pageCommentDraftOwnerId !== state.user.id) {
+      pageCommentDrafts.clear();
+      pageCommentDraftOwnerId = state.user.id;
+    }
+    pageCommentDrafts.set(pageId, { body, edit });
+  } else {
+    pageCommentDrafts.delete(pageId);
+  }
 }
 
 function clearPageCommentDrafts() {
   pageCommentDrafts.clear();
+  pageCommentDraftOwnerId = null;
+  clearPageCommentEditor();
+}
+
+// The session ended without the person signing out. Keep what they were
+// typing, in memory and tied to their account, and clear only the editor.
+function retainPageCommentDraftsAcrossSignIn() {
+  stashPageCommentDraft();
+  if (!pageCommentDrafts.size) pageCommentDraftOwnerId = null;
+  clearPageCommentEditor();
+}
+
+// Called once the signed-in account is known. Drafts kept for a different
+// account are dropped before any page can show them.
+function adoptPageCommentDraftsForUser(userId) {
+  if (pageCommentDraftOwnerId && pageCommentDraftOwnerId !== userId) {
+    pageCommentDrafts.clear();
+    pageCommentDraftOwnerId = null;
+    syncBeforeUnloadProtection();
+  }
+}
+
+function clearPageCommentEditor() {
   state.pageComments.pageId = null;
   state.pageComments.editingId = null;
   state.pageComments.editingDraft = "";
@@ -16061,7 +16227,21 @@ async function removeBlockForEditorHistory(meta) {
   if (!current) return { status: "stale" };
   const snapshot = captureBlockDeletionUndo(current.row, blockId);
   if (!snapshot) return { status: "stale" };
-  if (meta.snapshot && (snapshot.markdown !== meta.snapshot.markdown || snapshot.type !== meta.snapshot.type)) {
+  // Undoing a menu insert or redoing a removal may only remove a block that
+  // still holds exactly what the step expects. A step without a snapshot is
+  // an insert: the block came in empty, so it must still be empty. Text typed
+  // there by a collaborator (whose edit drops this tab's text steps but not
+  // the structural one) or text whose own step went stale is never removed.
+  const expected = meta.snapshot ?? {
+    type: meta.insertedType ?? snapshot.type,
+    markdown: "",
+    metadata: Object.prototype.hasOwnProperty.call(meta, "insertedMetadata") ? meta.insertedMetadata : snapshot.metadata
+  };
+  if (
+    snapshot.markdown !== expected.markdown
+    || snapshot.type !== expected.type
+    || !jsonValuesMatch(snapshot.metadata ?? null, expected.metadata ?? null)
+  ) {
     return { status: "stale" };
   }
   await deleteEmptyBlock(current.row, { announce: false });
@@ -17067,7 +17247,7 @@ function markBlockDirty(row, { allowConflictPrompt = true } = {}) {
         ...historyPayload,
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
         sortOrder: Number(current.sortOrder ?? 0)
-      });
+      }, { baseMarkdown: takeCollaborationTextBase(row, current, historyPayload) });
     } catch (error) {
       rejectLocalBlockMutation(row, error);
       return false;
@@ -17301,7 +17481,7 @@ async function saveBlockRow(row, options = {}) {
         ...payload,
         parentBlockId: normalizeParentBlockId(row.dataset.parentBlockId),
         sortOrder: Number(current.sortOrder ?? 0)
-      });
+      }, { baseMarkdown: takeCollaborationTextBase(row, current, payload) });
       // Direct saves and input-driven saves must share one completion owner.
       // A session/page fence alone cannot distinguish two edits in this session.
       collaborationBlockMutationPromises.set(blockId, mutation);
@@ -22179,9 +22359,13 @@ elements.accountDataImport.addEventListener("click", async () => {
       shares: formatNumber(counts.shares ?? 0),
       pageVersions: formatNumber(counts.pageVersions ?? 0),
       navigationCollapsedPages: formatNumber(counts.navigationCollapsedPages ?? 0)
-    });
+    }) + (result.safetySnapshotId ? ` ${t("account.safetySnapshotSaved")}` : "");
     setAccountMessage(message);
     setStatus(message);
+    if (result.safetySnapshotId && state.snapshots.loaded) {
+      state.snapshots.loaded = false;
+      void loadWorkspaceSnapshots({ force: true }).catch(() => undefined);
+    }
   } catch (error) {
     if (isCurrentAccountDataOperation(operation)) setAccountMessage(error.message, true);
   } finally {
@@ -22274,7 +22458,7 @@ elements.accountSnapshotList.addEventListener("click", async (event) => {
         blocks: formatNumber(counts.blocks ?? 0),
         attachments: formatNumber(counts.attachments ?? 0),
         pageVersions: formatNumber(counts.pageVersions ?? 0)
-      });
+      }) + (result.safetySnapshotId ? ` ${t("account.safetySnapshotSaved")}` : "");
       setAccountMessage(message);
       setStatus(message);
       return;
@@ -24152,15 +24336,40 @@ document.addEventListener("keydown", (event) => {
   // The browser's own save is suppressed either way, so say why nothing was
   // saved instead of swallowing the key in silence.
   if (isPageReadOnly()) {
+    if (hasPendingReadModeTodoSaves()) {
+      void saveReadModeTodosNow();
+      return;
+    }
     reportReadOnlyBlocked();
     return;
   }
   void saveCurrentPageNow();
 });
 
+// Ctrl/Cmd+S and "Retry save" while reading resend only the to-do ticks made
+// in read mode; nothing else on the page can be pending there.
+async function saveReadModeTodosNow() {
+  const pageId = state.selectedPage?.id;
+  try {
+    const retried = await retryReadModeTodoSaves();
+    if (!retried) {
+      reportReadOnlyBlocked();
+      return;
+    }
+    if (state.selectedPage?.id !== pageId) return;
+    if (!hasPendingReadModeTodoSaves() && !hasPendingPageEdits()) setStatus(t("status.pageSaved"));
+  } catch (error) {
+    if (state.selectedPage?.id === pageId) setStatus(error.message, true);
+  }
+}
+
 elements.savePageButton.addEventListener("click", async () => {
   if (elements.savePageButton.dataset.saveState === "saved" && !hasPendingPageEdits()) {
     setStatus(t("status.pageSaved"));
+    return;
+  }
+  if (isPageReadOnly() && hasPendingReadModeTodoSaves()) {
+    await saveReadModeTodosNow();
     return;
   }
   if (!requireWritablePage()) return;
@@ -24783,6 +24992,10 @@ elements.blockList.addEventListener("beforeinput", (event) => {
 });
 
 elements.blockList.addEventListener("input", (event) => {
+  // A checkbox fires input before change. Restoring the read-only row here
+  // rebuilt it, so the change event that saves a read-mode tick never fired
+  // and every tick was silently undone. The change handler owns this control.
+  if (event.target.closest?.(".read-mode-todo-toggle")) return;
   if (!requireWritablePage({ announce: false })) {
     const row = getBlockRow(event.target);
     if (row) restoreBlockRowFromDurableState(row);
@@ -25600,6 +25813,13 @@ elements.blockList.addEventListener("keydown", async (event) => {
 });
 
 elements.blockList.addEventListener("focusout", (event) => {
+  // Applying a peer's update re-renders every row. The browser fires focusout
+  // on the focused field while it is still attached, holding the text from
+  // before that update. Saving it here would write the old text back over the
+  // peer's change: with both carets in one block, every other keystroke the
+  // peer typed was lost and the two editors stopped converging. The field is
+  // replaced and its focus restored, so the person has not left it.
+  if (state.applyingCollaborationSnapshot) return;
   if (!requireWritablePage({ announce: false })) return;
   const toggleTitle = event.target.closest(".toggle-title-input");
   if (toggleTitle) {
@@ -25667,6 +25887,9 @@ elements.blockList.addEventListener("click", async (event) => {
   const renderedToggleSummary = event.target.closest(".rendered-toggle-summary");
   if (isPageReadOnly() && !downloadButton) {
     if (renderedToggleSummary) return;
+    // Ticking a to-do is allowed while reading; its change handler reports
+    // anything that blocks it, so do not also call the page read-only here.
+    if (event.target.closest(".read-mode-todo-toggle")) return;
     if (event.target.closest("button, summary, input, textarea, select")) reportReadOnlyBlocked();
     return;
   }
@@ -25926,7 +26149,16 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         if (row.dataset.draftConflict === "true") return;
       }
       const inserted = await insertBlockRelative(row, placement);
-      if (inserted?.block?.id) recordStructuralEditorHistory({ op: "create", blockId: inserted.block.id, snapshot: null });
+      if (inserted?.block?.id) {
+        const insertedBlock = getBlockById(inserted.block.id) ?? inserted.block;
+        recordStructuralEditorHistory({
+          op: "create",
+          blockId: inserted.block.id,
+          snapshot: null,
+          insertedType: insertedBlock.type ?? "MARKDOWN",
+          insertedMetadata: getBlockMetadata(insertedBlock) ?? null
+        });
+      }
       return;
     }
 
@@ -26078,6 +26310,10 @@ function handleRecoveryStorageExternalChange(key) {
 }
 
 indexedDbRecoveryStorage?.subscribe(({ key }) => handleRecoveryStorageExternalChange(key));
+// A save can finish while its recovery acknowledgement is still being written.
+// The indicator then reads "Saving…" and the tab keeps its leave warning; nothing
+// else re-checks once that write lands, so re-check when the queue drains.
+indexedDbRecoveryStorage?.onIdle?.(() => syncBeforeUnloadProtection());
 
 window.addEventListener("storage", (event) => {
   if (event.key?.startsWith(`${pageTransitionStoragePrefix}:`)) {

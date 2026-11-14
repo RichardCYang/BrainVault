@@ -141,7 +141,12 @@ describe("BV-2026-003 snapshot creation", () => {
     const snapshot = await createWorkspaceSnapshot(userId, scope);
     await restoreWorkspaceSnapshot(userId, snapshot.id, scope);
     expect(mocks.import).toHaveBeenCalledWith(userId, path.join(directory, `${snapshot.id}.zip`), scope, expect.any(Function),
-      { enforceConfiguredSizeLimits: false, admission: expect.objectContaining({ userId, sourceKey: `snapshot:${snapshot.id}` }) });
+      {
+        enforceConfiguredSizeLimits: false,
+        admission: expect.objectContaining({ userId, sourceKey: `snapshot:${snapshot.id}` }),
+        // The pre-restore safety snapshot runs inside the import, after validation.
+        beforeReplace: expect.any(Function)
+      });
   });
 });
 

@@ -12,6 +12,13 @@ import {
   writeUserDataBackup
 } from "../lib/data-transfer.js";
 import { requireRestoreOperationId, type DataRestoreAdmission } from "../lib/data-restore-operation.js";
+import {
+  authScopeAfterRestore,
+  createPreRestoreSafetySnapshot,
+  pruneAutomaticSnapshots,
+  restoreSafetySnapshotSkipHeader,
+  wantsRestoreWithoutSafetySnapshot
+} from "../lib/workspace-snapshots.js";
 import { createId } from "../lib/id.js";
 import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
@@ -147,8 +154,19 @@ dataRouter.post(
 
       const admission = restoreAdmissions.get(req);
       if (!admission) throw new Error("Restore admission is unavailable");
-      const result = await importUserDataBackup(user.id, uploadPath, authScope, undefined, { admission });
-      res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing });
+      let safetyCopy: Awaited<ReturnType<typeof createPreRestoreSafetySnapshot>> | null = null;
+      const safetySnapshot = !wantsRestoreWithoutSafetySnapshot(req.header(restoreSafetySnapshotSkipHeader));
+      const result = await importUserDataBackup(user.id, uploadPath, authScope, undefined, {
+        admission,
+        beforeReplace: safetySnapshot
+          ? async () => { safetyCopy = await createPreRestoreSafetySnapshot(user.id, authScope); }
+          : undefined
+      });
+      const safetySnapshotId = (safetyCopy as { id: string } | null)?.id ?? null;
+      if (safetySnapshotId) {
+        await pruneAutomaticSnapshots(user.id, authScopeAfterRestore(authScope, result.user), [safetySnapshotId]);
+      }
+      res.json({ user: toPublicUser(result.user), counts: result.counts, sharing: result.sharing, safetySnapshotId });
     } catch (error) {
       next(error);
     } finally {

@@ -180,6 +180,9 @@ function createHarness() {
   vm.runInContext([
     sourceBetween("function persistPageTitleDraftValue(", "function confirmRecoveredDraftOverwrite("),
     sourceBetween("const pageTitleSaveQueue = createLatestWriteQueue", "async function downloadAttachment("),
+    // Collaborative block saves send the text each editor last showed as the
+    // base of the edit (see takeCollaborationTextBase).
+    sourceBetween("const collaborationTextBases = new WeakMap();", "\nimport {"),
     sourceBetween("function isCurrentCollaborationMutationContext(", "function cancelScheduledBlockSave("),
     sourceBetween("function cancelScheduledBlockSave(", "function restoreBlockRowFromDurableState("),
     sourceBetween("function markBlockDirty(", "function getBlockSaveQueue("),

@@ -47,6 +47,19 @@ const store = vi.hoisted(() => ({
   execute: vi.fn()
 }));
 
+// Restores first save an automatic pre-restore snapshot. That path has its own
+// tests; here it would consume the scripted transaction hooks meant for the
+// restore itself, so it is reduced to a recorded call.
+const safetySnapshot = vi.hoisted(() => ({
+  create: vi.fn(async () => ({ id: `snapshot_${"0".repeat(32)}` })),
+  prune: vi.fn(async () => undefined)
+}));
+vi.mock("../src/lib/workspace-snapshots.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/workspace-snapshots.js")>()),
+  createPreRestoreSafetySnapshot: safetySnapshot.create,
+  pruneAutomaticSnapshots: safetySnapshot.prune
+}));
+
 vi.mock("../src/lib/db.js", () => ({
   db: { query: store.query, queryOne: store.queryOne, execute: store.execute },
   transaction: async (fn: (client: unknown) => unknown) => {

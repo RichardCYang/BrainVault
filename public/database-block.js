@@ -381,6 +381,62 @@ function normalizePropertyValue(property, value, validOptionIds = null) {
   return stringValue(value, "", databaseLimits.textLength);
 }
 
+function hasDatabaseCellContent(value) {
+  if (value === null || value === undefined || value === false) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+}
+
+// Carries a cell into a new property type without dropping what can be kept:
+// option ids become their names in text, a single choice becomes a one-item
+// multi-select (and back), and numbers become their text.
+function convertDatabaseCellValue(previous, nextProperty, value) {
+  const optionNames = new Map((previous.options ?? []).map((option) => [option.id, option.name]));
+  const wasChoice = previous.type === "select" || previous.type === "multi_select";
+  const choiceIds = previous.type === "select"
+    ? (typeof value === "string" && value ? [value] : [])
+    : previous.type === "multi_select" && Array.isArray(value) ? value.filter((id) => typeof id === "string") : [];
+  let carried = value;
+  if (wasChoice && ["title", "text", "url"].includes(nextProperty.type)) {
+    carried = choiceIds.map((id) => optionNames.get(id)).filter(Boolean).join(", ");
+  } else if (previous.type === "select" && nextProperty.type === "multi_select") {
+    carried = choiceIds;
+  } else if (previous.type === "multi_select" && nextProperty.type === "select") {
+    carried = choiceIds[0] ?? "";
+  } else if (typeof value === "number" && nextProperty.type !== "number") {
+    carried = Number.isFinite(value) ? String(value) : "";
+  } else if (typeof value === "string" && nextProperty.type === "number") {
+    // Number("  ") is 0; blank text is no number at all.
+    carried = value.trim() ? value.trim() : null;
+  }
+  return normalizePropertyValue(nextProperty, carried);
+}
+
+/**
+ * Works out a property type change before it is applied: the converted value
+ * for every row (in row order) and how many rows would lose a value that
+ * cannot be represented in the new type.
+ */
+export function planDatabasePropertyTypeChange(database, property, nextTypeValue) {
+  const nextType = normalizePropertyType(nextTypeValue);
+  const keepsOptions = (property.type === "select" || property.type === "multi_select")
+    && (nextType === "select" || nextType === "multi_select");
+  const nextProperty = {
+    ...property,
+    type: nextType,
+    options: keepsOptions ? property.options.map((option) => ({ ...option })) : []
+  };
+  let lostCount = 0;
+  const values = (database.rows ?? []).map((dataRow) => {
+    const before = dataRow.values?.[property.id];
+    const after = nextType === property.type ? before : convertDatabaseCellValue(property, nextProperty, before);
+    if (hasDatabaseCellContent(before) && !hasDatabaseCellContent(after)) lostCount += 1;
+    return after;
+  });
+  return { nextProperty, values, lostCount };
+}
+
 function readSourcePropertyValue(sourceValues, descriptor, propertyAliases) {
   // Aliases and schema are fixed for this normalization. Resolve their ownership
   // once per property, not once per cell; own-value precedence still applies to
@@ -1234,12 +1290,38 @@ function createPropertyManager(editor, row, database, onDirty, replaceEditor) {
     );
     type.disabled = property.type === "title";
     type.addEventListener("change", () => {
-      property.type = normalizePropertyType(type.value);
-      if (!["select", "multi_select"].includes(property.type)) property.options = [];
-      database.rows.forEach((dataRow) => {
-        dataRow.values[property.id] = normalizePropertyValue(property, dataRow.values[property.id]);
+      const previousType = property.type;
+      const plan = planDatabasePropertyTypeChange(database, property, type.value);
+      const apply = () => {
+        // Re-plan against the rows as they are now; the dialog is async.
+        const current = planDatabasePropertyTypeChange(database, property, type.value);
+        property.type = current.nextProperty.type;
+        property.options = current.nextProperty.options;
+        database.rows.forEach((dataRow, index) => {
+          dataRow.values[property.id] = current.values[index];
+        });
+        replaceEditor({ openProperties: true, focusPropertyId: property.id });
+      };
+      // Values that cannot be carried into the new type are cleared for every
+      // row at once, and switching back cannot bring them back. Ask first.
+      if (plan.lostCount === 0) {
+        apply();
+        return;
+      }
+      void showConfirmDialog({
+        message: t("database.confirmPropertyTypeChange", {
+          property: property.name || propertyTypeLabel(previousType),
+          count: formatNumber(plan.lostCount)
+        }),
+        confirmLabel: t("database.changePropertyType"),
+        danger: true
+      }).then((confirmed) => {
+        if (confirmed && editor.isConnected && property.type === previousType) {
+          apply();
+          return;
+        }
+        if (type.isConnected) type.value = property.type;
       });
-      replaceEditor({ openProperties: true, focusPropertyId: property.id });
     });
 
     item.append(name, type);
@@ -2056,15 +2138,19 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
       replaceEditor({ focusRowId: dataRow.id });
     } else if (action === "database-delete-row") {
       const rowId = button.dataset.rowId;
-      // A row with nothing typed into it loses nothing, so it goes at once, as
-      // blank blocks and Kanban cards do. Select and checkbox values are one
-      // click to set and are prefilled when a row is added inside a group.
+      // A row with nothing set in it loses nothing, so it goes at once, as
+      // blank blocks and Kanban cards do. Only the select or checkbox a board
+      // groups by is prefilled when a row is added inside a group; any other
+      // chosen option or ticked box is content the person set.
       const dataRow = database.rows.find((candidate) => candidate.id === rowId);
+      const prefilledPropertyIds = new Set(
+        database.views.map((view) => view.groupPropertyId).filter(Boolean)
+      );
       const isBlankRow = dataRow && database.properties.every((property) => {
-        if (property.type === "select" || property.type === "checkbox") return true;
-        const value = dataRow.values?.[property.id];
-        if (Array.isArray(value)) return value.length === 0;
-        return value === null || value === undefined || !String(value).trim();
+        if (prefilledPropertyIds.has(property.id) && (property.type === "select" || property.type === "checkbox")) {
+          return true;
+        }
+        return !hasDatabaseCellContent(dataRow.values?.[property.id]);
       });
       if (isBlankRow) {
         database.rows = database.rows.filter((candidate) => candidate.id !== rowId);

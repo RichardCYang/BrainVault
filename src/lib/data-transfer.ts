@@ -3761,7 +3761,14 @@ export async function importUserDataBackup(
   zipPath: string,
   authScope: DataRestoreAuthScope,
   commitBoundaryGuard?: DataRestoreCommitBoundaryGuard,
-  options: DataTransferOptions & { admission?: DataRestoreAdmission } = {}
+  options: DataTransferOptions & {
+    admission?: DataRestoreAdmission;
+    /**
+     * Runs after the backup was fully read and checked, before the workspace is
+     * replaced, and only when this operation has not committed already.
+     */
+    beforeReplace?: () => Promise<void>;
+  } = {}
 ) {
   const admission = options.admission ?? await admitDataRestore(userId, authScope, createId("restore"));
   if (admission.userId !== userId) throw new Error("Restore admission belongs to another account");
@@ -4032,6 +4039,9 @@ export async function importUserDataBackup(
     await writeRestoreGenerationMarker(stagedAttachmentDir, operationId);
     if (restoresCustomIcons) await writeRestoreGenerationMarker(stagedCustomIconDir, operationId);
     await syncPath(operationRoot);
+    // A malformed backup has been rejected by now, so this does not save a
+    // safety snapshot for an import that could never have run.
+    await options.beforeReplace?.();
 
     let movedOldAttachments = false;
     let movedOldCustomIcons = false;

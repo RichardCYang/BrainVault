@@ -88,6 +88,67 @@ function replaceYText(text, value) {
   if (insertValue) text.insert(prefix, insertValue);
 }
 
+// The single changed range between two strings: `base.slice(start, end)`
+// became `insert`. Typing, deleting, and pasting are each one such range.
+export function diffTextRange(base, next) {
+  const before = String(base ?? "");
+  const after = String(next ?? "");
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start += 1;
+  let suffix = 0;
+  while (
+    suffix < before.length - start
+    && suffix < after.length - start
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) suffix += 1;
+  return { start, end: before.length - suffix, insert: after.slice(start, after.length - suffix) };
+}
+
+/**
+ * Re-applies a local text edit made against `base` onto `current`, the shared
+ * text after peers changed it. A plain diff of `next` against `current` would
+ * read every character a peer added since `base` as deleted by this edit.
+ * Only base characters the peer left alone can be deleted; the local insert
+ * lands at the same spot relative to the peer's change.
+ */
+export function rebaseTextEdit(base, current, next) {
+  const original = String(base ?? "");
+  const live = String(current ?? "");
+  const edited = String(next ?? "");
+  if (edited === original) return live;
+  if (live === original) return edited;
+  const local = diffTextRange(original, edited);
+  const remote = diffTextRange(original, live);
+  const shift = remote.insert.length - (remote.end - remote.start);
+  // [from, to) ranges in live coordinates, applied from the end backwards.
+  const deletions = [];
+  if (local.start < remote.start) deletions.push([local.start, Math.min(local.end, remote.start)]);
+  if (local.end > remote.end) deletions.push([Math.max(local.start, remote.end) + shift, local.end + shift]);
+  const insertAt = local.start <= remote.start
+    ? local.start
+    : local.start >= remote.end
+      ? local.start + shift
+      : remote.start + remote.insert.length;
+  let result = live;
+  for (const [from, to] of deletions.filter(([from, to]) => to > from).sort((left, right) => right[0] - left[0])) {
+    result = result.slice(0, from) + result.slice(to);
+  }
+  const removedBeforeInsert = deletions
+    .filter(([from, to]) => to > from && to <= insertAt)
+    .reduce((total, [from, to]) => total + (to - from), 0);
+  const at = Math.max(0, Math.min(result.length, insertAt - removedBeforeInsert));
+  return result.slice(0, at) + local.insert + result.slice(at);
+}
+
+/** Moves a caret index across a change from `before` to `after`. */
+export function transformTextCaret(before, after, caret) {
+  if (!Number.isInteger(caret)) return caret;
+  const change = diffTextRange(before, after);
+  if (caret <= change.start) return caret;
+  if (caret >= change.end) return caret + change.insert.length - (change.end - change.start);
+  return change.start + change.insert.length;
+}
+
 function isYType(Y, value) {
   return value instanceof Y.Text || value instanceof Y.Array || value instanceof Y.Map;
 }
@@ -914,24 +975,35 @@ class PageCollaborationSession {
     });
   }
 
-  upsertBlock(block, { allowDisconnected = false, beforeCommit = null } = {}) {
+  // `baseMarkdown` is the text the editor showed when this edit was made. The
+  // mutation runs later (after durable recovery storage), and a peer's change
+  // may land in between; the edit is then re-applied on top of it instead of
+  // overwriting it.
+  upsertBlock(block, { allowDisconnected = false, beforeCommit = null, baseMarkdown = null } = {}) {
     const normalized = normalizeBlock(block);
+    let committed = normalized;
     return this.commitLocalMutation(({ blocks, deletedAttachments }) => {
       let map = blocks.get(normalized.id);
       if (!(map instanceof this.Y.Map)) {
         map = new this.Y.Map();
         blocks.set(normalized.id, map);
       }
+      const liveText = map.get("markdown");
+      let markdown = normalized.markdown;
+      if (typeof baseMarkdown === "string" && liveText instanceof this.Y.Text) {
+        markdown = requireBlockMarkdownWithinLimit(rebaseTextEdit(baseMarkdown, liveText.toString(), normalized.markdown));
+      }
+      committed = markdown === normalized.markdown ? normalized : { ...normalized, markdown };
       reconcileYMap(this.Y, map, {
         type: normalized.type,
-        markdown: normalized.markdown,
+        markdown,
         checked: normalized.checked,
         parentBlockId: normalized.parentBlockId,
         sortOrder: normalized.sortOrder,
         metadata: normalized.metadata
       });
       if (normalized.type === "ATTACHMENT") deletedAttachments.delete(normalized.id);
-    }, { allowDisconnected, beforeCommit }).then(() => normalized);
+    }, { allowDisconnected, beforeCommit }).then(() => committed);
   }
 
   upsertBlocks(blocks, { allowDisconnected = false, beforeCommit = null } = {}) {
