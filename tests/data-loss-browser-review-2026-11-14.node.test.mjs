@@ -172,11 +172,16 @@ test("turning long text into an AI chat keeps the text instead of cutting it", (
   assert.match(app, /\n  aiChatLimits,\n[^;]*\} from "\.\/ai-chat-block\.js";/);
 });
 
-test("deleting a file or a block too large for history says it cannot come back", () => {
+test("deleting a file or a block too large for history says it cannot come back", async () => {
   const message = functionSource(app, "getBlockDeletionConfirmMessage");
   assert.match(message, /=== "ATTACHMENT"\) \{[\s\S]*t\("confirm\.deleteAttachmentBlock", \{ name \}\)/);
   assert.match(message, /isBlockTooLargeForDeletionHistory\(block\)\) return t\("confirm\.deleteUnrestorableBlock"\)/);
-  assert.match(app, /const deletedBlockHistoryMetadataMaxBytes = 128 \* 1024;/);
+  // The bounds live in public/deletion-history-budget.js since nested blocks
+  // count too (tests/data-loss-review-2026-11-15.test.ts checks the subtree).
+  const budget = await readFile(new URL("../public/deletion-history-budget.js", import.meta.url), "utf8");
+  assert.match(budget, /export const deletedBlockHistoryMetadataMaxBytes = 128 \* 1024;/);
+  assert.match(budget, /export const deletionHistoryEntryMaxBytes = 256 \* 1024;/);
+  assert.match(functionSource(app, "isBlockTooLargeForDeletionHistory"), /isDeletionTooLargeForHistory\(collectBlockSubtree\(block\)\)/);
   assert.match(app, /message: getBlockDeletionConfirmMessage\(row, blockId\)/);
   assert.match(app, /t\("confirm\.deleteIncludesAttachments", \{ count: formatNumber\(subtreeAttachmentCount\) \}\)/);
   assert.match(functionSource(app, "countSubtreeAttachments"), /block\?\.type === "ATTACHMENT"/);

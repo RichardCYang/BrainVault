@@ -8,6 +8,8 @@ export type TableData = {
   rows: string[][];
   /** One stable id per row, parallel to `rows` (see public/table-rows.js). */
   rowIds: string[];
+  /** One stable id per column, parallel to each row's cells. */
+  columnIds: string[];
   headerRow: boolean;
   headerColumn: boolean;
 };
@@ -34,11 +36,25 @@ function uniqueRowId(id: string, used: Set<string>) {
  * peers' merges) is renamed with a suffix so no row is lost.
  */
 export function normalizeTableRowIds(rowCount: number, sourceIds: unknown): string[] {
+  return normalizeTableIds(rowCount, sourceIds, "row");
+}
+
+/**
+ * Mirrors normalizeTableColumnIds in public/table-rows.js. Columns carry ids
+ * the same way rows do (col-0, col-1, ... for tables saved without them), so
+ * deleting a column while a peer edits a cell to its right cannot shift that
+ * peer's row by one cell.
+ */
+export function normalizeTableColumnIds(columnCount: number, sourceIds: unknown): string[] {
+  return normalizeTableIds(columnCount, sourceIds, "col");
+}
+
+function normalizeTableIds(count: number, sourceIds: unknown, prefix: string): string[] {
   const ids: string[] = [];
   const used = new Set<string>();
-  for (let index = 0; index < rowCount; index += 1) {
+  for (let index = 0; index < count; index += 1) {
     const raw = Array.isArray(sourceIds) ? sourceIds[index] : undefined;
-    const id = uniqueRowId(isValidTableRowId(raw) ? raw : `row-${index}`, used);
+    const id = uniqueRowId(isValidTableRowId(raw) ? raw : `${prefix}-${index}`, used);
     used.add(id);
     ids.push(id);
   }
@@ -75,6 +91,7 @@ export function createDefaultTableData(rows = 3, columns = 3): TableData {
   return {
     rows: Array.from({ length: safeRows }, () => Array.from({ length: safeColumns }, () => "")),
     rowIds: normalizeTableRowIds(safeRows, null),
+    columnIds: normalizeTableColumnIds(safeColumns, null),
     headerRow: false,
     headerColumn: false
   };
@@ -108,6 +125,7 @@ export function getTableData(metadata: unknown): TableData {
   return {
     rows: finalRows,
     rowIds: normalizeTableRowIds(finalRows.length, rows.length ? keptIds : null),
+    columnIds: normalizeTableColumnIds(columnCount, source.columnIds),
     headerRow: source.headerRow === true,
     headerColumn: source.headerColumn === true
   };

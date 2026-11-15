@@ -747,6 +747,27 @@ function setShardedSectionRows(manifest: BrainVaultBackup, section: ShardedSecti
  * validated on its own, so peak memory is one shard plus the rows kept, and the
  * total is bounded by the data budget. Older versions have no shards.
  */
+/**
+ * A backup larger than this server can hold in memory at once. The archive is
+ * intact and nothing was replaced; an administrator can restore it after
+ * giving Node.js a larger heap or lowering the export/import concurrency.
+ */
+function dataRestoreMemoryBudgetError(requiredBytes: bigint, budgetBytes: bigint) {
+  const mib = (bytes: bigint) => Number((bytes + 1024n * 1024n - 1n) / (1024n * 1024n));
+  return new ApiError(
+    413,
+    "DATA_RESTORE_MEMORY_BUDGET_EXCEEDED",
+    "The backup is intact, but it holds more data than this server can restore at once. Nothing was replaced.",
+    {
+      reason: "SERVER_MEMORY_BUDGET",
+      requiredMb: mib(requiredBytes),
+      maxMb: mib(budgetBytes),
+      // What decides the budget (see computeBackupDataBudgetBytes).
+      settings: ["NODE_OPTIONS=--max-old-space-size", "DATA_TRANSFER_MAX_DATA_SIZE_MB", "DATA_EXPORT_MAX_CONCURRENT", "DATA_IMPORT_MAX_CONCURRENT"]
+    }
+  );
+}
+
 async function loadBackupShards(
   zipPath: string,
   entryByName: Map<string, Awaited<ReturnType<typeof readZipDirectory>>[number]>,
@@ -756,6 +777,16 @@ async function loadBackupShards(
 ) {
   if (manifest.version < shardedBackupVersion) return;
   const dataBudget = BigInt(backupDataBudgetBytes());
+  // The budget follows this server's heap and concurrency settings, so a
+  // backup made on a larger server can be refused here although it is intact.
+  // Measure it before reading any shard, and say which setting decides it.
+  let requiredBytes = manifestBytes;
+  for (const shard of manifest.shards ?? []) {
+    requiredBytes += entryByName.get(shard.path)?.uncompressedSize ?? 0n;
+  }
+  if (enforceConfiguredSizeLimits && requiredBytes > dataBudget) {
+    throw dataRestoreMemoryBudgetError(requiredBytes, dataBudget);
+  }
   let totalBytes = manifestBytes;
   const collected = new Map<ShardedSection, ShardRows>(shardedSections.map((section) => [section, []]));
   for (const shard of manifest.shards ?? []) {
@@ -764,7 +795,7 @@ async function loadBackupShards(
     if (entry.uncompressedSize > BigInt(dataTransferResourceLimits.maxShardBytes)) invalidBackup(`${shard.path} is too large`);
     totalBytes += entry.uncompressedSize;
     if (enforceConfiguredSizeLimits && totalBytes > dataBudget) {
-      throw new ApiError(413, "DATA_BACKUP_TOO_LARGE", "The backup data exceeds what this server can restore at once");
+      throw dataRestoreMemoryBudgetError(totalBytes, dataBudget);
     }
     let rows: ShardRows;
     try {

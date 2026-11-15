@@ -15,13 +15,16 @@ function deepFreeze(value) {
 function payload(h,type,data,block={metadata:{userMarker:{keep:true},toggleOpen:true,codeLanguage:'js',table:{},kanban:{},bookmark:{},database:{},aiChat:{},timetable:{},gantt:{},accordion:{},treeView:{}}}) {
   return h.buildBlockPayload({dataset:{blockType:type},data,checkbox:{checked:true}},block);
 }
-// Tables now also carry one stable id per row (rowIds, see public/table-rows.js),
+// Tables now also carry one stable id per row and per column (rowIds and
+// columnIds, see public/table-rows.js),
 // which the frozen original did not have. Compare everything else exactly and
 // check the ids separately.
 function withoutRowIds(table) {
   assert.ok(Array.isArray(table.rowIds) && table.rowIds.length===table.rows.length);
   assert.equal(new Set(table.rowIds).size,table.rowIds.length);
-  const {rowIds,...rest}=table;
+  assert.ok(Array.isArray(table.columnIds) && table.columnIds.length===(table.rows[0]?.length??0));
+  assert.equal(new Set(table.columnIds).size,table.columnIds.length);
+  const {rowIds,columnIds,...rest}=table;
   return rest;
 }
 function comparablePayload(kind,value) {

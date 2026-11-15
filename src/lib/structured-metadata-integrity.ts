@@ -300,7 +300,12 @@ function canonicalBookmarkUrl(value: unknown, path: string, baseUrl?: string) {
 function assertTableMetadata(root: MetadataRecord) {
   const table = optionalRecord(root.table, "metadata.table");
   if (!table) return;
-  assertAllowedKeys(table, "metadata.table", ["rows", "rowIds", "headerRow", "headerColumn"]);
+  assertAllowedKeys(table, "metadata.table", ["rows", "rowIds", "columnIds", "headerRow", "headerColumn"]);
+  const columnIds = optionalArray(table.columnIds, "metadata.table.columnIds", tableLimits.columns);
+  columnIds?.forEach((columnId, columnIndex) => {
+    const path = `metadata.table.columnIds[${columnIndex}]`;
+    if (typeof columnId !== "string" || !tableRowIdPattern.test(columnId)) fail(path, "must be a column id");
+  });
   // Tables saved before row ids existed have none; the canonical check below
   // requires one per row once they are present.
   const rowIds = optionalArray(table.rowIds, "metadata.table.rowIds", tableLimits.rows);

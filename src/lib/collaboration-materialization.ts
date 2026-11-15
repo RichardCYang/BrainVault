@@ -372,7 +372,7 @@ function textCutIndex(text: string, limit: number) {
 
 // Values that name or style things rather than hold what someone wrote. A
 // repair renames duplicate ids, so counting them would report a loss.
-const structuralRepairKeys = new Set(["id", "rowIds", "color", "icon", "type", "kind"]);
+const structuralRepairKeys = new Set(["id", "rowIds", "columnIds", "color", "icon", "type", "kind"]);
 
 function countRepairStrings(value: unknown, key: string, counts: Map<string, number>) {
   if (typeof value === "string") {

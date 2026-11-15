@@ -11080,7 +11080,9 @@ const dataLossFollowupTranslations = {
     "account.backupCapacityExceeded": "Your workspace is larger than one backup can hold ({percent}%). Backups, snapshots and the safety copies before a restore or deletion cannot be made until you delete pages or large blocks you no longer need.",
     "account.snapshotHistoryOmitted": "To fit, this snapshot left out its {count} oldest version history entries. All pages, blocks and files are included.",
     "status.collaborationRepairRelocated": "Edits made at the same time went past a limit here, so the text that did not fit was moved into {count} new block(s) right below. Nothing was removed.",
-    "status.pasteSplitSourceChangedKept": "The block changed while the paste was being split, so the first part of the paste was added as its own block right below it. Nothing was lost."
+    "status.pasteSplitSourceChangedKept": "The block changed while the paste was being split, so the first part of the paste was added as its own block right below it. Nothing was lost.",
+    "confirm.deleteIncludesUnrestorable": "Some of these blocks are too large for version history to keep, so once deleted they cannot be brought back.",
+    "errors.DATA_RESTORE_MEMORY_BUDGET_EXCEEDED": "The backup file is intact, but it holds about {requiredMb} MB of data and this server can restore at most {maxMb} MB at once with its current memory settings. Nothing was replaced. Ask the server administrator to give the server more memory (NODE_OPTIONS=--max-old-space-size) or to lower DATA_EXPORT_MAX_CONCURRENT and DATA_IMPORT_MAX_CONCURRENT, then try again."
   },
   "ja": {
     "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "所有者のワークスペースを先にスナップショットとして保存できなかったため、何も削除していません。これらのページの削除は所有者に依頼してください。",
@@ -11092,7 +11094,9 @@ const dataLossFollowupTranslations = {
     "account.backupCapacityExceeded": "ワークスペースが1つのバックアップに収まる大きさを超えています（{percent}%）。不要なページや大きなブロックを削除するまで、バックアップ、スナップショット、復元や削除の前の安全コピーを作れません。",
     "account.snapshotHistoryOmitted": "収めるために、このスナップショットでは古い順にバージョン履歴 {count} 件を省きました。ページ、ブロック、ファイルはすべて含まれています。",
     "status.collaborationRepairRelocated": "同時に行われた編集がここで上限を超えたため、収まらなかったテキストをすぐ下の新しいブロック {count} 個に移しました。何も削除していません。",
-    "status.pasteSplitSourceChangedKept": "貼り付けを分けている間にブロックが変更されたため、貼り付けの最初の部分をすぐ下の別のブロックとして追加しました。何も失われていません。"
+    "status.pasteSplitSourceChangedKept": "貼り付けを分けている間にブロックが変更されたため、貼り付けの最初の部分をすぐ下の別のブロックとして追加しました。何も失われていません。",
+    "confirm.deleteIncludesUnrestorable": "これらのブロックの一部はバージョン履歴に残すには大きすぎるため、削除すると復元できません。",
+    "errors.DATA_RESTORE_MEMORY_BUDGET_EXCEEDED": "バックアップファイルは壊れていませんが、約 {requiredMb} MB のデータがあり、このサーバーの現在のメモリ設定では一度に {maxMb} MB までしか復元できません。何も置き換えていません。サーバー管理者にメモリを増やす（NODE_OPTIONS=--max-old-space-size）か、DATA_EXPORT_MAX_CONCURRENT と DATA_IMPORT_MAX_CONCURRENT を下げるよう依頼してから、もう一度お試しください。"
   },
   "ko": {
     "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "소유자의 워크스페이스를 먼저 스냅샷으로 저장하지 못해서 아무것도 삭제하지 않았습니다. 이 페이지들은 소유자에게 삭제를 부탁해 주세요.",
@@ -11104,7 +11108,9 @@ const dataLossFollowupTranslations = {
     "account.backupCapacityExceeded": "워크스페이스가 백업 하나에 담을 수 있는 크기를 넘었습니다({percent}%). 필요 없는 페이지나 큰 블록을 삭제하기 전까지는 백업, 스냅샷, 그리고 복원이나 삭제 전 안전용 사본을 만들 수 없습니다.",
     "account.snapshotHistoryOmitted": "크기를 맞추느라 이 스냅샷에서는 가장 오래된 버전 기록 {count}개를 뺐습니다. 페이지, 블록, 파일은 모두 들어 있습니다.",
     "status.collaborationRepairRelocated": "동시에 한 편집이 여기서 한도를 넘어서, 들어가지 않은 텍스트를 바로 아래 새 블록 {count}개로 옮겼습니다. 지워진 것은 없습니다.",
-    "status.pasteSplitSourceChangedKept": "붙여넣기를 나누는 동안 블록이 바뀌어서, 붙여넣은 내용의 첫 부분을 바로 아래에 별도 블록으로 넣었습니다. 잃어버린 내용은 없습니다."
+    "status.pasteSplitSourceChangedKept": "붙여넣기를 나누는 동안 블록이 바뀌어서, 붙여넣은 내용의 첫 부분을 바로 아래에 별도 블록으로 넣었습니다. 잃어버린 내용은 없습니다.",
+    "confirm.deleteIncludesUnrestorable": "이 중 일부 블록은 버전 기록에 남기기에는 너무 커서, 삭제하면 복원할 수 없습니다.",
+    "errors.DATA_RESTORE_MEMORY_BUDGET_EXCEEDED": "백업 파일은 손상되지 않았지만 약 {requiredMb}MB의 데이터가 들어 있고, 이 서버는 현재 메모리 설정으로 한 번에 최대 {maxMb}MB까지만 복원할 수 있습니다. 아무것도 바꾸지 않았습니다. 서버 관리자에게 서버 메모리를 늘리거나(NODE_OPTIONS=--max-old-space-size) DATA_EXPORT_MAX_CONCURRENT와 DATA_IMPORT_MAX_CONCURRENT를 낮춰 달라고 요청한 뒤 다시 시도해 주세요."
   },
   "fr": {
     "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "L’espace de travail du propriétaire n’a pas pu être enregistré d’abord en instantané : rien n’a été supprimé. Demandez au propriétaire de supprimer ces pages.",
@@ -11116,7 +11122,9 @@ const dataLossFollowupTranslations = {
     "account.backupCapacityExceeded": "Votre espace de travail dépasse ce qu’une sauvegarde peut contenir ({percent} %). Sauvegardes, instantanés et copies de sécurité avant une restauration ou une suppression sont impossibles tant que vous n’avez pas supprimé des pages ou de gros blocs inutiles.",
     "account.snapshotHistoryOmitted": "Pour tenir, cet instantané a laissé de côté ses {count} entrées d’historique les plus anciennes. Toutes les pages, blocs et fichiers sont inclus.",
     "status.collaborationRepairRelocated": "Des modifications simultanées ont dépassé une limite ici : le texte qui ne tenait pas a été déplacé dans {count} nouveau(x) bloc(s) juste en dessous. Rien n’a été supprimé.",
-    "status.pasteSplitSourceChangedKept": "Le bloc a changé pendant le découpage du collage : la première partie du collage a été ajoutée comme bloc distinct juste en dessous. Rien n’a été perdu."
+    "status.pasteSplitSourceChangedKept": "Le bloc a changé pendant le découpage du collage : la première partie du collage a été ajoutée comme bloc distinct juste en dessous. Rien n’a été perdu.",
+    "confirm.deleteIncludesUnrestorable": "Certains de ces blocs sont trop volumineux pour l’historique des versions : une fois supprimés, ils ne pourront pas être récupérés.",
+    "errors.DATA_RESTORE_MEMORY_BUDGET_EXCEEDED": "Le fichier de sauvegarde est intact, mais il contient environ {requiredMb} Mo de données et ce serveur ne peut en restaurer que {maxMb} Mo à la fois avec ses réglages de mémoire actuels. Rien n’a été remplacé. Demandez à l’administrateur du serveur de lui donner plus de mémoire (NODE_OPTIONS=--max-old-space-size) ou de réduire DATA_EXPORT_MAX_CONCURRENT et DATA_IMPORT_MAX_CONCURRENT, puis réessayez."
   },
   "de": {
     "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "Der Arbeitsbereich des Eigentümers konnte nicht zuerst als Snapshot gespeichert werden, daher wurde nichts gelöscht. Bitte den Eigentümer, diese Seiten zu löschen.",
@@ -11128,7 +11136,9 @@ const dataLossFollowupTranslations = {
     "account.backupCapacityExceeded": "Dein Arbeitsbereich ist größer, als eine Sicherung fassen kann ({percent} %). Sicherungen, Snapshots und Sicherheitskopien vor einer Wiederherstellung oder Löschung sind erst wieder möglich, wenn du nicht mehr benötigte Seiten oder große Blöcke löschst.",
     "account.snapshotHistoryOmitted": "Damit er passt, enthält dieser Snapshot seine {count} ältesten Versionsverlaufseinträge nicht. Alle Seiten, Blöcke und Dateien sind enthalten.",
     "status.collaborationRepairRelocated": "Gleichzeitige Bearbeitungen haben hier ein Limit überschritten, daher wurde der Text, der nicht passte, in {count} neue(n) Block/Blöcke direkt darunter verschoben. Es wurde nichts entfernt.",
-    "status.pasteSplitSourceChangedKept": "Der Block hat sich geändert, während das Einfügen aufgeteilt wurde, daher wurde der erste Teil als eigener Block direkt darunter eingefügt. Nichts ging verloren."
+    "status.pasteSplitSourceChangedKept": "Der Block hat sich geändert, während das Einfügen aufgeteilt wurde, daher wurde der erste Teil als eigener Block direkt darunter eingefügt. Nichts ging verloren.",
+    "confirm.deleteIncludesUnrestorable": "Einige dieser Blöcke sind zu groß für den Versionsverlauf und lassen sich nach dem Löschen nicht wiederherstellen.",
+    "errors.DATA_RESTORE_MEMORY_BUDGET_EXCEEDED": "Die Sicherungsdatei ist intakt, enthält aber etwa {requiredMb} MB Daten, und dieser Server kann mit seinen aktuellen Speichereinstellungen höchstens {maxMb} MB auf einmal wiederherstellen. Es wurde nichts ersetzt. Bitte den Serveradministrator, dem Server mehr Speicher zu geben (NODE_OPTIONS=--max-old-space-size) oder DATA_EXPORT_MAX_CONCURRENT und DATA_IMPORT_MAX_CONCURRENT zu senken, und versuche es dann erneut."
   },
   "es": {
     "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "No se pudo guardar antes una instantánea del espacio de trabajo del propietario, así que no se eliminó nada. Pide al propietario que elimine estas páginas.",
@@ -11140,7 +11150,9 @@ const dataLossFollowupTranslations = {
     "account.backupCapacityExceeded": "Tu espacio de trabajo es más grande de lo que cabe en una copia de seguridad ({percent} %). No se pueden hacer copias de seguridad, instantáneas ni copias previas a una restauración o eliminación hasta que elimines páginas o bloques grandes que ya no necesites.",
     "account.snapshotHistoryOmitted": "Para que cupiera, esta instantánea dejó fuera sus {count} entradas más antiguas del historial de versiones. Incluye todas las páginas, bloques y archivos.",
     "status.collaborationRepairRelocated": "Unas ediciones simultáneas superaron un límite aquí, así que el texto que no cabía se movió a {count} bloque(s) nuevo(s) justo debajo. No se eliminó nada.",
-    "status.pasteSplitSourceChangedKept": "El bloque cambió mientras se dividía el pegado, así que la primera parte se añadió como un bloque aparte justo debajo. No se perdió nada."
+    "status.pasteSplitSourceChangedKept": "El bloque cambió mientras se dividía el pegado, así que la primera parte se añadió como un bloque aparte justo debajo. No se perdió nada.",
+    "confirm.deleteIncludesUnrestorable": "Algunos de estos bloques son demasiado grandes para el historial de versiones, así que una vez eliminados no se podrán recuperar.",
+    "errors.DATA_RESTORE_MEMORY_BUDGET_EXCEEDED": "El archivo de copia de seguridad está intacto, pero contiene unos {requiredMb} MB de datos y este servidor solo puede restaurar {maxMb} MB a la vez con su configuración de memoria actual. No se reemplazó nada. Pide al administrador del servidor que le dé más memoria (NODE_OPTIONS=--max-old-space-size) o que reduzca DATA_EXPORT_MAX_CONCURRENT y DATA_IMPORT_MAX_CONCURRENT, y vuelve a intentarlo."
   },
   "pt": {
     "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "Não foi possível salvar antes um snapshot do espaço de trabalho do dono, então nada foi excluído. Peça ao dono para excluir estas páginas.",
@@ -11152,7 +11164,9 @@ const dataLossFollowupTranslations = {
     "account.backupCapacityExceeded": "Seu espaço de trabalho é maior do que cabe em um backup ({percent}%). Backups, snapshots e cópias de segurança antes de uma restauração ou exclusão não podem ser feitos até você excluir páginas ou blocos grandes de que não precisa mais.",
     "account.snapshotHistoryOmitted": "Para caber, este snapshot deixou de fora as {count} entradas mais antigas do histórico de versões. Todas as páginas, blocos e arquivos estão incluídos.",
     "status.collaborationRepairRelocated": "Edições feitas ao mesmo tempo passaram de um limite aqui, então o texto que não coube foi movido para {count} bloco(s) novo(s) logo abaixo. Nada foi removido.",
-    "status.pasteSplitSourceChangedKept": "O bloco mudou enquanto a colagem era dividida, então a primeira parte foi adicionada como um bloco separado logo abaixo. Nada foi perdido."
+    "status.pasteSplitSourceChangedKept": "O bloco mudou enquanto a colagem era dividida, então a primeira parte foi adicionada como um bloco separado logo abaixo. Nada foi perdido.",
+    "confirm.deleteIncludesUnrestorable": "Alguns destes blocos são grandes demais para o histórico de versões, então depois de excluídos não poderão ser recuperados.",
+    "errors.DATA_RESTORE_MEMORY_BUDGET_EXCEEDED": "O arquivo de backup está íntegro, mas contém cerca de {requiredMb} MB de dados e este servidor só consegue restaurar {maxMb} MB de uma vez com as configurações de memória atuais. Nada foi substituído. Peça ao administrador do servidor para dar mais memória a ele (NODE_OPTIONS=--max-old-space-size) ou reduzir DATA_EXPORT_MAX_CONCURRENT e DATA_IMPORT_MAX_CONCURRENT e tente novamente."
   }
 };
 

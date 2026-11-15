@@ -152,7 +152,13 @@ import {
   requirePageTitleWithinLimit,
   splitTextIntoBlockChunks
 } from "./editor-content-limits.js";
-import { createTableRowId, normalizeTableRowIds } from "./table-rows.js";
+import { collectBlockSubtree, isDeletionTooLargeForHistory } from "./deletion-history-budget.js";
+import {
+  createTableColumnId,
+  createTableRowId,
+  normalizeTableColumnIds,
+  normalizeTableRowIds
+} from "./table-rows.js";
 import {
   createYouTubeVideoEditor,
   parseYouTubeVideoUrl,
@@ -545,13 +551,15 @@ function createDefaultTableData(rows = 3, columns = 3) {
   return {
     rows: Array.from({ length: safeRows }, () => Array.from({ length: safeColumns }, () => "")),
     rowIds: normalizeTableRowIds(safeRows, null),
+    columnIds: normalizeTableColumnIds(safeColumns, null),
     headerRow: false,
     headerColumn: false
   };
 }
 
-// Mirrors getTableData in src/lib/table.ts. Each row keeps a stable id
-// (rowIds) so a concurrent edit merges row by row instead of by position.
+// Mirrors getTableData in src/lib/table.ts. Each row and each column keeps a
+// stable id (rowIds, columnIds) so a concurrent edit merges by id instead of
+// by position.
 function normalizeTableData(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const sourceRows = Array.isArray(source.rows) ? source.rows.slice(0, tableLimits.rows) : [];
@@ -578,6 +586,7 @@ function normalizeTableData(value) {
   return {
     rows: finalRows,
     rowIds: normalizeTableRowIds(finalRows.length, rows.length ? keptIds : null),
+    columnIds: normalizeTableColumnIds(columnCount, source.columnIds),
     headerRow: source.headerRow === true,
     headerColumn: source.headerColumn === true
   };
@@ -2396,7 +2405,18 @@ function formatLoginCountry(countryCode) {
 
 function translateApiError(data, status) {
   const code = data?.error?.code;
-  if (code && t(`errors.${code}`) !== `errors.${code}`) return t(`errors.${code}`);
+  if (code && t(`errors.${code}`) !== `errors.${code}`) {
+    // Numbers the server sent with the error (sizes, limits) fill the
+    // translated message's placeholders.
+    const details = data?.error?.details;
+    const variables = {};
+    if (details && typeof details === "object" && !Array.isArray(details)) {
+      for (const [key, value] of Object.entries(details)) {
+        if (typeof value === "number" && Number.isFinite(value)) variables[key] = formatNumber(value);
+      }
+    }
+    return t(`errors.${code}`, variables);
+  }
   if (status >= 500) return t("errors.INTERNAL_SERVER_ERROR");
   return data?.error?.message ?? data?.message ?? t("errors.unknown");
 }
@@ -12002,10 +12022,24 @@ function captureCollaborationEditorFocus(previousBlocks = null) {
   if (!row?.dataset.blockId) return null;
   const controls = [...row.querySelectorAll("input, textarea, select, button, summary")];
   const index = controls.indexOf(active);
+  // A table cell is found again by its row and column id, not by its position
+  // among the block's controls: a row a peer added above would otherwise get
+  // this person's next keystrokes. The toolbar's active cell is kept the same way.
+  const tableFocus = row.dataset.blockType === "TABLE"
+    ? {
+      cellRowId: active.classList.contains("table-cell-input") ? active.closest("tr")?.dataset.tableRowId ?? null : null,
+      cellColumnId: active.classList.contains("table-cell-input")
+        ? readTableColumnIds(row)[Number(active.dataset.tableColumn)] ?? null
+        : null,
+      activeRowId: row.dataset.tableActiveRowId ?? null,
+      activeColumnId: row.dataset.tableActiveColumnId ?? null
+    }
+    : null;
   return {
     kind: "block",
     blockId: row.dataset.blockId,
     controlIndex: index,
+    tableFocus,
     start: "selectionStart" in active ? active.selectionStart : null,
     end: "selectionEnd" in active ? active.selectionEnd : null,
     value: typeof active.value === "string" ? active.value : null,
@@ -12021,7 +12055,21 @@ function restoreCollaborationEditorFocus(focus) {
   if (focus.kind === "title") control = elements.pageTitle;
   else if (focus.kind === "block") {
     const row = findRenderedBlockRow(focus.blockId);
-    control = [...(row?.querySelectorAll("input, textarea, select, button, summary") ?? [])][focus.controlIndex] ?? null;
+    const tableFocus = focus.tableFocus;
+    if (row && tableFocus) {
+      if (tableFocus.activeRowId) row.dataset.tableActiveRowId = tableFocus.activeRowId;
+      if (tableFocus.activeColumnId) row.dataset.tableActiveColumnId = tableFocus.activeColumnId;
+      const { activeRow, activeColumn } = resolveTableActiveCell(row, extractTableData(row));
+      row.dataset.tableActiveRow = String(activeRow);
+      row.dataset.tableActiveColumn = String(activeColumn);
+    }
+    if (tableFocus?.cellRowId && tableFocus.cellColumnId) {
+      // The cell's row or column was removed by the peer: leave focus off
+      // rather than put this person's typing into another cell.
+      control = findTableCellById(row, tableFocus.cellRowId, tableFocus.cellColumnId);
+    } else {
+      control = [...(row?.querySelectorAll("input, textarea, select, button, summary") ?? [])][focus.controlIndex] ?? null;
+    }
   }
   if (!(control instanceof HTMLElement) || control.disabled) return;
   // The rebuilt field shows the shared text, which does not yet contain
@@ -15383,17 +15431,58 @@ function makeTableActionButton(action, label, title, { pressed = null, disabled 
   return button;
 }
 
+function readTableColumnIds(row) {
+  try {
+    const parsed = JSON.parse(row?.dataset.tableColumnIds ?? "null");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// The active cell is kept by row and column id as well as by position. A
+// peer's row or column inserted before it moves its position, and the toolbar
+// (delete row, delete column) must still act on the cell this person chose,
+// never on the peer's row that now sits at the old position.
+function rememberTableActiveCellIds(row) {
+  const rowIds = [...row.querySelectorAll(".table-block-grid tr[data-table-row-id]")].map((tr) => tr.dataset.tableRowId);
+  const columnIds = readTableColumnIds(row);
+  const rowId = rowIds[Number(row.dataset.tableActiveRow) || 0];
+  const columnId = columnIds[Number(row.dataset.tableActiveColumn) || 0];
+  if (rowId) row.dataset.tableActiveRowId = rowId;
+  else delete row.dataset.tableActiveRowId;
+  if (columnId) row.dataset.tableActiveColumnId = columnId;
+  else delete row.dataset.tableActiveColumnId;
+}
+
+function resolveTableActiveCell(row, tableData) {
+  const rowCount = tableData.rows.length;
+  const columnCount = tableData.rows[0]?.length ?? 1;
+  const rowById = tableData.rowIds.indexOf(row.dataset.tableActiveRowId ?? "");
+  const columnById = tableData.columnIds.indexOf(row.dataset.tableActiveColumnId ?? "");
+  return {
+    activeRow: rowById >= 0
+      ? rowById
+      : Math.max(0, Math.min(Number.parseInt(row.dataset.tableActiveRow ?? "0", 10) || 0, rowCount - 1)),
+    activeColumn: columnById >= 0
+      ? columnById
+      : Math.max(0, Math.min(Number.parseInt(row.dataset.tableActiveColumn ?? "0", 10) || 0, columnCount - 1))
+  };
+}
+
 function createTableEditor(row, tableValue) {
   const tableData = normalizeTableData(tableValue);
   const rowCount = tableData.rows.length;
   const columnCount = tableData.rows[0]?.length ?? 1;
-  const activeRow = Math.min(Number.parseInt(row.dataset.tableActiveRow ?? "0", 10) || 0, rowCount - 1);
-  const activeColumn = Math.min(Number.parseInt(row.dataset.tableActiveColumn ?? "0", 10) || 0, columnCount - 1);
+  const { activeRow, activeColumn } = resolveTableActiveCell(row, tableData);
 
   row.dataset.tableHeaderRow = String(tableData.headerRow);
   row.dataset.tableHeaderColumn = String(tableData.headerColumn);
+  row.dataset.tableColumnIds = JSON.stringify(tableData.columnIds);
   row.dataset.tableActiveRow = String(activeRow);
   row.dataset.tableActiveColumn = String(activeColumn);
+  row.dataset.tableActiveRowId = tableData.rowIds[activeRow];
+  row.dataset.tableActiveColumnId = tableData.columnIds[activeColumn];
 
   const editor = document.createElement("div");
   editor.className = "table-block-editor";
@@ -16351,10 +16440,18 @@ function extractTableData(row) {
   }
   const rowIds = [...(row?.querySelectorAll(".table-block-grid tr[data-table-row-id]") ?? [])]
     .map((tr) => tr.dataset.tableRowId);
+  let columnIds = null;
+  try {
+    const parsed = JSON.parse(row?.dataset.tableColumnIds ?? "null");
+    if (Array.isArray(parsed)) columnIds = parsed;
+  } catch {
+    columnIds = null;
+  }
 
   return normalizeTableData({
     rows,
     rowIds,
+    columnIds,
     headerRow: row?.dataset.tableHeaderRow === "true",
     headerColumn: row?.dataset.tableHeaderColumn === "true"
   });
@@ -17642,13 +17739,42 @@ function setRowType(row, type, { markdown } = {}) {
   });
 }
 
+// Finds a table cell by row and column id in the block as it is rendered now.
+function findTableCellById(row, rowId, columnId) {
+  const tr = [...(row?.querySelectorAll(".table-block-grid tr[data-table-row-id]") ?? [])]
+    .find((item) => item.dataset.tableRowId === rowId);
+  const columnIndex = readTableColumnIds(row).indexOf(columnId);
+  if (!tr || columnIndex < 0) return null;
+  return tr.querySelectorAll(".table-cell-input")[columnIndex] ?? null;
+}
+
 function focusTableCell(row, rowIndex, columnIndex) {
+  // Name the cell by id now: a peer's update may rebuild the table before the
+  // next frame, and the same position can then hold someone else's row.
+  const rowId = row.querySelectorAll(".table-block-grid tr[data-table-row-id]")[rowIndex]?.dataset.tableRowId;
+  const columnId = readTableColumnIds(row)[columnIndex];
+  const blockId = row.dataset.blockId;
+  const findTarget = () => {
+    const current = (blockId && findRenderedBlockRow(blockId)) || row;
+    return rowId && columnId
+      ? findTableCellById(current, rowId, columnId)
+      : current.querySelector(`.table-cell-input[data-table-row="${rowIndex}"][data-table-column="${columnIndex}"]`);
+  };
+  // Focus at once: the table was just rebuilt, so the cell that had focus is
+  // gone, and keys pressed before the next frame had nowhere to go and were
+  // lost (pressing Enter in the last row and typing straight on, for one).
+  const input = findTarget();
+  const valueAtFocus = input?.value ?? null;
+  input?.focus();
+  input?.select();
   requestAnimationFrame(() => {
-    const input = row.querySelector(
-      `.table-cell-input[data-table-row="${rowIndex}"][data-table-column="${columnIndex}"]`
-    );
-    input?.focus();
-    input?.select();
+    // A peer's update may have rebuilt the table in between. Focus the same
+    // cell again, but never select text typed since: the next key would
+    // replace it.
+    const target = findTarget();
+    if (!target || document.activeElement === target) return;
+    target.focus();
+    if (target.value === valueAtFocus) target.select();
   });
 }
 
@@ -17662,6 +17788,9 @@ function replaceTableData(row, value, { focusRow, focusColumn } = {}) {
   row.dataset.tableActiveColumn = String(
     Math.max(0, Math.min(focusColumn ?? 0, (data.rows[0]?.length ?? 1) - 1))
   );
+  // The position given here is in the new data; ids of the old cell no longer apply.
+  delete row.dataset.tableActiveRowId;
+  delete row.dataset.tableActiveColumnId;
   host.replaceChildren(createTableEditor(row, data));
   if (!scheduleBlockSave(row)) {
     restoreBlockRowFromDurableState(row);
@@ -17674,8 +17803,9 @@ function handleTableAction(row, action) {
   const data = extractTableData(row);
   const rowCount = data.rows.length;
   const columnCount = data.rows[0]?.length ?? 1;
-  const activeRow = Math.max(0, Math.min(Number(row.dataset.tableActiveRow) || 0, rowCount - 1));
-  const activeColumn = Math.max(0, Math.min(Number(row.dataset.tableActiveColumn) || 0, columnCount - 1));
+  // By id first: a peer's row inserted above since the cell was chosen must
+  // not turn "delete this row" into deleting the peer's row.
+  const { activeRow, activeColumn } = resolveTableActiveCell(row, data);
   let focusRow = activeRow;
   let focusColumn = activeColumn;
   // Deleting a row or column that holds text offers Undo instead of a prompt.
@@ -17688,6 +17818,7 @@ function handleTableAction(row, action) {
     focusRow = data.rows.length - 1;
   } else if (action === "table-add-column" && columnCount < tableLimits.columns) {
     for (const cells of data.rows) cells.push("");
+    data.columnIds.push(createTableColumnId(data.columnIds));
     focusColumn = columnCount;
   } else if (action === "table-delete-row" && rowCount > 1) {
     const [removedCells] = data.rows.splice(activeRow, 1);
@@ -17696,6 +17827,7 @@ function handleTableAction(row, action) {
     focusRow = Math.min(activeRow, data.rows.length - 1);
   } else if (action === "table-delete-column" && columnCount > 1) {
     const removedCells = data.rows.map((cells) => cells.splice(activeColumn, 1)[0]);
+    data.columnIds.splice(activeColumn, 1);
     if (removedCells.some((cell) => String(cell ?? "").trim())) undoStatusKey = "status.tableColumnDeleted";
     focusColumn = Math.min(activeColumn, data.rows[0].length - 1);
   } else if (action === "table-toggle-header-row") {
@@ -26091,6 +26223,7 @@ elements.blockList.addEventListener("focusin", (event) => {
   if (!row) return;
   row.dataset.tableActiveRow = tableCell.dataset.tableRow ?? "0";
   row.dataset.tableActiveColumn = tableCell.dataset.tableColumn ?? "0";
+  rememberTableActiveCellIds(row);
 });
 
 elements.blockList.addEventListener("mouseup", (event) => {
@@ -27154,17 +27287,11 @@ function countSubtreeAttachments(blockId) {
   return count;
 }
 
-// Mirrors pageVersionDeletedMetadataInlineMaxBytes on the server: a deleted
-// block whose structured content is larger is kept in history without it.
-const deletedBlockHistoryMetadataMaxBytes = 128 * 1024;
-
+// Whether version history can keep the block and everything nested under it
+// (see public/deletion-history-budget.js, which mirrors the server's bounds).
 function isBlockTooLargeForDeletionHistory(block) {
-  if (!block?.metadata) return false;
-  try {
-    return new TextEncoder().encode(JSON.stringify(block.metadata)).length > deletedBlockHistoryMetadataMaxBytes;
-  } catch {
-    return true;
-  }
+  if (!block) return false;
+  return isDeletionTooLargeForHistory(collectBlockSubtree(block));
 }
 
 function getBlockDeletionConfirmMessage(row, blockId) {
@@ -27285,12 +27412,19 @@ elements.blockContextMenu.addEventListener("click", async (event) => {
         // so instead of the generic prompt, since neither can come back.
         const subtreeAttachmentCount = countSubtreeAttachments(blockId);
         const childrenMessage = t("confirm.deleteBlockWithChildren", { count: formatNumber(descendantCount) });
+        // Nested blocks together can pass what one history entry keeps, even
+        // when no single block does; say so before they are gone for good.
+        const subtreeUnrestorable = descendantCount > 0 && isBlockTooLargeForDeletionHistory(getBlockById(blockId));
         deleteChoice = descendantCount > 0
           ? await showChoiceDialog({
               title: t("dialog.deleteTitle"),
-              message: subtreeAttachmentCount > 0
-                ? `${childrenMessage} ${t("confirm.deleteIncludesAttachments", { count: formatNumber(subtreeAttachmentCount) })}`
-                : childrenMessage,
+              message: [
+                childrenMessage,
+                subtreeAttachmentCount > 0
+                  ? t("confirm.deleteIncludesAttachments", { count: formatNumber(subtreeAttachmentCount) })
+                  : null,
+                subtreeUnrestorable ? t("confirm.deleteIncludesUnrestorable") : null
+              ].filter(Boolean).join(" "),
               confirmLabel: t("dialog.deleteBlockAndChildren"),
               alternateLabel: t("dialog.deleteBlockKeepChildren"),
               danger: true

@@ -8,7 +8,7 @@ import {
   requireBlockMarkdownWithinLimit,
   requirePageTitleWithinLimit
 } from "./editor-content-limits.js";
-import { isValidTableRowId, normalizeTableRowIds } from "./table-rows.js";
+import { isValidTableRowId, normalizeTableColumnIds, normalizeTableRowIds } from "./table-rows.js";
 
 const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";
 const REMOTE_ORIGIN = Object.freeze({ kind: "remote" });
@@ -154,12 +154,12 @@ function hasIdentifiedItems(values) {
 // Adds the items of `other` that `order` lacks and that `other` added or
 // changed (a changed item the order side removed is kept, not lost). Each is
 // placed after the item preceding it in `other`, so it keeps its position.
-function insertMissingItems(order, other, baseById) {
+function insertMissingItems(order, other, baseById, isUnchanged) {
   const result = [...order];
   let previousId = null;
   for (const item of other) {
     const before = baseById.get(item.id);
-    if (!result.includes(item.id) && (before === undefined || !plainValuesEqual(item, before))) {
+    if (!result.includes(item.id) && (before === undefined || !isUnchanged(before, item))) {
       const at = previousId === null ? 0 : result.indexOf(previousId) + 1;
       result.splice(at, 0, item.id);
     }
@@ -168,7 +168,18 @@ function insertMissingItems(order, other, baseById) {
   return result;
 }
 
-function mergeIdentifiedArrays(base, live, local) {
+// `isUnchanged(before, after)` decides whether a side changed an item (a
+// changed item survives the other side's removal); `mergeItem` merges an item
+// both sides kept. Tables pass their own, since a row is a map of cells there.
+function mergeIdentifiedArrays(
+  base,
+  live,
+  local,
+  {
+    isUnchanged = (before, after) => plainValuesEqual(after, before),
+    mergeItem = (before, inLive, inLocal) => mergeConcurrentValue(before, inLive, inLocal)
+  } = {}
+) {
   const baseById = new Map(base.map((item) => [item.id, item]));
   const liveById = new Map(live.map((item) => [item.id, item]));
   const localById = new Map(local.map((item) => [item.id, item]));
@@ -177,7 +188,7 @@ function mergeIdentifiedArrays(base, live, local) {
   const localReordered = !plainValuesEqual(shared(localIds), shared(base.map((item) => item.id)));
   // Keep this editor's order when it reordered, otherwise the shared order.
   let order = localReordered ? localIds : live.map((item) => item.id);
-  order = insertMissingItems(order, localReordered ? live : local, baseById);
+  order = insertMissingItems(order, localReordered ? live : local, baseById, isUnchanged);
 
   const result = [];
   for (const id of order) {
@@ -192,17 +203,97 @@ function mergeIdentifiedArrays(base, live, local) {
       // One side removed the item. If the other side changed it meanwhile,
       // keep that change rather than lose it; otherwise the removal stands.
       const survivor = inLive ?? inLocal;
-      if (survivor !== undefined && !plainValuesEqual(survivor, before)) result.push(survivor);
+      if (survivor !== undefined && !isUnchanged(before, survivor)) result.push(survivor);
       continue;
     }
-    result.push(mergeConcurrentValue(before, inLive, inLocal));
+    result.push(mergeItem(before, inLive, inLocal));
   }
   return result;
 }
 
-// Arrays without ids (table rows and cells) line up by position. That is safe
-// only while one side appended at most: then every shared position still holds
-// the same item on both sides.
+// Bounds the quadratic alignment below; past it the editor's own value wins.
+const maxSequenceAlignmentCells = 250_000;
+
+// Pairs [baseIndex, sideIndex] of a longest common subsequence of equal items.
+function alignSequences(base, side) {
+  const rows = base.length;
+  const columns = side.length;
+  if (rows * columns > maxSequenceAlignmentCells) return null;
+  const baseKeys = base.map((item) => JSON.stringify(item ?? null));
+  const sideKeys = side.map((item) => JSON.stringify(item ?? null));
+  const width = columns + 1;
+  const lengths = new Uint32Array((rows + 1) * width);
+  for (let i = rows - 1; i >= 0; i -= 1) {
+    for (let j = columns - 1; j >= 0; j -= 1) {
+      lengths[i * width + j] = baseKeys[i] === sideKeys[j]
+        ? lengths[(i + 1) * width + j + 1] + 1
+        : Math.max(lengths[(i + 1) * width + j], lengths[i * width + j + 1]);
+    }
+  }
+  const pairs = [];
+  let i = 0;
+  let j = 0;
+  while (i < rows && j < columns) {
+    if (baseKeys[i] === sideKeys[j]) {
+      pairs.push([i, j]);
+      i += 1;
+      j += 1;
+    } else if (lengths[(i + 1) * width + j] >= lengths[i * width + j + 1]) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+  return pairs;
+}
+
+// What one side kept of `base`, and what it inserted before each base item
+// (gap i holds the items placed before base[i]; the last gap, after all).
+function sequenceEdits(base, side, pairs) {
+  const kept = new Set();
+  const gaps = Array.from({ length: base.length + 1 }, () => []);
+  let next = 0;
+  for (let index = 0; index < side.length; index += 1) {
+    while (next < pairs.length && pairs[next][1] < index) next += 1;
+    if (next < pairs.length && pairs[next][1] === index) {
+      kept.add(pairs[next][0]);
+      continue;
+    }
+    gaps[next < pairs.length ? pairs[next][0] : base.length].push(side[index]);
+  }
+  return { kept, gaps };
+}
+
+/**
+ * Three-way merge of a list without ids (an AI chat's turns, a card's tags):
+ * each side's insertions are kept where they were made, an item either side
+ * removed is removed, and an item changed in place counts as removed and
+ * re-added, so the changed copy survives. Used when the lists changed length
+ * in ways position alone cannot line up; it used to keep only this editor's
+ * list, so a turn or tag a peer added at the same moment was lost.
+ */
+function mergeSequences(base, live, local) {
+  const livePairs = alignSequences(base, live);
+  const localPairs = alignSequences(base, local);
+  if (!livePairs || !localPairs) return local;
+  const fromLive = sequenceEdits(base, live, livePairs);
+  const fromLocal = sequenceEdits(base, local, localPairs);
+  const result = [];
+  for (let index = 0; index <= base.length; index += 1) {
+    const localInserts = fromLocal.gaps[index];
+    result.push(...localInserts);
+    for (const item of fromLive.gaps[index]) {
+      // The same item added on both sides (one tag, say) is kept once.
+      if (!localInserts.some((other) => plainValuesEqual(other, item))) result.push(item);
+    }
+    if (index < base.length && fromLive.kept.has(index) && fromLocal.kept.has(index)) result.push(base[index]);
+  }
+  return result;
+}
+
+// Arrays without ids line up by position while their lengths allow it: then
+// every shared position still holds the same item on both sides. Otherwise
+// they are merged as sequences (see mergeSequences).
 function mergePositionalArrays(base, live, local) {
   if (live.length === base.length && local.length === base.length) {
     return local.map((item, index) => mergeConcurrentValue(base[index], live[index], item));
@@ -212,13 +303,13 @@ function mergePositionalArrays(base, live, local) {
     : local.length > base.length && live.length === base.length
       ? "local"
       : null;
-  if (!appendedSide) return local;
+  if (!appendedSide) return mergeSequences(base, live, local);
   const grown = appendedSide === "live" ? live : local;
   const aligned = base.every((item, index) =>
     plainValuesEqual(grown[index], item)
     || plainValuesEqual((appendedSide === "live" ? local : live)[index], item)
   );
-  if (!aligned) return local;
+  if (!aligned) return mergeSequences(base, live, local);
   return grown.map((item, index) => (
     index < base.length ? mergeConcurrentValue(base[index], live[index], local[index]) : item
   ));
@@ -228,54 +319,108 @@ function isTableModel(value) {
   return isPlainObject(value)
     && Array.isArray(value.rows)
     && value.rows.every(Array.isArray)
-    && (value.rowIds === undefined || Array.isArray(value.rowIds));
-}
-
-function tableRowItems(table) {
-  const ids = normalizeTableRowIds(table.rows.length, table.rowIds);
-  return table.rows.map((cells, index) => ({ id: ids[index], cells }));
+    && (value.rowIds === undefined || Array.isArray(value.rowIds))
+    && (value.columnIds === undefined || Array.isArray(value.columnIds));
 }
 
 function tableColumnCount(rows) {
   return rows.reduce((max, cells) => Math.max(max, cells.length), 0);
 }
 
+// A table as rows and columns keyed by id: each row's cells become a map from
+// column id to text, and each column a map from row id to text.
+function tableGrid(table) {
+  const rowIds = normalizeTableRowIds(table.rows.length, table.rowIds);
+  const columnIds = normalizeTableColumnIds(tableColumnCount(table.rows), table.columnIds);
+  const rows = table.rows.map((cells, rowIndex) => ({
+    id: rowIds[rowIndex],
+    cells: new Map(columnIds.map((columnId, columnIndex) => [columnId, String(cells[columnIndex] ?? "")]))
+  }));
+  const columns = columnIds.map((columnId, columnIndex) => ({
+    id: columnId,
+    cells: new Map(rowIds.map((rowId, rowIndex) => [rowId, String(table.rows[rowIndex][columnIndex] ?? "")]))
+  }));
+  return { rows, columns };
+}
+
+// A side changed a row (or column) when one of its cells now holds other text
+// than before. A cell it no longer has is a removal, not a change, and a new
+// empty cell (a column or row the other side added) is no change either.
+function cellsUnchanged(before, after) {
+  for (const [key, text] of after.cells) {
+    if (text !== (before.cells.get(key) ?? "")) return false;
+  }
+  return true;
+}
+
+// `surviving` names the columns the merged table keeps. A side that deleted
+// one of them (the other side wrote into it) lacks its cells; for that side
+// the cell counts as unchanged, so the cells of other rows are not emptied.
+function mergeCellMaps(before, inLive, inLocal, surviving) {
+  const merged = new Map();
+  const sideValue = (side, key) => (side.has(key) || !surviving?.has(key) ? side.get(key) : before.get(key));
+  for (const key of new Set([...inLive.keys(), ...inLocal.keys(), ...before.keys()])) {
+    const value = mergeConcurrentValue(before.get(key), sideValue(inLive, key), sideValue(inLocal, key));
+    if (value !== undefined) merged.set(key, String(value));
+  }
+  return merged;
+}
+
 /**
- * Merges two concurrent edits of a table row by row, using the rows' ids
- * (tables saved before ids get positional ones, the same in every browser).
- * A row a peer added stays, a row this editor added stays, a row one side
- * deleted is deleted unless the other side changed it meanwhile, and cells of
- * the same row merge as before. Positional merging used to drop the peer's
- * rows whenever both sides changed the row count.
+ * Merges two concurrent edits of a table by row and column ids (tables saved
+ * before ids get positional ones, the same in every browser). A row or column
+ * a peer added stays, one this editor added stays, one either side deleted is
+ * deleted unless the other side changed a cell of it meanwhile, and edits of
+ * the same cell merge like typing. Positional merging used to drop a peer's
+ * rows when both sides changed the row count, and to shift a row by one cell
+ * when a peer deleted a column while this editor edited that row.
  */
 export function mergeTableModel(base, live, local) {
   if (plainValuesEqual(local, base)) return live;
   if (plainValuesEqual(live, base) || plainValuesEqual(live, local)) return local;
-  const items = mergeIdentifiedArrays(tableRowItems(base), tableRowItems(live), tableRowItems(local));
-
-  // Columns stay positional. Use the column count this editor set if it
-  // changed it, the shared one otherwise, and never drop a non-empty cell.
-  const baseColumns = tableColumnCount(base.rows);
-  const localColumns = tableColumnCount(local.rows);
-  let columns = localColumns !== baseColumns ? localColumns : tableColumnCount(live.rows);
-  for (const { cells } of items) {
-    let last = cells.length;
-    while (last > columns && !String(cells[last - 1] ?? "").trim()) last -= 1;
-    columns = Math.max(columns, last);
+  const baseGrid = tableGrid(base);
+  const liveGrid = tableGrid(live);
+  const localGrid = tableGrid(local);
+  const columnIds = mergeIdentifiedArrays(baseGrid.columns, liveGrid.columns, localGrid.columns, {
+    isUnchanged: cellsUnchanged,
+    mergeItem: (_before, _inLive, inLocal) => inLocal
+  }).map(({ id }) => id);
+  const surviving = new Set(columnIds);
+  const rows = mergeIdentifiedArrays(baseGrid.rows, liveGrid.rows, localGrid.rows, {
+    isUnchanged: cellsUnchanged,
+    mergeItem: (before, inLive, inLocal) => ({
+      id: inLocal.id,
+      cells: mergeCellMaps(before.cells, inLive.cells, inLocal.cells, surviving)
+    })
+  });
+  // A cell written in a column both sides no longer list is still kept.
+  const listed = new Set(columnIds);
+  for (const { cells } of rows) {
+    for (const [columnId, text] of cells) {
+      if (!listed.has(columnId) && text.trim()) {
+        listed.add(columnId);
+        columnIds.push(columnId);
+      }
+    }
   }
-  columns = Math.max(1, columns);
+  if (!columnIds.length) columnIds.push(normalizeTableColumnIds(1, null)[0]);
 
   const result = {};
   const keys = new Set([...Object.keys(local), ...Object.keys(live), ...Object.keys(base)]);
   for (const key of keys) {
-    if (key === "rows" || key === "rowIds") continue;
+    if (key === "rows" || key === "rowIds" || key === "columnIds") continue;
     const merged = mergeConcurrentValue(base[key], live[key], local[key], 2);
     if (merged !== undefined) result[key] = merged;
   }
-  result.rows = items.map(({ cells }) => Array.from({ length: columns }, (_, index) => cells[index] ?? ""));
+  // A row kept from one side lacks the cells of a column that side deleted;
+  // where the column survived, its text before the edits is still the cell's.
+  const baseRowsById = new Map(baseGrid.rows.map((row) => [row.id, row.cells]));
+  result.rows = rows.map(({ id, cells }) => columnIds.map((columnId) =>
+    cells.has(columnId) ? cells.get(columnId) : baseRowsById.get(id)?.get(columnId) ?? ""));
   // A table nobody has saved with ids yet keeps its old shape; the positional
   // ids above are the same ones every reader derives for it anyway.
-  if ([base, live, local].some((side) => Array.isArray(side.rowIds))) result.rowIds = items.map(({ id }) => id);
+  if ([base, live, local].some((side) => Array.isArray(side.rowIds))) result.rowIds = rows.map(({ id }) => id);
+  if ([base, live, local].some((side) => Array.isArray(side.columnIds))) result.columnIds = columnIds;
   return result;
 }
 
@@ -395,47 +540,108 @@ function hasTableRowIds(value) {
  * Returns false when the shared rows have no usable ids yet (an old table);
  * the caller then writes them by position once, and by id from then on.
  */
-function reconcileYTableRows(Y, map, rows, rowIds) {
-  const yRows = map.get("rows");
-  const yIds = map.get("rowIds");
-  if (!(yRows instanceof Y.Array) || !(yIds instanceof Y.Array) || yRows.length !== yIds.length) return false;
-  const current = yIds.toArray().map((item) => readYValue(Y, item));
-  if (new Set(current).size !== current.length || !current.every(isValidTableRowId)) return false;
+function hasUniqueTableIds(ids) {
+  return Array.isArray(ids) && new Set(ids).size === ids.length && ids.every(isValidTableRowId);
+}
 
-  const wanted = new Set(rowIds);
+function readYTableIds(Y, yIds) {
+  if (!(yIds instanceof Y.Array)) return null;
+  const ids = yIds.toArray().map((item) => readYValue(Y, item));
+  return hasUniqueTableIds(ids) ? ids : null;
+}
+
+/**
+ * Rewrites `yArray`, whose items line up with the ids in `current`, so that it
+ * holds `values` lined up with `nextIds`: an item whose id is gone is deleted,
+ * a new or moved one is inserted where it belongs, and a kept one is updated
+ * in place by `updateKept(index)`. `yIds`, when given, gets the same deletes
+ * and inserts so it stays parallel.
+ */
+function reconcileYSequenceById(Y, yArray, current, nextIds, values, yIds, updateKept) {
+  const wanted = new Set(nextIds);
   for (let index = current.length - 1; index >= 0; index -= 1) {
     if (wanted.has(current[index])) continue;
-    yRows.delete(index, 1);
-    yIds.delete(index, 1);
+    yArray.delete(index, 1);
+    yIds?.delete(index, 1);
     current.splice(index, 1);
   }
-  for (let index = 0; index < rowIds.length; index += 1) {
-    const id = rowIds[index];
+  for (let index = 0; index < nextIds.length; index += 1) {
+    const id = nextIds[index];
     if (current[index] === id) {
-      const existing = yRows.get(index);
-      if (existing instanceof Y.Array) {
-        reconcileYArray(Y, existing, rows[index]);
-      } else {
-        yRows.delete(index, 1);
-        yRows.insert(index, [createYValue(Y, rows[index])]);
-      }
+      updateKept(index);
       continue;
     }
     const moved = current.indexOf(id, index + 1);
     if (moved > index) {
-      yRows.delete(moved, 1);
-      yIds.delete(moved, 1);
+      yArray.delete(moved, 1);
+      yIds?.delete(moved, 1);
       current.splice(moved, 1);
     }
-    yRows.insert(index, [createYValue(Y, rows[index])]);
-    yIds.insert(index, [createYValue(Y, id)]);
+    yArray.insert(index, [createYValue(Y, values[index])]);
+    yIds?.insert(index, [createYValue(Y, id)]);
     current.splice(index, 0, id);
   }
-  if (yRows.length > rowIds.length) {
-    yRows.delete(rowIds.length, yRows.length - rowIds.length);
-    yIds.delete(rowIds.length, yIds.length - rowIds.length);
+  if (yArray.length > nextIds.length) {
+    yArray.delete(nextIds.length, yArray.length - nextIds.length);
+    if (yIds && yIds.length > nextIds.length) yIds.delete(nextIds.length, yIds.length - nextIds.length);
   }
-  return true;
+}
+
+/**
+ * Writes a table's rows by id: a removed row is deleted, a new or moved row
+ * is inserted where it belongs, and a kept row is updated in place. Rewriting
+ * by position turned deleting row 1 into rewriting every later row's text,
+ * which a peer typing in one of those rows at the same moment would lose.
+ * The cells of a kept row are written by column id the same way, so deleting
+ * a column does not rewrite the cells to its right either.
+ * Returns which of rows and columns were written by id; ids the shared table
+ * does not have yet (an old table) are written by position once, and by id
+ * from then on.
+ */
+function reconcileYTableRows(Y, map, rows, rowIds, columnIds) {
+  const written = { rows: false, columns: false };
+  const yRows = map.get("rows");
+  const yIds = map.get("rowIds");
+  if (!(yRows instanceof Y.Array) || !(yIds instanceof Y.Array) || yRows.length !== yIds.length) return written;
+  const current = readYTableIds(Y, yIds);
+  if (!current) return written;
+
+  const yColumnIds = map.get("columnIds");
+  const previousColumns = readYTableIds(Y, yColumnIds);
+  const columnsById = Boolean(previousColumns)
+    && hasUniqueTableIds(columnIds)
+    && rows.every((cells) => cells.length === columnIds.length);
+  const updateCells = (yCells, cells) => {
+    if (!columnsById || yCells.length !== previousColumns.length) {
+      reconcileYArray(Y, yCells, cells);
+      return;
+    }
+    reconcileYSequenceById(Y, yCells, [...previousColumns], columnIds, cells, null, (index) => {
+      const cell = yCells.get(index);
+      if (cell instanceof Y.Text) {
+        replaceYText(cell, cells[index]);
+      } else {
+        yCells.delete(index, 1);
+        yCells.insert(index, [createYValue(Y, cells[index])]);
+      }
+    });
+  };
+
+  reconcileYSequenceById(Y, yRows, current, rowIds, rows, yIds, (index) => {
+    const existing = yRows.get(index);
+    if (existing instanceof Y.Array) {
+      updateCells(existing, rows[index]);
+    } else {
+      yRows.delete(index, 1);
+      yRows.insert(index, [createYValue(Y, rows[index])]);
+    }
+  });
+  written.rows = true;
+  if (columnsById) {
+    reconcileYSequenceById(Y, yColumnIds, [...previousColumns], columnIds, columnIds, null, () => undefined);
+    written.columns = true;
+  }
+  return written;
 }
 
 export function reconcileYMap(Y, map, value) {
@@ -443,9 +649,12 @@ export function reconcileYMap(Y, map, value) {
   for (const key of [...map.keys()]) {
     if (!Object.prototype.hasOwnProperty.call(source, key)) map.delete(key);
   }
-  const rowsWrittenById = hasTableRowIds(source) && reconcileYTableRows(Y, map, source.rows, source.rowIds);
+  const written = hasTableRowIds(source)
+    ? reconcileYTableRows(Y, map, source.rows, source.rowIds, source.columnIds)
+    : { rows: false, columns: false };
   for (const [key, item] of Object.entries(source)) {
-    if (rowsWrittenById && (key === "rows" || key === "rowIds")) continue;
+    if (written.rows && (key === "rows" || key === "rowIds")) continue;
+    if (written.columns && key === "columnIds") continue;
     const current = map.get(key);
     if (current === undefined || !isCompatibleYValue(Y, current, item)) {
       map.set(key, createYValue(Y, item));

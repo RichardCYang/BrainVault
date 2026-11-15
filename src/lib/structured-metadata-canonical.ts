@@ -108,15 +108,20 @@ function normalizeLegacyStructuredDefaultsForComparison(
     && requestedModel
     && typeof requestedModel === "object"
     && !Array.isArray(requestedModel)
-    && !Object.prototype.hasOwnProperty.call(requestedModel, "rowIds")
     && normalizedModel
     && typeof normalizedModel === "object"
     && !Array.isArray(normalizedModel)
+    && (
+      !Object.prototype.hasOwnProperty.call(requestedModel, "rowIds")
+      || !Object.prototype.hasOwnProperty.call(requestedModel, "columnIds")
+    )
   ) {
-    // Tables saved before row ids existed (and older browsers) carry none.
-    // Their positional ids are derived on read, so they stay valid as saved.
+    // Tables saved before row or column ids existed (and older browsers)
+    // carry none. Their positional ids are derived on read, so they stay
+    // valid as saved.
     const legacyCompatibleModel = { ...(normalizedModel as Record<string, unknown>) };
-    delete legacyCompatibleModel.rowIds;
+    if (!Object.prototype.hasOwnProperty.call(requestedModel, "rowIds")) delete legacyCompatibleModel.rowIds;
+    if (!Object.prototype.hasOwnProperty.call(requestedModel, "columnIds")) delete legacyCompatibleModel.columnIds;
     return legacyCompatibleModel;
   }
   return normalizedModel;
