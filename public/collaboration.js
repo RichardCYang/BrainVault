@@ -8,6 +8,7 @@ import {
   requireBlockMarkdownWithinLimit,
   requirePageTitleWithinLimit
 } from "./editor-content-limits.js";
+import { isValidTableRowId, normalizeTableRowIds } from "./table-rows.js";
 
 const YJS_MODULE_URL = "/vendor/yjs/yjs.mjs";
 const REMOTE_ORIGIN = Object.freeze({ kind: "remote" });
@@ -223,6 +224,61 @@ function mergePositionalArrays(base, live, local) {
   ));
 }
 
+function isTableModel(value) {
+  return isPlainObject(value)
+    && Array.isArray(value.rows)
+    && value.rows.every(Array.isArray)
+    && (value.rowIds === undefined || Array.isArray(value.rowIds));
+}
+
+function tableRowItems(table) {
+  const ids = normalizeTableRowIds(table.rows.length, table.rowIds);
+  return table.rows.map((cells, index) => ({ id: ids[index], cells }));
+}
+
+function tableColumnCount(rows) {
+  return rows.reduce((max, cells) => Math.max(max, cells.length), 0);
+}
+
+/**
+ * Merges two concurrent edits of a table row by row, using the rows' ids
+ * (tables saved before ids get positional ones, the same in every browser).
+ * A row a peer added stays, a row this editor added stays, a row one side
+ * deleted is deleted unless the other side changed it meanwhile, and cells of
+ * the same row merge as before. Positional merging used to drop the peer's
+ * rows whenever both sides changed the row count.
+ */
+export function mergeTableModel(base, live, local) {
+  if (plainValuesEqual(local, base)) return live;
+  if (plainValuesEqual(live, base) || plainValuesEqual(live, local)) return local;
+  const items = mergeIdentifiedArrays(tableRowItems(base), tableRowItems(live), tableRowItems(local));
+
+  // Columns stay positional. Use the column count this editor set if it
+  // changed it, the shared one otherwise, and never drop a non-empty cell.
+  const baseColumns = tableColumnCount(base.rows);
+  const localColumns = tableColumnCount(local.rows);
+  let columns = localColumns !== baseColumns ? localColumns : tableColumnCount(live.rows);
+  for (const { cells } of items) {
+    let last = cells.length;
+    while (last > columns && !String(cells[last - 1] ?? "").trim()) last -= 1;
+    columns = Math.max(columns, last);
+  }
+  columns = Math.max(1, columns);
+
+  const result = {};
+  const keys = new Set([...Object.keys(local), ...Object.keys(live), ...Object.keys(base)]);
+  for (const key of keys) {
+    if (key === "rows" || key === "rowIds") continue;
+    const merged = mergeConcurrentValue(base[key], live[key], local[key], 2);
+    if (merged !== undefined) result[key] = merged;
+  }
+  result.rows = items.map(({ cells }) => Array.from({ length: columns }, (_, index) => cells[index] ?? ""));
+  // A table nobody has saved with ids yet keeps its old shape; the positional
+  // ids above are the same ones every reader derives for it anyway.
+  if ([base, live, local].some((side) => Array.isArray(side.rowIds))) result.rowIds = items.map(({ id }) => id);
+  return result;
+}
+
 /**
  * Three-way merge of a structured block value (table, board, database, ...).
  * `base` is what this editor last sent, `live` is the shared document now
@@ -231,7 +287,7 @@ function mergePositionalArrays(base, live, local) {
  * to another cell or card is kept instead of being overwritten by the
  * editor's older copy. Concurrent edits of the same text merge like typing.
  */
-export function mergeConcurrentValue(base, live, local) {
+export function mergeConcurrentValue(base, live, local, depth = 0) {
   if (plainValuesEqual(local, base)) return live;
   if (plainValuesEqual(live, base) || plainValuesEqual(live, local)) return local;
   if (live === undefined) return local;
@@ -246,7 +302,10 @@ export function mergeConcurrentValue(base, live, local) {
     const result = {};
     const keys = new Set([...Object.keys(local), ...Object.keys(live), ...Object.keys(base)]);
     for (const key of keys) {
-      const merged = mergeConcurrentValue(base[key], live[key], local[key]);
+      // metadata.table: rows merge by their ids, not by position.
+      const merged = depth === 0 && key === "table" && [base, live, local].every((side) => isTableModel(side[key]))
+        ? mergeTableModel(base[key], live[key], local[key])
+        : mergeConcurrentValue(base[key], live[key], local[key], depth + 1);
       if (merged !== undefined) result[key] = merged;
     }
     return result;
@@ -320,12 +379,73 @@ function reconcileYArray(Y, array, values) {
   }
 }
 
-function reconcileYMap(Y, map, value) {
+function hasTableRowIds(value) {
+  if (!Array.isArray(value.rows) || !Array.isArray(value.rowIds) || value.rows.length !== value.rowIds.length) {
+    return false;
+  }
+  const ids = new Set(value.rowIds);
+  return ids.size === value.rowIds.length && value.rowIds.every(isValidTableRowId) && value.rows.every(Array.isArray);
+}
+
+/**
+ * Writes a table's rows by id: a removed row is deleted, a new or moved row
+ * is inserted where it belongs, and a kept row is updated in place. Rewriting
+ * by position turned deleting row 1 into rewriting every later row's text,
+ * which a peer typing in one of those rows at the same moment would lose.
+ * Returns false when the shared rows have no usable ids yet (an old table);
+ * the caller then writes them by position once, and by id from then on.
+ */
+function reconcileYTableRows(Y, map, rows, rowIds) {
+  const yRows = map.get("rows");
+  const yIds = map.get("rowIds");
+  if (!(yRows instanceof Y.Array) || !(yIds instanceof Y.Array) || yRows.length !== yIds.length) return false;
+  const current = yIds.toArray().map((item) => readYValue(Y, item));
+  if (new Set(current).size !== current.length || !current.every(isValidTableRowId)) return false;
+
+  const wanted = new Set(rowIds);
+  for (let index = current.length - 1; index >= 0; index -= 1) {
+    if (wanted.has(current[index])) continue;
+    yRows.delete(index, 1);
+    yIds.delete(index, 1);
+    current.splice(index, 1);
+  }
+  for (let index = 0; index < rowIds.length; index += 1) {
+    const id = rowIds[index];
+    if (current[index] === id) {
+      const existing = yRows.get(index);
+      if (existing instanceof Y.Array) {
+        reconcileYArray(Y, existing, rows[index]);
+      } else {
+        yRows.delete(index, 1);
+        yRows.insert(index, [createYValue(Y, rows[index])]);
+      }
+      continue;
+    }
+    const moved = current.indexOf(id, index + 1);
+    if (moved > index) {
+      yRows.delete(moved, 1);
+      yIds.delete(moved, 1);
+      current.splice(moved, 1);
+    }
+    yRows.insert(index, [createYValue(Y, rows[index])]);
+    yIds.insert(index, [createYValue(Y, id)]);
+    current.splice(index, 0, id);
+  }
+  if (yRows.length > rowIds.length) {
+    yRows.delete(rowIds.length, yRows.length - rowIds.length);
+    yIds.delete(rowIds.length, yIds.length - rowIds.length);
+  }
+  return true;
+}
+
+export function reconcileYMap(Y, map, value) {
   const source = isPlainObject(value) ? value : {};
   for (const key of [...map.keys()]) {
     if (!Object.prototype.hasOwnProperty.call(source, key)) map.delete(key);
   }
+  const rowsWrittenById = hasTableRowIds(source) && reconcileYTableRows(Y, map, source.rows, source.rowIds);
   for (const [key, item] of Object.entries(source)) {
+    if (rowsWrittenById && (key === "rows" || key === "rowIds")) continue;
     const current = map.get(key);
     if (current === undefined || !isCompatibleYValue(Y, current, item)) {
       map.set(key, createYValue(Y, item));
@@ -673,6 +793,8 @@ class PageCollaborationSession {
     this.api = options.api;
     this.onSnapshot = options.onSnapshot ?? (() => undefined);
     this.onPresence = options.onPresence ?? (() => undefined);
+    // The server moved text a merge could not fit into new blocks.
+    this.onRepairNotice = options.onRepairNotice ?? (() => undefined);
     this.onStatus = options.onStatus ?? (() => undefined);
     this.onError = options.onError ?? (() => undefined);
     this.onAccessChanged = options.onAccessChanged ?? (() => undefined);
@@ -1796,6 +1918,17 @@ class PageCollaborationSession {
         if (this.startupUpdatePending && !this.needsRecovery) {
           this.startupUpdatePending = false;
           this.markReady();
+        }
+      }
+      return;
+    }
+    if (message.type === "repair-notice") {
+      const relocatedBlocks = Number(message.relocatedBlocks);
+      if (Number.isSafeInteger(relocatedBlocks) && relocatedBlocks > 0) {
+        try {
+          this.onRepairNotice({ relocatedBlocks });
+        } catch (error) {
+          this.onError(error);
         }
       }
       return;

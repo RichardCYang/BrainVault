@@ -15,6 +15,19 @@ function deepFreeze(value) {
 function payload(h,type,data,block={metadata:{userMarker:{keep:true},toggleOpen:true,codeLanguage:'js',table:{},kanban:{},bookmark:{},database:{},aiChat:{},timetable:{},gantt:{},accordion:{},treeView:{}}}) {
   return h.buildBlockPayload({dataset:{blockType:type},data,checkbox:{checked:true}},block);
 }
+// Tables now also carry one stable id per row (rowIds, see public/table-rows.js),
+// which the frozen original did not have. Compare everything else exactly and
+// check the ids separately.
+function withoutRowIds(table) {
+  assert.ok(Array.isArray(table.rowIds) && table.rowIds.length===table.rows.length);
+  assert.equal(new Set(table.rowIds).size,table.rowIds.length);
+  const {rowIds,...rest}=table;
+  return rest;
+}
+function comparablePayload(kind,value) {
+  if(kind!=='table') return value;
+  return {...value,metadata:{...value.metadata,table:withoutRowIds(value.metadata.table)}};
+}
 let seed=0xB0A7D;
 function random(n) {seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed%n;}
 const alphabet=['','a','\n','\t','한국어','📝','\ud800','\udc00','<script>','&',' ',':'];
@@ -25,7 +38,7 @@ for(const kind of ['table','kanban','bookmark']) {
     assert.ok(Buffer.byteLength(JSON.stringify(data))<4_194_304);
     const expected=payload(old,kind.toUpperCase(),data);
     const actual=payload(fixed,kind.toUpperCase(),data);
-    assert.deepEqual(actual,expected);
+    assert.deepEqual(comparablePayload(kind,actual),expected);
     assert.equal(actual.markdown.length,20_000);
     assert.equal(actual.checked,true);
     assert.deepEqual(actual.metadata.userMarker,{keep:true});
@@ -39,7 +52,7 @@ for(const kind of ['table','kanban','bookmark']) {
   test(`${kind}: repeated different documents never reuse an earlier summary`,()=>{
     for(let i=0;i<30;i++) {
       const data=makeFixture(kind,i,true);
-      assert.deepEqual(payload(fixed,kind.toUpperCase(),data),payload(old,kind.toUpperCase(),data));
+      assert.deepEqual(comparablePayload(kind,payload(fixed,kind.toUpperCase(),data)),payload(old,kind.toUpperCase(),data));
     }
   });
 }
@@ -47,7 +60,7 @@ test('table: 700 seeded differential cases include ragged/empty rows, nulls and 
   for(let i=0;i<700;i++) {
     const data={rows:Array.from({length:random(55)},()=>random(9)===0?null:Array.from({length:random(24)},()=>random(8)===0?null:randomText(75))),headerRow:!!random(2),headerColumn:!!random(2)};
     const normalized=old.normalizeTableData(data);
-    assert.deepEqual(fixed.normalizeTableData(data),normalized);
+    assert.deepEqual(withoutRowIds(fixed.normalizeTableData(data)),normalized);
     assert.equal(fixed.tableSummary(data),old.tableSummary(data),`case ${i}`);
   }
 });

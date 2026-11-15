@@ -152,6 +152,7 @@ import {
   requirePageTitleWithinLimit,
   splitTextIntoBlockChunks
 } from "./editor-content-limits.js";
+import { createTableRowId, normalizeTableRowIds } from "./table-rows.js";
 import {
   createYouTubeVideoEditor,
   parseYouTubeVideoUrl,
@@ -543,14 +544,18 @@ function createDefaultTableData(rows = 3, columns = 3) {
   const safeColumns = Math.max(1, Math.min(tableLimits.columns, Math.trunc(columns) || 3));
   return {
     rows: Array.from({ length: safeRows }, () => Array.from({ length: safeColumns }, () => "")),
+    rowIds: normalizeTableRowIds(safeRows, null),
     headerRow: false,
     headerColumn: false
   };
 }
 
+// Mirrors getTableData in src/lib/table.ts. Each row keeps a stable id
+// (rowIds) so a concurrent edit merges row by row instead of by position.
 function normalizeTableData(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const sourceRows = Array.isArray(source.rows) ? source.rows.slice(0, tableLimits.rows) : [];
+  const sourceIds = Array.isArray(source.rowIds) ? source.rowIds : [];
   const columnCount = Math.max(
     1,
     Math.min(
@@ -558,17 +563,21 @@ function normalizeTableData(value) {
       sourceRows.reduce((max, row) => (Array.isArray(row) ? Math.max(max, row.length) : max), 0) || 3
     )
   );
-  const rows = sourceRows
-    .filter(Array.isArray)
-    .map((row) =>
-      Array.from({ length: columnCount }, (_, index) => {
-        const cell = row[index];
-        return (cell === null || cell === undefined ? "" : String(cell)).slice(0, tableLimits.cellLength);
-      })
-    );
+  const rows = [];
+  const keptIds = [];
+  sourceRows.forEach((row, rowIndex) => {
+    if (!Array.isArray(row)) return;
+    rows.push(Array.from({ length: columnCount }, (_, index) => {
+      const cell = row[index];
+      return (cell === null || cell === undefined ? "" : String(cell)).slice(0, tableLimits.cellLength);
+    }));
+    keptIds.push(sourceIds[rowIndex]);
+  });
+  const finalRows = rows.length ? rows : createDefaultTableData(3, columnCount).rows;
 
   return {
-    rows: rows.length ? rows : createDefaultTableData(3, columnCount).rows,
+    rows: finalRows,
+    rowIds: normalizeTableRowIds(finalRows.length, rows.length ? keptIds : null),
     headerRow: source.headerRow === true,
     headerColumn: source.headerColumn === true
   };
@@ -3053,13 +3062,21 @@ async function submitWorkspaceRestore(path, sourceKey, body, activeOperation) {
   } catch (error) {
     if (error?.code !== "RESTORE_SAFETY_SNAPSHOT_FAILED" || !isCurrentAccountDataOperation(activeOperation)) throw error;
     const confirmed = await showConfirmDialog({
-      message: t("account.restoreWithoutSafetySnapshotConfirm"),
+      message: withSafetySnapshotFailureReason(t("account.restoreWithoutSafetySnapshotConfirm"), error),
       confirmLabel: t("account.restoreWithoutSafetySnapshot"),
       danger: true
     });
     if (!confirmed || !isCurrentAccountDataOperation(activeOperation)) return skippedApiRequest;
     return submitWorkspaceRestoreAttempt(path, sourceKey, body, activeOperation, { skipSafetySnapshot: true });
   }
+}
+
+// A workspace bigger than one backup can never get a safety copy; say so and
+// what to do, rather than leaving the person to retry forever.
+function withSafetySnapshotFailureReason(message, error) {
+  return error?.details?.reason === "WORKSPACE_TOO_LARGE"
+    ? `${message} ${t("account.safetySnapshotWorkspaceTooLarge")}`
+    : message;
 }
 
 async function submitWorkspaceRestoreAttempt(path, sourceKey, body, activeOperation, { skipSafetySnapshot = false } = {}) {
@@ -3313,6 +3330,23 @@ function createSnapshotDiffView(diff) {
   return wrapper;
 }
 
+// Past what one backup holds, no backup, snapshot or safety copy before a
+// restore or deletion can be made. Warn well before the workspace gets there.
+function getWorkspaceBackupCapacityWarning(capacity) {
+  if (!capacity) return "";
+  const pages = Number(capacity.pages) || 0;
+  const maxPages = Number(capacity.maxPages) || 0;
+  const bytes = Number(capacity.contentBytes) || 0;
+  const maxBytes = Number(capacity.maxContentBytes) || 0;
+  const pageShare = maxPages > 0 ? pages / maxPages : 0;
+  const byteShare = maxBytes > 0 ? bytes / maxBytes : 0;
+  const share = Math.max(pageShare, byteShare);
+  if (share < 0.8) return "";
+  return t(share >= 1 ? "account.backupCapacityExceeded" : "account.backupCapacityNear", {
+    percent: formatNumber(Math.min(999, Math.round(share * 100)))
+  });
+}
+
 function renderWorkspaceSnapshots() {
   if (!elements.accountSnapshotList) return;
   elements.accountSnapshotList.setAttribute("aria-busy", String(state.snapshots.loading));
@@ -3325,6 +3359,15 @@ function renderWorkspaceSnapshots() {
     loading.className = "account-snapshot-loading";
     loading.textContent = t("account.snapshotLoading");
     elements.accountSnapshotList.append(loading);
+  }
+
+  const capacityWarning = getWorkspaceBackupCapacityWarning(state.snapshots.capacity);
+  if (capacityWarning) {
+    const warning = document.createElement("p");
+    warning.className = "account-snapshot-capacity-warning";
+    warning.setAttribute("role", "status");
+    warning.textContent = capacityWarning;
+    elements.accountSnapshotList.append(warning);
   }
 
   const items = state.snapshots.items ?? [];
@@ -3358,6 +3401,12 @@ function renderWorkspaceSnapshots() {
       size: formatSnapshotSize(snapshot.archiveSize)
     });
     heading.append(title, meta);
+    if (Number(snapshot.historyEntriesOmitted) > 0) {
+      const omitted = document.createElement("p");
+      omitted.className = "account-snapshot-history-omitted";
+      omitted.textContent = t("account.snapshotHistoryOmitted", { count: formatNumber(Number(snapshot.historyEntriesOmitted)) });
+      heading.append(omitted);
+    }
     const integrity = document.createElement("span");
     integrity.className = `account-snapshot-integrity account-snapshot-integrity--${snapshot.integrity || "ok"}`;
     integrity.textContent = snapshotIntegrityLabel(snapshot.integrity);
@@ -3416,6 +3465,7 @@ async function loadWorkspaceSnapshots({ force = false, throwOnError = false } = 
     if (getAccountAvatarTargetKey(state.user) !== targetKey) return;
     if (!Array.isArray(data?.snapshots)) throw new Error(t("errors.invalidResponse"));
     state.snapshots.items = data.snapshots;
+    state.snapshots.capacity = data.capacity ?? null;
     state.snapshots.loaded = true;
     const ids = new Set(data.snapshots.map((snapshot) => snapshot.id));
     state.snapshots.diffById = new Map([...state.snapshots.diffById].filter(([snapshotId]) => ids.has(snapshotId)));
@@ -9302,6 +9352,15 @@ function getPendingSavePayloadBytes({ saveTitle, rowsToSave }) {
   return totalBytes;
 }
 
+function getBlockOrderPayloadBytes(task) {
+  try {
+    return getJsonPayloadByteLength({ mutationId: task.mutationId, order: compactBlockOrder(task) });
+  } catch {
+    // Not encodable as a compact order: never send it with keepalive.
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
 async function flushPendingPageEdits({ keepalive = false, allowLocked = false, collaborationCompact = true } = {}) {
   if (isCollaborativePage()) {
     const session = state.collaborationSession;
@@ -9322,13 +9381,29 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
     syncBeforeUnloadProtection();
     return materialization;
   }
+  // A browser refuses keepalive requests over 64 KB in total. A reorder on a
+  // large page names every sibling and can pass that alone, so it goes as an
+  // ordinary request then, and the text saves keep the keepalive budget.
+  // The reorder settles before the text saves start, so they never share the budget.
+  let blockOrderError = null;
   if (pendingBlockOrderTask && canPersistSelectedPage()) {
-    await retryPendingBlockOrder({
-      keepalive,
-      allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
-    });
+    const orderKeepalive = keepalive && getBlockOrderPayloadBytes(pendingBlockOrderTask) <= keepaliveSaveBudgetBytes;
+    try {
+      await retryPendingBlockOrder({
+        keepalive: orderKeepalive,
+        allowRecoveryFailure: allowLocked && recoveryStorageFailureDrainInFlight
+      });
+    } catch (error) {
+      // The tab is being hidden and may not come back. A failed reorder stays
+      // in recovery storage; it must not also stop the typed text from saving.
+      if (!keepalive) throw error;
+      blockOrderError = error;
+    }
   }
-  if (!(allowLocked ? canPersistSelectedPage() : canEditSelectedPage())) return;
+  if (!(allowLocked ? canPersistSelectedPage() : canEditSelectedPage())) {
+    if (blockOrderError) throw blockOrderError;
+    return;
+  }
 
   const titleWasPending = pageTitleSaveTimer !== null;
   const titleHasCommitValue = Boolean(elements.pageTitle.value.trim());
@@ -9370,6 +9445,7 @@ async function flushPendingPageEdits({ keepalive = false, allowLocked = false, c
     preserveInput: false
   });
   syncBeforeUnloadProtection();
+  if (blockOrderError) throw blockOrderError;
   return null;
 }
 
@@ -10850,6 +10926,7 @@ async function submitPageDeleteTask(task, authenticationScope, { requestGuard = 
             // collection or nested pages; it names that snapshot here.
             onResponse: (response) => {
               task.safetySnapshotId = response.headers.get("X-Delete-Safety-Snapshot-Id") || null;
+              task.ownerSafetySnapshot = response.headers.get("X-Delete-Safety-Snapshot-Owner") === "1";
             },
             beforeFetch: () => {
               if (
@@ -10872,7 +10949,7 @@ async function submitPageDeleteTask(task, authenticationScope, { requestGuard = 
           // person decide, as a restore does, instead of deleting without it.
           const confirmed = await showConfirmDialog({
             title: t("dialog.deleteTitle"),
-            message: t("confirm.deleteWithoutSafetySnapshot"),
+            message: withSafetySnapshotFailureReason(t("confirm.deleteWithoutSafetySnapshot"), error),
             confirmLabel: t("dialog.delete"),
             danger: true
           });
@@ -11033,12 +11110,15 @@ async function deleteNavigationTarget() {
       ? (nestedPageCount > 0 ? "confirm.deleteCollectionWithPages" : "confirm.deleteEmptyCollection")
       : (nestedPageCount > 0 ? "confirm.deletePageWithSubpages" : "confirm.deleteSinglePage");
     // The server saves the owner's workspace before deleting a collection or
-    // nested pages (only the owner's own workspace can be snapshotted).
-    const savesSafetySnapshot = (isCollection || nestedPageCount > 0) && deletionOwnerId === state.user?.id;
+    // nested pages, also when a collection administrator deletes them: the
+    // copy then goes to the owner's snapshots, where only the owner can restore it.
+    const savesSafetySnapshot = isCollection || nestedPageCount > 0;
+    const deletesOthersPages = Boolean(deletionOwnerId && deletionOwnerId !== state.user?.id);
     const deleteMessage = t(deleteMessageKey, { title: target.title, count: formatNumber(nestedPageCount) });
+    const snapshotNote = deletesOthersPages ? "confirm.deleteOwnerSafetySnapshotNote" : "confirm.deleteSafetySnapshotNote";
     const ok = await showConfirmDialog({
       title: t("dialog.deleteTitle"),
-      message: savesSafetySnapshot ? `${deleteMessage} ${t("confirm.deleteSafetySnapshotNote")}` : deleteMessage,
+      message: savesSafetySnapshot ? `${deleteMessage} ${t(snapshotNote)}` : deleteMessage,
       confirmLabel: t("dialog.delete"),
       danger: true
     }) && isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -11117,7 +11197,10 @@ async function deleteNavigationTarget() {
     }
 
     const deletedMessage = t(isCollection ? "status.collectionDeleted" : "status.pageDeleted");
-    if (task.safetySnapshotId) {
+    if (task.ownerSafetySnapshot) {
+      // The copy is in the owner's snapshots; only the owner can restore it.
+      setStatus(`${deletedMessage} ${t("status.deletedWithOwnerSafetySnapshot")}`);
+    } else if (task.safetySnapshotId) {
       // Point to the undo: the snapshot saved just before this deletion.
       setStatus(`${deletedMessage} ${t("status.deletedWithSafetySnapshot")}`, false, {
         action: {
@@ -12392,6 +12475,10 @@ async function startPageCollaboration(page = state.selectedPage) {
       onSnapshot: (snapshot, context) => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
         applyCollaborationSnapshot(snapshot, context);
+      },
+      onRepairNotice: ({ relocatedBlocks }) => {
+        if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
+        setStatus(t("status.collaborationRepairRelocated", { count: formatNumber(relocatedBlocks) }), true);
       },
       onPresence: (presence) => {
         if (generation !== state.collaborationGeneration || state.selectedPage?.id !== page.id) return;
@@ -15350,6 +15437,7 @@ function createTableEditor(row, tableValue) {
   tableData.rows.forEach((cells, rowIndex) => {
     const tr = document.createElement("tr");
     tr.setAttribute("role", "row");
+    tr.dataset.tableRowId = tableData.rowIds[rowIndex];
 
     cells.forEach((value, columnIndex) => {
       const isColumnHeader = tableData.headerRow && rowIndex === 0;
@@ -16261,9 +16349,12 @@ function extractTableData(row) {
     const columnIndex = Number.parseInt(input.dataset.tableColumn ?? "0", 10) || 0;
     rows[rowIndex][columnIndex] = input.value.slice(0, tableLimits.cellLength);
   }
+  const rowIds = [...(row?.querySelectorAll(".table-block-grid tr[data-table-row-id]") ?? [])]
+    .map((tr) => tr.dataset.tableRowId);
 
   return normalizeTableData({
     rows,
+    rowIds,
     headerRow: row?.dataset.tableHeaderRow === "true",
     headerColumn: row?.dataset.tableHeaderColumn === "true"
   });
@@ -17593,12 +17684,14 @@ function handleTableAction(row, action) {
 
   if (action === "table-add-row" && rowCount < tableLimits.rows) {
     data.rows.push(Array.from({ length: columnCount }, () => ""));
+    data.rowIds.push(createTableRowId(data.rowIds));
     focusRow = data.rows.length - 1;
   } else if (action === "table-add-column" && columnCount < tableLimits.columns) {
     for (const cells of data.rows) cells.push("");
     focusColumn = columnCount;
   } else if (action === "table-delete-row" && rowCount > 1) {
     const [removedCells] = data.rows.splice(activeRow, 1);
+    data.rowIds.splice(activeRow, 1);
     if (removedCells.some((cell) => String(cell ?? "").trim())) undoStatusKey = "status.tableRowDeleted";
     focusRow = Math.min(activeRow, data.rows.length - 1);
   } else if (action === "table-delete-column" && columnCount > 1) {
@@ -17676,6 +17769,7 @@ function handleTableCellKeydown(event, input, row) {
       focusTableCell(row, rowIndex + 1, columnIndex);
     } else if (data.rows.length < tableLimits.rows) {
       data.rows.push(Array.from({ length: lastColumn + 1 }, () => ""));
+      data.rowIds.push(createTableRowId(data.rowIds));
       replaceTableData(row, data, { focusRow: data.rows.length - 1, focusColumn: columnIndex });
     }
     return true;
@@ -17685,6 +17779,7 @@ function handleTableCellKeydown(event, input, row) {
     if (data.rows.length >= tableLimits.rows) return false;
     event.preventDefault();
     data.rows.push(Array.from({ length: lastColumn + 1 }, () => ""));
+    data.rowIds.push(createTableRowId(data.rowIds));
     replaceTableData(row, data, { focusRow: data.rows.length - 1, focusColumn: 0 });
     return true;
   }
@@ -25634,6 +25729,27 @@ const splitPasteBlockTypes = new Set([
 ]);
 const activeSplitPastes = new Set();
 
+// The source block of a split paste stays read-only until the paste is done,
+// also across the re-renders each inserted part can cause (see
+// createTextBlockEditor). Read mode keeps its own remembered state.
+function setSplitPasteSourceLocked(blockId, locked) {
+  const textarea = getBlockTextarea(findRenderedBlockRow(blockId));
+  if (!textarea) return;
+  if (locked) {
+    if (textarea.dataset.splitPasteLocked === "true") return;
+    textarea.dataset.splitPasteLocked = "true";
+    textarea.dataset.splitPasteWasReadOnly = String(textarea.readOnly);
+    if (textarea.dataset.pageModeWasReadOnly === undefined) textarea.readOnly = true;
+    return;
+  }
+  if (textarea.dataset.splitPasteLocked !== "true") return;
+  const wasReadOnly = textarea.dataset.splitPasteWasReadOnly === "true";
+  delete textarea.dataset.splitPasteLocked;
+  delete textarea.dataset.splitPasteWasReadOnly;
+  if (textarea.dataset.pageModeWasReadOnly !== undefined) textarea.dataset.pageModeWasReadOnly = String(wasReadOnly);
+  else textarea.readOnly = wasReadOnly;
+}
+
 function getSplitPasteRow(field) {
   if (!(field instanceof HTMLTextAreaElement) || !field.classList.contains("block-row-input")) return null;
   if (field.maxLength !== BLOCK_MARKDOWN_MAX_LENGTH) return null;
@@ -25706,6 +25822,10 @@ async function pasteAcrossBlocks(row, field, text) {
   activeSplitPastes.add(sourceId);
   let previousId = sourceId;
   let added = 0;
+  // Typing into the block while its parts are created would leave the paste's
+  // first part with no clean place to go. A peer on a shared page can still
+  // change it; that is merged below.
+  setSplitPasteSourceLocked(sourceId, true);
   try {
     setStatus(t("status.pasteSplitting", { done: formatNumber(0), count: formatNumber(chunks.length) }));
     // Save what the block holds now, so the parts below follow a saved block.
@@ -25722,6 +25842,8 @@ async function pasteAcrossBlocks(row, field, text) {
         if (!created?.block?.id) throw new Error(t("errors.currentBlockOrder"));
         previousId = created.block.id;
         added += 1;
+        // A small page re-renders after each insert; lock the new source editor too.
+        setSplitPasteSourceLocked(sourceId, true);
         setStatus(t("status.pasteSplitting", { done: formatNumber(added), count: formatNumber(chunks.length) }));
       }
     });
@@ -25733,16 +25855,39 @@ async function pasteAcrossBlocks(row, field, text) {
     return;
   } finally {
     activeSplitPastes.delete(sourceId);
+    setSplitPasteSourceLocked(sourceId, false);
   }
 
   const sourceRow = findRenderedBlockRow(sourceId);
   const sourceTextarea = getBlockTextarea(sourceRow);
-  if (!sourceTextarea || sourceTextarea.value !== original) {
-    // The block changed meanwhile. Keep it as it is; the clipboard still has the paste.
+  if (!sourceTextarea) {
     setStatus(t("status.pasteSplitSourceChanged"), true);
     return;
   }
-  replaceBlockTextareaValue(sourceRow, sourceTextarea, chunks[0]);
+  let firstPart = chunks[0];
+  if (sourceTextarea.value !== original) {
+    // Someone changed the block meanwhile: apply this paste's first part on
+    // top of that change, as two people typing in one block merge.
+    const merged = rebaseTextEdit(original, sourceTextarea.value, chunks[0]);
+    if (merged.length > field.maxLength) {
+      // No room for both. Keep the block as it is and put the first part in
+      // its own block right below, so nothing of either is lost.
+      try {
+        await withBlockEditorHistorySuppressed(() => insertBlockRelative(sourceRow, "after", {
+          ...continuation,
+          markdown: chunks[0],
+          announce: false
+        }));
+      } catch {
+        setStatus(t("status.pasteSplitSourceChanged"), true);
+        return;
+      }
+      setStatus(t("status.pasteSplitSourceChangedKept"), true);
+      return chunks.length;
+    }
+    firstPart = merged;
+  }
+  replaceBlockTextareaValue(sourceRow, sourceTextarea, firstPart);
   await saveBlockRow(sourceRow, { quiet: true });
   const lastChunk = chunks[chunks.length - 1];
   placeCaretInBlock(previousId, Math.max(0, lastChunk.length - (original.length - end)));

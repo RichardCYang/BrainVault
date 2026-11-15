@@ -4,6 +4,7 @@ import { z } from "zod";
 import { env } from "../config/env.js";
 import { assertHierarchyDepth, maxPageHierarchyDepth } from "../utils/hierarchy.js";
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
+import { dataTransferResourceLimits } from "../lib/data-transfer-limits.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
 import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
@@ -76,6 +77,7 @@ import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-wri
 import {
   createPreDeleteSafetySnapshot,
   deleteSafetySnapshotIdHeader,
+  deleteSafetySnapshotOwnerHeader,
   deleteSafetySnapshotSkipHeader,
   pruneAutomaticSnapshots
 } from "../lib/workspace-snapshots.js";
@@ -84,6 +86,9 @@ import {
   grantLegacyYjsPageRecovery,
   preserveRecoveryGrantsForPages
 } from "../lib/recovery-candidates.js";
+
+// A backup holds at most this many pages, so a workspace may not grow past it.
+const workspaceMaxPages = dataTransferResourceLimits.maxPages;
 
 export const pageRouter = Router();
 
@@ -341,10 +346,25 @@ function getPageSubtreeRows(pageId: string, rows: PageDeletionPageRow[]) {
  * take many pages at once. A plain read; the deletion transaction re-checks
  * everything under its locks.
  */
-async function needsPreDeleteSafetySnapshot(ownerId: string, mutationId: string, pageId: string) {
+async function assertWorkspacePageCapacity(client: DbClient, ownerId: string) {
+  const usage = await client.queryOne<{ page_count: number | string }>(
+    "SELECT COUNT(*) AS page_count FROM pages WHERE owner_id = ?",
+    [ownerId]
+  );
+  if (Number(usage?.page_count ?? 0) >= workspaceMaxPages) {
+    throw new ApiError(
+      409,
+      "WORKSPACE_PAGE_LIMIT_EXCEEDED",
+      "This workspace already has the most pages a backup can hold. Nothing was created."
+    );
+  }
+}
+
+async function needsPreDeleteSafetySnapshot(ownerId: string, actorId: string, mutationId: string, pageId: string) {
+  // Receipts are keyed by whoever sent the deletion, the owner or a delegate.
   const replay = await db.queryOne<{ mutation_id: string }>(
     "SELECT mutation_id FROM page_delete_mutations WHERE actor_id = ? AND mutation_id = ?",
-    [ownerId, mutationId]
+    [actorId, mutationId]
   );
   if (replay) return false;
   const rows = await getOwnedPageTreeRows(ownerId);
@@ -1596,6 +1616,10 @@ pageRouter.post("/", admitPageProjection, validate({ body: createPageSchema }), 
         assertPageCanAdminister(currentParentAccess, "Administrator permission is required to add pages here");
         assertPageCreateParentAdmission(parentAdmission, currentParentAccess);
       }
+      // A workspace must always fit in its own backup: past this many pages no
+      // backup, snapshot or safety copy before a restore or deletion could be
+      // made, and every later recovery point would silently stop existing.
+      await assertWorkspacePageCapacity(client, pageOwnerId);
 
       await client.execute(
         `INSERT INTO pages
@@ -2371,13 +2395,35 @@ pageRouter.delete(
         // Save the owner's workspace first so the deletion can be undone. The
         // deletion below still checks the confirmed preview hash, so anything
         // that changed after this copy was taken stops the deletion instead.
+        //
+        // A collection administrator deleting someone else's pages gets the same
+        // protection for the owner: the copy is saved in the owner's workspace,
+        // where the owner can restore it. Only the owner may decide to delete
+        // without that copy, so the skip header is ignored for anyone else.
         let safetySnapshotId: string | null = null;
+        const workspaceOwnerId = pageOwnerHint?.owner_id ?? null;
+        const delegatedDeletion = workspaceOwnerId !== null && workspaceOwnerId !== user.id;
         if (
-          pageOwnerHint?.owner_id === user.id
-          && req.header(deleteSafetySnapshotSkipHeader) !== "1"
-          && await needsPreDeleteSafetySnapshot(user.id, mutationId, pageId)
+          workspaceOwnerId
+          && (delegatedDeletion || req.header(deleteSafetySnapshotSkipHeader) !== "1")
+          && await needsPreDeleteSafetySnapshot(workspaceOwnerId, user.id, mutationId, pageId)
         ) {
-          safetySnapshotId = (await createPreDeleteSafetySnapshot(user.id, authScope)).id;
+          try {
+            safetySnapshotId = (await createPreDeleteSafetySnapshot(
+              workspaceOwnerId,
+              authScope,
+              delegatedDeletion ? { userId: user.id } : undefined
+            )).id;
+          } catch (error) {
+            if (delegatedDeletion && error instanceof ApiError && error.code === "DELETE_SAFETY_SNAPSHOT_FAILED") {
+              throw new ApiError(
+                409,
+                "OWNER_DELETE_SAFETY_SNAPSHOT_FAILED",
+                "The owner's workspace could not be saved as a snapshot first, so nothing was deleted. Ask the owner to delete these pages."
+              );
+            }
+            throw error;
+          }
         }
         const deletion = await transaction(async (client) => {
           await lockPageDeleteUsers(
@@ -2582,9 +2628,17 @@ pageRouter.delete(
             deletion.attachmentGeneration
           );
         }
-        if (safetySnapshotId) {
-          await pruneAutomaticSnapshots(user.id, authScope, [safetySnapshotId]);
-          res.setHeader(deleteSafetySnapshotIdHeader, safetySnapshotId);
+        if (safetySnapshotId && workspaceOwnerId) {
+          await pruneAutomaticSnapshots(
+            workspaceOwnerId,
+            authScope,
+            [safetySnapshotId],
+            delegatedDeletion ? { userId: user.id } : undefined
+          );
+          // The owner restores it from their own snapshot list; an administrator
+          // cannot open the owner's snapshots, so only the owner is told its id.
+          if (delegatedDeletion) res.setHeader(deleteSafetySnapshotOwnerHeader, "1");
+          else res.setHeader(deleteSafetySnapshotIdHeader, safetySnapshotId);
         }
         res.status(204).send();
         return;

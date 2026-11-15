@@ -4559,3 +4559,27 @@ export async function importUserDataBackup(
     }
   }
 }
+
+/**
+ * How close a workspace is to what one backup can hold. Past either limit no
+ * backup, snapshot, or safety copy before a restore or deletion can be made, so
+ * the snapshot settings warn well before that. `contentBytes` estimates the
+ * page content that a backup always keeps in full (version history is trimmed
+ * to fit instead, so it is left out).
+ */
+export async function getWorkspaceBackupCapacity(userId: string) {
+  const row = await db.queryOne<{ page_count: number | string; content_bytes: number | string | null }>(
+    `SELECT
+       (SELECT COUNT(*) FROM pages WHERE owner_id = ?) AS page_count,
+       (SELECT COALESCE(SUM(LENGTH(b.markdown) + COALESCE(LENGTH(b.metadata), 0) + 320), 0)
+          FROM blocks b INNER JOIN pages p ON p.id = b.page_id
+          WHERE p.owner_id = ?) AS content_bytes`,
+    [userId, userId]
+  );
+  return {
+    pages: Number(row?.page_count ?? 0),
+    maxPages: dataTransferResourceLimits.maxPages,
+    contentBytes: Number(row?.content_bytes ?? 0),
+    maxContentBytes: backupDataBudgetBytes()
+  };
+}

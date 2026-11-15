@@ -106,7 +106,8 @@ test("snapshot pruning reads snapshot age and a retention setting", () => {
   assert.match(env, /SNAPSHOT_AUTO_RETENTION_HOURS: z\.coerce\.number\(\)\.int\(\)\.min\(0\)\.max\(24 \* 366\)\.default\(7 \* 24\)/);
   assert.match(snapshots, /created_at >= CURRENT_TIMESTAMP\(3\) - INTERVAL \? HOUR\) AS recent/);
   assert.match(snapshots, /\[env\.SNAPSHOT_AUTO_RETENTION_HOURS, userId\]/);
-  assert.match(snapshots, /selectAutomaticSnapshotsToPrune\(rows, keep,/);
+  // Each kind of automatic snapshot is pruned within its own kind.
+  assert.match(snapshots, /selectAutomaticSnapshotsToPrune\(rows\.filter\(\(row\) => row\.kind === kind\), keep,/);
 });
 
 test("a deleted structured block keeps up to 128 KiB of content in history", () => {

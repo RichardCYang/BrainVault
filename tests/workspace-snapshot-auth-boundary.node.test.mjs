@@ -36,7 +36,13 @@ test("snapshot create and delete revalidate the exact device session before dura
     "export async function createWorkspaceSnapshot(",
     "export async function deleteWorkspaceSnapshot("
   );
-  const createFence = creation.indexOf("await assertCurrentAuthSessionBoundary(userId, authScope, client)");
+  // Every create and delete fences through assertSnapshotBoundary, which checks
+  // the acting session: the owner's, or a collection administrator's own when
+  // that administrator deletes the owner's pages.
+  const boundary = section(snapshots, "async function assertSnapshotBoundary(", "export async function createWorkspaceSnapshot(");
+  assert.match(boundary, /if \(!actor \|\| actor\.userId === userId\) \{\n\s*await assertCurrentAuthSessionBoundary\(userId, authScope, client\);/);
+  assert.match(boundary, /await assertCurrentAuthSessionBoundary\(actor\.userId, authScope, client\);/);
+  const createFence = creation.indexOf("await assertSnapshotBoundary(userId, authScope, client, actor)");
   const createInsert = creation.indexOf("INSERT INTO workspace_snapshots");
   assert.ok(createFence >= 0 && createInsert > createFence, "snapshot insertion must follow the auth/session fence");
 
@@ -45,7 +51,7 @@ test("snapshot create and delete revalidate the exact device session before dura
     "export async function deleteWorkspaceSnapshot(",
     "export async function restoreWorkspaceSnapshot("
   );
-  const deleteFence = deletion.indexOf("await assertCurrentAuthSessionBoundary(userId, authScope, client)");
+  const deleteFence = deletion.indexOf("await assertSnapshotBoundary(userId, authScope, client, actor)");
   const rowLock = deletion.indexOf("await getOwnedSnapshotRow(userId, id, client, true)");
   const deleteRow = deletion.indexOf('DELETE FROM workspace_snapshots WHERE id = ? AND user_id = ?');
   const renameArchive = deletion.indexOf("await rename(finalPath, tombstonePath)");

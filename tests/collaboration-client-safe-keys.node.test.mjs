@@ -53,6 +53,6 @@ test("changed server updates are semantically checked before a successful worker
   assert.ok(body.indexOf("validateCollaborationCandidate") < body.indexOf("workerParentPort.postMessage(response"));
   const materialization = readFileSync(new URL("../src/lib/collaboration-materialization.ts", import.meta.url), "utf8");
   const validator = materialization.slice(materialization.indexOf("export function validateCollaborationCandidate("));
-  assert.match(validator, /return \{ candidate, materialization: readCollaborationMaterialization\(candidate\.document\)/);
+  assert.match(validator, /return \{\s*candidate,\s*materialization: readCollaborationMaterialization\(candidate\.document\)/);
   assert.match(validator, /materialization: readCollaborationMaterialization\(repaired\.document\)/);
 });

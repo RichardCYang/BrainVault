@@ -45,6 +45,7 @@ export type CollaborationValidationResult = {
   stateUpdate: Buffer;
   incrementalUpdate: Buffer;
   changed: boolean;
+  relocatedBlocks?: number;
   materialization: CollaborationMaterialization | null;
 };
 
@@ -90,6 +91,7 @@ type WorkerValidationSuccess = {
   stateUpdate: Uint8Array;
   incrementalUpdate: Uint8Array;
   changed: boolean;
+  relocatedBlocks?: number;
   materialization: CollaborationMaterialization | null;
 };
 
@@ -419,6 +421,7 @@ export class CollaborationValidationPool {
           stateUpdate: Buffer.from(response.stateUpdate),
           incrementalUpdate: Buffer.from(response.incrementalUpdate),
           changed: response.changed,
+          relocatedBlocks: response.relocatedBlocks ?? 0,
           materialization: response.materialization
         });
       } else if (task.kind === "history-replay" && response.kind === "history-replay") {

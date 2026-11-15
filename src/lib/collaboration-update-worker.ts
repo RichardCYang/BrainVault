@@ -45,6 +45,8 @@ type CollaborationUpdateValidationSuccess = {
   stateUpdate: Uint8Array;
   incrementalUpdate: Uint8Array;
   changed: boolean;
+  /** Blocks a merge repair added to hold text a limit would have cut off. */
+  relocatedBlocks: number;
   materialization: CollaborationMaterialization | null;
 };
 
@@ -145,6 +147,7 @@ workerParentPort.on("message", (request: CollaborationWorkerRequest) => {
       request.maxStateBytes
     );
     let materialization: CollaborationMaterialization | null = null;
+    let relocatedBlocks = 0;
     if (candidate.changed || request.includeMaterialization) {
       // A merge of two valid concurrent edits can break a document rule. Repair
       // it inside this update (never on the bootstrap write, which must match
@@ -155,6 +158,7 @@ workerParentPort.on("message", (request: CollaborationWorkerRequest) => {
       });
       candidate = validated.candidate;
       materialization = validated.materialization;
+      relocatedBlocks = validated.relocatedBlocks;
     }
     const stateUpdate = Uint8Array.from(candidate.stateUpdate);
     const incrementalUpdate = Uint8Array.from(candidate.incrementalUpdate);
@@ -165,6 +169,7 @@ workerParentPort.on("message", (request: CollaborationWorkerRequest) => {
       stateUpdate,
       incrementalUpdate,
       changed: candidate.changed,
+      relocatedBlocks,
       materialization: request.includeMaterialization ? materialization : null
     };
     workerParentPort.postMessage(response, [stateUpdate.buffer, incrementalUpdate.buffer]);

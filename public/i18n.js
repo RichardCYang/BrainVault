@@ -11067,6 +11067,95 @@ const pageLimitTranslations = {
   }
 };
 
+// Data-loss follow-up: owner snapshots for delegated deletes, backup capacity,
+// relocated merge overflow, and split-paste merges.
+const dataLossFollowupTranslations = {
+  "en": {
+    "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "The owner's workspace could not be saved as a snapshot first, so nothing was deleted. Ask the owner to delete these pages.",
+    "errors.WORKSPACE_PAGE_LIMIT_EXCEEDED": "This workspace already has the most pages one backup can hold. Nothing was created. Delete or archive pages you no longer need first.",
+    "confirm.deleteOwnerSafetySnapshotNote": "To be safe, the owner's workspace is saved as a snapshot first; the owner can bring everything back from their Snapshots.",
+    "status.deletedWithOwnerSafetySnapshot": "A snapshot of the owner's workspace from just before was saved, so the owner can undo this.",
+    "account.safetySnapshotWorkspaceTooLarge": "Your workspace is larger than one backup can hold, so no safety copy can be made. Delete pages or large blocks you no longer need to make room.",
+    "account.backupCapacityNear": "Your workspace uses {percent}% of what one backup can hold. Past that, backups, snapshots and the safety copies before a restore or deletion can no longer be made.",
+    "account.backupCapacityExceeded": "Your workspace is larger than one backup can hold ({percent}%). Backups, snapshots and the safety copies before a restore or deletion cannot be made until you delete pages or large blocks you no longer need.",
+    "account.snapshotHistoryOmitted": "To fit, this snapshot left out its {count} oldest version history entries. All pages, blocks and files are included.",
+    "status.collaborationRepairRelocated": "Edits made at the same time went past a limit here, so the text that did not fit was moved into {count} new block(s) right below. Nothing was removed.",
+    "status.pasteSplitSourceChangedKept": "The block changed while the paste was being split, so the first part of the paste was added as its own block right below it. Nothing was lost."
+  },
+  "ja": {
+    "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "所有者のワークスペースを先にスナップショットとして保存できなかったため、何も削除していません。これらのページの削除は所有者に依頼してください。",
+    "errors.WORKSPACE_PAGE_LIMIT_EXCEEDED": "このワークスペースには、1つのバックアップに収まる最大数のページがすでにあります。何も作成していません。先に不要なページを削除またはアーカイブしてください。",
+    "confirm.deleteOwnerSafetySnapshotNote": "念のため、先に所有者のワークスペースをスナップショットとして保存します。所有者は自分のスナップショットからすべて元に戻せます。",
+    "status.deletedWithOwnerSafetySnapshot": "直前の所有者のワークスペースをスナップショットとして保存したので、所有者が元に戻せます。",
+    "account.safetySnapshotWorkspaceTooLarge": "ワークスペースが1つのバックアップに収まる大きさを超えているため、安全のためのコピーを作れません。不要なページや大きなブロックを削除して空きを作ってください。",
+    "account.backupCapacityNear": "ワークスペースは1つのバックアップに収まる量の {percent}% を使っています。これを超えると、バックアップ、スナップショット、復元や削除の前の安全コピーを作れなくなります。",
+    "account.backupCapacityExceeded": "ワークスペースが1つのバックアップに収まる大きさを超えています（{percent}%）。不要なページや大きなブロックを削除するまで、バックアップ、スナップショット、復元や削除の前の安全コピーを作れません。",
+    "account.snapshotHistoryOmitted": "収めるために、このスナップショットでは古い順にバージョン履歴 {count} 件を省きました。ページ、ブロック、ファイルはすべて含まれています。",
+    "status.collaborationRepairRelocated": "同時に行われた編集がここで上限を超えたため、収まらなかったテキストをすぐ下の新しいブロック {count} 個に移しました。何も削除していません。",
+    "status.pasteSplitSourceChangedKept": "貼り付けを分けている間にブロックが変更されたため、貼り付けの最初の部分をすぐ下の別のブロックとして追加しました。何も失われていません。"
+  },
+  "ko": {
+    "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "소유자의 워크스페이스를 먼저 스냅샷으로 저장하지 못해서 아무것도 삭제하지 않았습니다. 이 페이지들은 소유자에게 삭제를 부탁해 주세요.",
+    "errors.WORKSPACE_PAGE_LIMIT_EXCEEDED": "이 워크스페이스에는 백업 하나에 담을 수 있는 최대 개수의 페이지가 이미 있습니다. 아무것도 만들지 않았습니다. 먼저 필요 없는 페이지를 삭제하거나 보관해 주세요.",
+    "confirm.deleteOwnerSafetySnapshotNote": "안전을 위해 먼저 소유자의 워크스페이스를 스냅샷으로 저장합니다. 소유자는 자신의 스냅샷에서 모두 되돌릴 수 있습니다.",
+    "status.deletedWithOwnerSafetySnapshot": "직전의 소유자 워크스페이스를 스냅샷으로 저장해 두었으므로 소유자가 되돌릴 수 있습니다.",
+    "account.safetySnapshotWorkspaceTooLarge": "워크스페이스가 백업 하나에 담을 수 있는 크기를 넘어서 안전용 사본을 만들 수 없습니다. 필요 없는 페이지나 큰 블록을 삭제해 공간을 확보해 주세요.",
+    "account.backupCapacityNear": "워크스페이스가 백업 하나에 담을 수 있는 양의 {percent}%를 쓰고 있습니다. 이를 넘으면 백업, 스냅샷, 그리고 복원이나 삭제 전에 만드는 안전용 사본을 더 이상 만들 수 없습니다.",
+    "account.backupCapacityExceeded": "워크스페이스가 백업 하나에 담을 수 있는 크기를 넘었습니다({percent}%). 필요 없는 페이지나 큰 블록을 삭제하기 전까지는 백업, 스냅샷, 그리고 복원이나 삭제 전 안전용 사본을 만들 수 없습니다.",
+    "account.snapshotHistoryOmitted": "크기를 맞추느라 이 스냅샷에서는 가장 오래된 버전 기록 {count}개를 뺐습니다. 페이지, 블록, 파일은 모두 들어 있습니다.",
+    "status.collaborationRepairRelocated": "동시에 한 편집이 여기서 한도를 넘어서, 들어가지 않은 텍스트를 바로 아래 새 블록 {count}개로 옮겼습니다. 지워진 것은 없습니다.",
+    "status.pasteSplitSourceChangedKept": "붙여넣기를 나누는 동안 블록이 바뀌어서, 붙여넣은 내용의 첫 부분을 바로 아래에 별도 블록으로 넣었습니다. 잃어버린 내용은 없습니다."
+  },
+  "fr": {
+    "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "L’espace de travail du propriétaire n’a pas pu être enregistré d’abord en instantané : rien n’a été supprimé. Demandez au propriétaire de supprimer ces pages.",
+    "errors.WORKSPACE_PAGE_LIMIT_EXCEEDED": "Cet espace de travail contient déjà le nombre maximal de pages qu’une sauvegarde peut contenir. Rien n’a été créé. Supprimez ou archivez d’abord les pages inutiles.",
+    "confirm.deleteOwnerSafetySnapshotNote": "Par sécurité, l’espace de travail du propriétaire est d’abord enregistré en instantané ; le propriétaire peut tout récupérer depuis ses instantanés.",
+    "status.deletedWithOwnerSafetySnapshot": "Un instantané de l’espace de travail du propriétaire a été enregistré juste avant : le propriétaire peut annuler cette action.",
+    "account.safetySnapshotWorkspaceTooLarge": "Votre espace de travail dépasse ce qu’une sauvegarde peut contenir : aucune copie de sécurité n’est possible. Supprimez des pages ou de gros blocs inutiles pour faire de la place.",
+    "account.backupCapacityNear": "Votre espace de travail utilise {percent} % de ce qu’une sauvegarde peut contenir. Au-delà, les sauvegardes, les instantanés et les copies de sécurité avant une restauration ou une suppression ne sont plus possibles.",
+    "account.backupCapacityExceeded": "Votre espace de travail dépasse ce qu’une sauvegarde peut contenir ({percent} %). Sauvegardes, instantanés et copies de sécurité avant une restauration ou une suppression sont impossibles tant que vous n’avez pas supprimé des pages ou de gros blocs inutiles.",
+    "account.snapshotHistoryOmitted": "Pour tenir, cet instantané a laissé de côté ses {count} entrées d’historique les plus anciennes. Toutes les pages, blocs et fichiers sont inclus.",
+    "status.collaborationRepairRelocated": "Des modifications simultanées ont dépassé une limite ici : le texte qui ne tenait pas a été déplacé dans {count} nouveau(x) bloc(s) juste en dessous. Rien n’a été supprimé.",
+    "status.pasteSplitSourceChangedKept": "Le bloc a changé pendant le découpage du collage : la première partie du collage a été ajoutée comme bloc distinct juste en dessous. Rien n’a été perdu."
+  },
+  "de": {
+    "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "Der Arbeitsbereich des Eigentümers konnte nicht zuerst als Snapshot gespeichert werden, daher wurde nichts gelöscht. Bitte den Eigentümer, diese Seiten zu löschen.",
+    "errors.WORKSPACE_PAGE_LIMIT_EXCEEDED": "Dieser Arbeitsbereich hat bereits so viele Seiten, wie eine Sicherung fassen kann. Es wurde nichts erstellt. Lösche oder archiviere zuerst nicht mehr benötigte Seiten.",
+    "confirm.deleteOwnerSafetySnapshotNote": "Zur Sicherheit wird der Arbeitsbereich des Eigentümers zuerst als Snapshot gespeichert; der Eigentümer kann alles aus seinen Snapshots wiederherstellen.",
+    "status.deletedWithOwnerSafetySnapshot": "Ein Snapshot des Arbeitsbereichs des Eigentümers von kurz davor wurde gespeichert, der Eigentümer kann das also rückgängig machen.",
+    "account.safetySnapshotWorkspaceTooLarge": "Dein Arbeitsbereich ist größer, als eine Sicherung fassen kann, daher ist keine Sicherheitskopie möglich. Lösche nicht mehr benötigte Seiten oder große Blöcke, um Platz zu schaffen.",
+    "account.backupCapacityNear": "Dein Arbeitsbereich belegt {percent} % dessen, was eine Sicherung fassen kann. Darüber hinaus sind Sicherungen, Snapshots und die Sicherheitskopien vor einer Wiederherstellung oder Löschung nicht mehr möglich.",
+    "account.backupCapacityExceeded": "Dein Arbeitsbereich ist größer, als eine Sicherung fassen kann ({percent} %). Sicherungen, Snapshots und Sicherheitskopien vor einer Wiederherstellung oder Löschung sind erst wieder möglich, wenn du nicht mehr benötigte Seiten oder große Blöcke löschst.",
+    "account.snapshotHistoryOmitted": "Damit er passt, enthält dieser Snapshot seine {count} ältesten Versionsverlaufseinträge nicht. Alle Seiten, Blöcke und Dateien sind enthalten.",
+    "status.collaborationRepairRelocated": "Gleichzeitige Bearbeitungen haben hier ein Limit überschritten, daher wurde der Text, der nicht passte, in {count} neue(n) Block/Blöcke direkt darunter verschoben. Es wurde nichts entfernt.",
+    "status.pasteSplitSourceChangedKept": "Der Block hat sich geändert, während das Einfügen aufgeteilt wurde, daher wurde der erste Teil als eigener Block direkt darunter eingefügt. Nichts ging verloren."
+  },
+  "es": {
+    "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "No se pudo guardar antes una instantánea del espacio de trabajo del propietario, así que no se eliminó nada. Pide al propietario que elimine estas páginas.",
+    "errors.WORKSPACE_PAGE_LIMIT_EXCEEDED": "Este espacio de trabajo ya tiene el máximo de páginas que cabe en una copia de seguridad. No se creó nada. Elimina o archiva primero las páginas que ya no necesites.",
+    "confirm.deleteOwnerSafetySnapshotNote": "Por seguridad, primero se guarda una instantánea del espacio de trabajo del propietario; el propietario puede recuperarlo todo desde sus instantáneas.",
+    "status.deletedWithOwnerSafetySnapshot": "Se guardó una instantánea del espacio de trabajo del propietario justo antes, así que el propietario puede deshacerlo.",
+    "account.safetySnapshotWorkspaceTooLarge": "Tu espacio de trabajo es más grande de lo que cabe en una copia de seguridad, así que no se puede hacer una copia previa. Elimina páginas o bloques grandes que ya no necesites para hacer sitio.",
+    "account.backupCapacityNear": "Tu espacio de trabajo usa el {percent} % de lo que cabe en una copia de seguridad. Si lo supera, ya no se podrán hacer copias de seguridad, instantáneas ni las copias previas a una restauración o eliminación.",
+    "account.backupCapacityExceeded": "Tu espacio de trabajo es más grande de lo que cabe en una copia de seguridad ({percent} %). No se pueden hacer copias de seguridad, instantáneas ni copias previas a una restauración o eliminación hasta que elimines páginas o bloques grandes que ya no necesites.",
+    "account.snapshotHistoryOmitted": "Para que cupiera, esta instantánea dejó fuera sus {count} entradas más antiguas del historial de versiones. Incluye todas las páginas, bloques y archivos.",
+    "status.collaborationRepairRelocated": "Unas ediciones simultáneas superaron un límite aquí, así que el texto que no cabía se movió a {count} bloque(s) nuevo(s) justo debajo. No se eliminó nada.",
+    "status.pasteSplitSourceChangedKept": "El bloque cambió mientras se dividía el pegado, así que la primera parte se añadió como un bloque aparte justo debajo. No se perdió nada."
+  },
+  "pt": {
+    "errors.OWNER_DELETE_SAFETY_SNAPSHOT_FAILED": "Não foi possível salvar antes um snapshot do espaço de trabalho do dono, então nada foi excluído. Peça ao dono para excluir estas páginas.",
+    "errors.WORKSPACE_PAGE_LIMIT_EXCEEDED": "Este espaço de trabalho já tem o máximo de páginas que cabe em um backup. Nada foi criado. Exclua ou arquive primeiro as páginas de que não precisa mais.",
+    "confirm.deleteOwnerSafetySnapshotNote": "Por segurança, o espaço de trabalho do dono é salvo antes como snapshot; o dono pode recuperar tudo pelos próprios snapshots.",
+    "status.deletedWithOwnerSafetySnapshot": "Um snapshot do espaço de trabalho do dono foi salvo logo antes, então o dono pode desfazer isto.",
+    "account.safetySnapshotWorkspaceTooLarge": "Seu espaço de trabalho é maior do que cabe em um backup, então não é possível fazer uma cópia de segurança. Exclua páginas ou blocos grandes de que não precisa mais para liberar espaço.",
+    "account.backupCapacityNear": "Seu espaço de trabalho usa {percent}% do que cabe em um backup. Acima disso, backups, snapshots e as cópias de segurança antes de uma restauração ou exclusão não podem mais ser feitos.",
+    "account.backupCapacityExceeded": "Seu espaço de trabalho é maior do que cabe em um backup ({percent}%). Backups, snapshots e cópias de segurança antes de uma restauração ou exclusão não podem ser feitos até você excluir páginas ou blocos grandes de que não precisa mais.",
+    "account.snapshotHistoryOmitted": "Para caber, este snapshot deixou de fora as {count} entradas mais antigas do histórico de versões. Todas as páginas, blocos e arquivos estão incluídos.",
+    "status.collaborationRepairRelocated": "Edições feitas ao mesmo tempo passaram de um limite aqui, então o texto que não coube foi movido para {count} bloco(s) novo(s) logo abaixo. Nada foi removido.",
+    "status.pasteSplitSourceChangedKept": "O bloco mudou enquanto a colagem era dividida, então a primeira parte foi adicionada como um bloco separado logo abaixo. Nada foi perdido."
+  }
+};
+
 for (const [language, entries] of [
   ...Object.entries(catalogCompletionTranslations),
   ...Object.entries(apiErrorAndRecoveryTranslations),
@@ -11074,7 +11163,8 @@ for (const [language, entries] of [
   ...Object.entries(dataLossBrowserReviewTranslations),
   ...Object.entries(dataLossDeepReviewTranslations),
   ...Object.entries(splitPasteTranslations),
-  ...Object.entries(pageLimitTranslations)
+  ...Object.entries(pageLimitTranslations),
+  ...Object.entries(dataLossFollowupTranslations)
 ]) {
   const catalog = translationCatalogs[language];
   if (!catalog) continue;

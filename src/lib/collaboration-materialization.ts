@@ -370,6 +370,120 @@ function textCutIndex(text: string, limit: number) {
   return code >= 0xd800 && code <= 0xdbff ? limit - 1 : limit;
 }
 
+// Values that name or style things rather than hold what someone wrote. A
+// repair renames duplicate ids, so counting them would report a loss.
+const structuralRepairKeys = new Set(["id", "rowIds", "color", "icon", "type", "kind"]);
+
+function countRepairStrings(value: unknown, key: string, counts: Map<string, number>) {
+  if (typeof value === "string") {
+    if (value.trim() && !structuralRepairKeys.has(key)) counts.set(value, (counts.get(value) ?? 0) + 1);
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (structuralRepairKeys.has(key)) return;
+    for (const item of value) countRepairStrings(item, key, counts);
+    return;
+  }
+  if (isDecodedObject(value)) {
+    for (const [childKey, item] of Object.entries(value)) countRepairStrings(item, childKey, counts);
+  }
+}
+
+/**
+ * The text a metadata repair drops or shortens: every written string of
+ * `before` that `after` no longer holds as many times. A shortened string is
+ * reported whole, so nothing of it is lost (its start then appears twice).
+ */
+export function lostRepairText(before: unknown, after: unknown): string {
+  const beforeCounts = new Map<string, number>();
+  const afterCounts = new Map<string, number>();
+  countRepairStrings(before, "", beforeCounts);
+  countRepairStrings(after, "", afterCounts);
+  const lost: string[] = [];
+  for (const [text, count] of beforeCounts) {
+    for (let index = afterCounts.get(text) ?? 0; index < count; index += 1) lost.push(text);
+  }
+  return lost.join("\n");
+}
+
+/** "text": past a block's text limit; "lost": dropped by a metadata repair; "title": past the title limit. */
+type OverflowEntry = { sourceId: string | null; kind: "title" | "text" | "lost"; text: string };
+type OverflowContinuation = {
+  id: string;
+  map: Y.Map<unknown>;
+  parentBlockId: string | null;
+  /** Placed right after this block, or first among its siblings when null. */
+  afterId: string | null;
+};
+
+function buildOverflowContinuations(
+  overflow: OverflowEntry[],
+  live: Map<string, Y.Map<unknown>>,
+  budget: DecodeBudget
+): OverflowContinuation[] {
+  const continuations: OverflowContinuation[] = [];
+  for (const { sourceId, kind, text } of overflow) {
+    const source = sourceId === null ? null : live.get(sourceId) ?? null;
+    const parentBlockId = source ? readRepairString(source.get("parentBlockId")) : null;
+    // Text past a code or quote block's limit stays code or a quote (as a long
+    // paste does); anything else, and text a structured block could not hold,
+    // continues as plain text.
+    const sourceType = source ? readYjsValue(source.get("type"), 0, budget) : null;
+    const type = kind === "text" && (sourceType === "CODE" || sourceType === "QUOTE") ? sourceType : "MARKDOWN";
+    const metadata = type === "CODE" ? readYjsValue(source!.get("metadata"), 0, budget) : null;
+    let afterId = sourceId;
+    let rest = text;
+    while (rest.length) {
+      const pieceEnd = textCutIndex(rest, collaborationBlockMarkdownLimit);
+      const map = new Y.Map<unknown>();
+      map.set("type", type);
+      map.set("markdown", createRepairValue(rest.slice(0, pieceEnd)));
+      map.set("checked", false);
+      map.set("parentBlockId", parentBlockId === null ? null : createRepairValue(parentBlockId));
+      map.set("sortOrder", 0);
+      map.set("metadata", isDecodedObject(metadata) ? createRepairValue(metadata) : null);
+      const id = createId("blk");
+      continuations.push({ id, map, parentBlockId, afterId });
+      afterId = id;
+      rest = rest.slice(pieceEnd);
+    }
+  }
+  return continuations;
+}
+
+/**
+ * Puts each continuation right after the block it continues and renumbers
+ * those siblings 0, 1, 2, ... A continuation given its source's sort order + 1
+ * could tie with the next sibling and land in a random place.
+ */
+function placeOverflowContinuations(
+  continuations: OverflowContinuation[],
+  live: Map<string, Y.Map<unknown>>,
+  budget: DecodeBudget
+) {
+  const parents = new Set(continuations.map((item) => item.parentBlockId));
+  for (const parentBlockId of parents) {
+    const order = [...live.entries()]
+      .filter(([, map]) => readRepairString(map.get("parentBlockId")) === parentBlockId)
+      .map(([id, map]) => {
+        const sortOrder = Number(readYjsValue(map.get("sortOrder"), 0, budget));
+        return { id, map, sortOrder: Number.isSafeInteger(sortOrder) ? sortOrder : 0 };
+      })
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
+      .map(({ id, map }) => ({ id, map }));
+    for (const continuation of continuations) {
+      if (continuation.parentBlockId !== parentBlockId) continue;
+      const at = continuation.afterId === null
+        ? 0
+        : order.findIndex((item) => item.id === continuation.afterId) + 1;
+      order.splice(at > 0 || continuation.afterId === null ? at : order.length, 0, continuation);
+    }
+    order.forEach(({ map }, index) => {
+      if (Number(readYjsValue(map.get("sortOrder"), 0, budget)) !== index) map.set("sortOrder", index);
+    });
+  }
+}
+
 /**
  * Validates a candidate produced by applyValidatedYjsStateUpdate and, when a
  * concurrent merge broke a document rule, repairs it and re-encodes the
@@ -380,16 +494,37 @@ function textCutIndex(text: string, limit: number) {
 export function validateCollaborationCandidate(
   candidate: ValidatedYjsUpdate,
   { maxStateBytes, allowRepair }: { maxStateBytes: number; allowRepair: boolean }
-): { candidate: ValidatedYjsUpdate; materialization: CollaborationMaterialization; repaired: boolean } {
+): {
+  candidate: ValidatedYjsUpdate;
+  materialization: CollaborationMaterialization;
+  repaired: boolean;
+  relocatedBlocks: number;
+} {
   try {
-    return { candidate, materialization: readCollaborationMaterialization(candidate.document), repaired: false };
+    return {
+      candidate,
+      materialization: readCollaborationMaterialization(candidate.document),
+      repaired: false,
+      relocatedBlocks: 0
+    };
   } catch (error) {
     if (!(error instanceof CollaborationDocumentError) || !allowRepair || !candidate.changed) throw error;
-    if (!repairCollaborationDocument(candidate.document)) throw error;
+    const report: CollaborationRepairReport = { relocatedBlocks: 0 };
+    if (!repairCollaborationDocument(candidate.document, report)) throw error;
     const repaired = reencodeValidatedYjsCandidate(candidate, maxStateBytes);
-    return { candidate: repaired, materialization: readCollaborationMaterialization(repaired.document), repaired: true };
+    return {
+      candidate: repaired,
+      materialization: readCollaborationMaterialization(repaired.document),
+      repaired: true,
+      relocatedBlocks: report.relocatedBlocks
+    };
   }
 }
+
+export type CollaborationRepairReport = {
+  /** New blocks that now hold text a limit would otherwise have cut off. */
+  relocatedBlocks: number;
+};
 
 /**
  * Applies the repairs described above to `document` in one transaction.
@@ -398,9 +533,11 @@ export function validateCollaborationCandidate(
  * (an unsafe key, too many blocks, unsupported values); the update is then
  * rejected as before.
  */
-export function repairCollaborationDocument(document: Y.Doc): boolean {
+export function repairCollaborationDocument(document: Y.Doc, report?: CollaborationRepairReport): boolean {
   let changed = false;
   document.transact(() => {
+    // Overflow, in order: where it came from (null: the title) and its text.
+    const overflow: OverflowEntry[] = [];
     const title = document.getText("title");
     const titleValue = title.toString();
     if (!titleValue.trim()) {
@@ -408,7 +545,9 @@ export function repairCollaborationDocument(document: Y.Doc): boolean {
       title.insert(0, untitledCollaborationTitle);
       changed = true;
     } else if (titleValue.length > collaborationTitleLimit) {
+      // Two people typing into a nearly full title: the rest opens the page.
       const cut = textCutIndex(titleValue, collaborationTitleLimit);
+      overflow.push({ sourceId: null, kind: "title", text: titleValue.slice(cut) });
       title.delete(cut, titleValue.length - cut);
       changed = true;
     }
@@ -425,8 +564,7 @@ export function repairCollaborationDocument(document: Y.Doc): boolean {
     }
 
     const budget: DecodeBudget = { nodes: 0 };
-    const continuations: Array<{ id: string; map: Y.Map<unknown> }> = [];
-    for (const [, map] of live) {
+    for (const [id, map] of live) {
       const type = blockTypeSchema.safeParse(readYjsValue(map.get("type"), 0, budget));
 
       // Text over the block limit (two people typing into a nearly full block)
@@ -435,24 +573,8 @@ export function repairCollaborationDocument(document: Y.Doc): boolean {
       if (markdown instanceof Y.Text && markdown.length > collaborationBlockMarkdownLimit) {
         const text = markdown.toString();
         const cut = textCutIndex(text, collaborationBlockMarkdownLimit);
-        let rest = text.slice(cut);
+        overflow.push({ sourceId: id, kind: "text", text: text.slice(cut) });
         markdown.delete(cut, text.length - cut);
-        const parentBlockId = readRepairString(map.get("parentBlockId"));
-        let sortOrder = Number(readYjsValue(map.get("sortOrder"), 0, budget));
-        if (!Number.isSafeInteger(sortOrder) || sortOrder < 0) sortOrder = 0;
-        while (rest.length) {
-          const pieceEnd = textCutIndex(rest, collaborationBlockMarkdownLimit);
-          sortOrder = Math.min(2_147_483_647, sortOrder + 1);
-          const continuation = new Y.Map<unknown>();
-          continuation.set("type", "MARKDOWN");
-          continuation.set("markdown", createRepairValue(rest.slice(0, pieceEnd)));
-          continuation.set("checked", false);
-          continuation.set("parentBlockId", parentBlockId === null ? null : createRepairValue(parentBlockId));
-          continuation.set("sortOrder", sortOrder);
-          continuation.set("metadata", null);
-          continuations.push({ id: createId("blk"), map: continuation });
-          rest = rest.slice(pieceEnd);
-        }
         changed = true;
       }
 
@@ -463,6 +585,11 @@ export function repairCollaborationDocument(document: Y.Doc): boolean {
       if (isValidStructuredMetadata(type.data, metadata)) continue;
       const repaired = normalizeStructuredBlockMetadata(type.data, metadata);
       if (!repaired || !isValidStructuredMetadata(type.data, repaired)) continue;
+      // The editor's limits (cards per column, rows, text length) can drop or
+      // shorten what two merged edits held together. Whatever text the repair
+      // would lose goes into a new block right below instead.
+      const lost = lostRepairText(metadata, repaired);
+      if (lost) overflow.push({ sourceId: id, kind: "lost", text: lost });
       const current = map.get("metadata");
       if (current instanceof Y.Map) {
         reconcileRepairValue(current, repaired, (replacement) => map.set("metadata", replacement));
@@ -472,12 +599,17 @@ export function repairCollaborationDocument(document: Y.Doc): boolean {
       changed = true;
     }
 
+    const continuations = buildOverflowContinuations(overflow, live, budget);
     if (live.size + continuations.length > maxCollaborationBlocks) {
       invalidDocument("The collaboration document contains too many blocks");
     }
     for (const { id, map } of continuations) {
       blocks.set(id, map);
-      live.set(id, map);
+    }
+    if (continuations.length) {
+      placeOverflowContinuations(continuations, live, budget);
+      for (const { id, map } of continuations) live.set(id, map);
+      if (report) report.relocatedBlocks += continuations.length;
     }
 
     // Hierarchy: a parent a peer deleted, a cycle from two crossing moves, or

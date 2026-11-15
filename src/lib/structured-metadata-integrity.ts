@@ -10,6 +10,7 @@ import { isPrivateOrLocalHostname } from "./network-address.js";
 import { isValidIconValue } from "./icon-value.js";
 
 const tableLimits = { rows: 50, columns: 20, cellLength: 4_000 } as const;
+const tableRowIdPattern = /^[A-Za-z0-9_-]{1,64}$/;
 const kanbanLimits = {
   columns: 12,
   cardsPerColumn: 50,
@@ -299,7 +300,14 @@ function canonicalBookmarkUrl(value: unknown, path: string, baseUrl?: string) {
 function assertTableMetadata(root: MetadataRecord) {
   const table = optionalRecord(root.table, "metadata.table");
   if (!table) return;
-  assertAllowedKeys(table, "metadata.table", ["rows", "headerRow", "headerColumn"]);
+  assertAllowedKeys(table, "metadata.table", ["rows", "rowIds", "headerRow", "headerColumn"]);
+  // Tables saved before row ids existed have none; the canonical check below
+  // requires one per row once they are present.
+  const rowIds = optionalArray(table.rowIds, "metadata.table.rowIds", tableLimits.rows);
+  rowIds?.forEach((rowId, rowIndex) => {
+    const path = `metadata.table.rowIds[${rowIndex}]`;
+    if (typeof rowId !== "string" || !tableRowIdPattern.test(rowId)) fail(path, "must be a row id");
+  });
   const rows = optionalArray(table.rows, "metadata.table.rows", tableLimits.rows);
   if (rows) {
     rows.forEach((rawRow, rowIndex) => {

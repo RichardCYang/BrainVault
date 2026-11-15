@@ -1740,6 +1740,15 @@ export class PageCollaborationHub {
         }
       }
     }
+    // A merge of concurrent edits went past a limit and the repair moved the
+    // text that did not fit into new blocks. Tell everyone on the page, so the
+    // person whose text moved knows where it went.
+    const relocatedBlocks = Number(validation.relocatedBlocks ?? 0);
+    if (relocatedBlocks > 0) {
+      for (const target of authorizedTargets) {
+        target.socket.sendJson({ type: "repair-notice", updateId: result.updateId, relocatedBlocks });
+      }
+    }
     if (room.clients.has(client.id) && client.socket.isOpen) {
       client.socket.sendJson({ type: "update-ack", updateId: result.updateId, snapshot });
     }

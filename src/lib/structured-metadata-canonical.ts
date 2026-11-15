@@ -103,6 +103,22 @@ function normalizeLegacyStructuredDefaultsForComparison(
     delete legacyCompatibleModel.maxItems;
     return legacyCompatibleModel;
   }
+  if (
+    policy.metadataKey === "table"
+    && requestedModel
+    && typeof requestedModel === "object"
+    && !Array.isArray(requestedModel)
+    && !Object.prototype.hasOwnProperty.call(requestedModel, "rowIds")
+    && normalizedModel
+    && typeof normalizedModel === "object"
+    && !Array.isArray(normalizedModel)
+  ) {
+    // Tables saved before row ids existed (and older browsers) carry none.
+    // Their positional ids are derived on read, so they stay valid as saved.
+    const legacyCompatibleModel = { ...(normalizedModel as Record<string, unknown>) };
+    delete legacyCompatibleModel.rowIds;
+    return legacyCompatibleModel;
+  }
   return normalizedModel;
 }
 

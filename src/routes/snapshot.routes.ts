@@ -8,6 +8,7 @@ import {
   restoreWorkspaceSnapshot,
   wantsRestoreWithoutSafetySnapshot
 } from "../lib/workspace-snapshots.js";
+import { getWorkspaceBackupCapacity } from "../lib/data-transfer.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { requireRestoreOperationId } from "../lib/data-restore-operation.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
@@ -27,8 +28,11 @@ snapshotRouter.use(requireAuth);
 
 snapshotRouter.get("/", async (req, res) => {
   const user = requireUser(req.user);
-  const snapshots = await listWorkspaceSnapshots(user.id);
-  res.json({ snapshots });
+  const [snapshots, capacity] = await Promise.all([
+    listWorkspaceSnapshots(user.id),
+    getWorkspaceBackupCapacity(user.id)
+  ]);
+  res.json({ snapshots, capacity });
 });
 
 snapshotRouter.post("/", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res) => {

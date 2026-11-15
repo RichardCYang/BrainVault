@@ -6,9 +6,44 @@ export const tableLimits = {
 
 export type TableData = {
   rows: string[][];
+  /** One stable id per row, parallel to `rows` (see public/table-rows.js). */
+  rowIds: string[];
   headerRow: boolean;
   headerColumn: boolean;
 };
+
+export const tableRowIdPattern = /^[A-Za-z0-9_-]{1,64}$/;
+
+function isValidTableRowId(value: unknown): value is string {
+  return typeof value === "string" && tableRowIdPattern.test(value);
+}
+
+function uniqueRowId(id: string, used: Set<string>) {
+  if (!used.has(id)) return id;
+  for (let suffix = 2; ; suffix += 1) {
+    const tail = `-${suffix}`;
+    const candidate = `${id.slice(0, 64 - tail.length)}${tail}`;
+    if (!used.has(candidate)) return candidate;
+  }
+}
+
+/**
+ * Mirrors normalizeTableRowIds in public/table-rows.js exactly. Tables saved
+ * before row ids existed get positional ids (row-0, row-1, ...), so every
+ * browser and the server agree on an old table's rows. A repeated id (two
+ * peers' merges) is renamed with a suffix so no row is lost.
+ */
+export function normalizeTableRowIds(rowCount: number, sourceIds: unknown): string[] {
+  const ids: string[] = [];
+  const used = new Set<string>();
+  for (let index = 0; index < rowCount; index += 1) {
+    const raw = Array.isArray(sourceIds) ? sourceIds[index] : undefined;
+    const id = uniqueRowId(isValidTableRowId(raw) ? raw : `row-${index}`, used);
+    used.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
 
 function parseMetadata(metadata: unknown): Record<string, unknown> | null {
   if (!metadata) return null;
@@ -39,6 +74,7 @@ export function createDefaultTableData(rows = 3, columns = 3): TableData {
   const safeColumns = Math.max(1, Math.min(tableLimits.columns, Math.trunc(columns) || 3));
   return {
     rows: Array.from({ length: safeRows }, () => Array.from({ length: safeColumns }, () => "")),
+    rowIds: normalizeTableRowIds(safeRows, null),
     headerRow: false,
     headerColumn: false
   };
@@ -50,6 +86,7 @@ export function getTableData(metadata: unknown): TableData {
 
   const source = table as Record<string, unknown>;
   const sourceRows = Array.isArray(source.rows) ? source.rows.slice(0, tableLimits.rows) : [];
+  const sourceIds = Array.isArray(source.rowIds) ? source.rowIds : [];
   const columnCount = Math.max(
     1,
     Math.min(
@@ -58,12 +95,19 @@ export function getTableData(metadata: unknown): TableData {
     )
   );
 
-  const rows = sourceRows
-    .filter(Array.isArray)
-    .map((row) => Array.from({ length: columnCount }, (_, index) => normalizeCell(row[index])));
+  // A dropped malformed row takes its id with it, so ids stay on their rows.
+  const rows: string[][] = [];
+  const keptIds: unknown[] = [];
+  sourceRows.forEach((row, index) => {
+    if (!Array.isArray(row)) return;
+    rows.push(Array.from({ length: columnCount }, (_, column) => normalizeCell(row[column])));
+    keptIds.push(sourceIds[index]);
+  });
+  const finalRows = rows.length ? rows : createDefaultTableData(3, columnCount).rows;
 
   return {
-    rows: rows.length ? rows : createDefaultTableData(3, columnCount).rows,
+    rows: finalRows,
+    rowIds: normalizeTableRowIds(finalRows.length, rows.length ? keptIds : null),
     headerRow: source.headerRow === true,
     headerColumn: source.headerColumn === true
   };

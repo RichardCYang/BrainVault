@@ -110,11 +110,12 @@ describe("deleting many pages at once can be undone", () => {
   const deleteRoute = routes.slice(routes.indexOf('pageRouter.delete(\n  "/:pageId"'));
 
   it("saves a snapshot before a collection or nested pages are permanently deleted", () => {
-    const snapshot = deleteRoute.indexOf("createPreDeleteSafetySnapshot(user.id, authScope)");
+    // The copy goes to the page owner's workspace, also when a collection
+    // administrator deletes the owner's pages (see data-loss-followup tests).
+    const snapshot = deleteRoute.indexOf("createPreDeleteSafetySnapshot(\n              workspaceOwnerId,");
     const transactionStart = deleteRoute.indexOf("const deletion = await transaction(");
     expect(snapshot).toBeGreaterThan(-1);
     expect(snapshot).toBeLessThan(transactionStart);
-    expect(deleteRoute).toMatch(/pageOwnerHint\?\.owner_id === user\.id/);
     expect(deleteRoute).toMatch(/req\.header\(deleteSafetySnapshotSkipHeader\) !== "1"/);
     const helper = routes.slice(routes.indexOf("async function needsPreDeleteSafetySnapshot("));
     expect(helper).toMatch(/FROM page_delete_mutations WHERE actor_id = \? AND mutation_id = \?/);

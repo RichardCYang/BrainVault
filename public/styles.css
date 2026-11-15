@@ -19874,3 +19874,21 @@ body.auth-mode {
 .gantt-scale-select:focus-visible {
   box-shadow: inset 0 0 0 2px var(--focus);
 }
+
+/* The workspace is close to (or past) what one backup can hold. */
+.account-snapshot-capacity-warning {
+  margin: 0 0 0.75rem;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.account-snapshot-history-omitted {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}

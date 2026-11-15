@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { joinSummaryPrefix } from '../../public/summary-prefix.js';
 import { t, setLanguage } from '../../public/i18n.js';
+import { normalizeTableRowIds } from '../../public/table-rows.js';
 export { setLanguage };
 export const original = JSON.parse(readFileSync(new URL('../fixtures/bounded-save-summary-original.json', import.meta.url), 'utf8'));
 export const currentApp = readFileSync(new URL('../../public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -22,7 +23,7 @@ export function makeHarness(mode = 'current', { crypto = { randomUUID } } = {}) 
   // BookmarkData parameter; no unrelated server imports are stubbed or executed.
   const serverSummary = (old ? original.serverSummary : extractFunction(currentServer, 'summarizeBookmarkData'))
     .replace('export function summarizeBookmarkData(data: BookmarkData)', 'function serverSummary(data)');
-  return new Function('joinSummaryPrefix','t','globalThis', `
+  return new Function('joinSummaryPrefix','t','globalThis','normalizeTableRowIds', `
     ${section('table','const tableLimits =','const kanbanLimits =')}
     ${section('kanban','const kanbanLimits =','const bookmarkLimits =')}
     ${section('bookmark','const bookmarkLimits =','const slashCommands =')}
@@ -42,7 +43,7 @@ export function makeHarness(mode = 'current', { crypto = { randomUUID } } = {}) 
       tableSummary: table => buildBlockPayload({dataset:{blockType:'TABLE'},data:table},null).markdown,
       createClientId,validateKanbanTags
     };
-  `)(joinSummaryPrefix,t,{crypto});
+  `)(joinSummaryPrefix,t,{crypto},normalizeTableRowIds);
 }
 export function makeFixture(kind, salt = 0, small = false) {
   const text = (n, marker) => `${salt}:${marker}:`.padEnd(n, 'x').slice(0,n);
