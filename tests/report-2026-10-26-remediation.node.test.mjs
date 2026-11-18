@@ -83,7 +83,7 @@ test('BV-PT-04: package and lockfile pin known patched versions', () => {
   const p = JSON.parse(read('package.json'));
   const l = JSON.parse(read('package-lock.json'));
   assert.deepEqual(l.packages[''].dependencies, p.dependencies);
-  const requirements = { 'markdown-it': '14.3.3', 'proxy-addr': '2.0.8', 'body-parser': '2.4.0', 'mariadb':'3.5.4', 'multer':'2.5.0', 'sanitize-html':'2.18.1', 'morgan':'1.12.1', 'ip-address':'10.7.5', 'source-map-js':'1.2.2' };
+  const requirements = { 'markdown-it': '14.3.3', 'proxy-addr': '2.0.8', 'body-parser': '2.4.0', 'mariadb':'3.5.5', 'multer':'2.5.0', 'sanitize-html':'2.18.2', 'morgan':'1.12.1', 'ip-address':'10.7.5', 'source-map-js':'1.2.2' };
   for (const [name,version] of Object.entries(requirements)) {
     assert.equal(l.packages[`node_modules/${name}`]?.version, version);
   }

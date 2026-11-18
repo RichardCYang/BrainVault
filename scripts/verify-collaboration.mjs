@@ -752,7 +752,7 @@ function verifyDependencyPins() {
     packageLock.packages?.["node_modules/yjs"]?.integrity,
     "sha512-Eq+5BRfbeGyqGVrTJL3bEcr8gKkxPuyuoHmAwpk52fDb8kOVMrfVSTRPd6yiGgX5Fskb96qCRjzjbRjrL4YEnw=="
   );
-  assert.equal(packageLock.packages?.["node_modules/lib0"]?.version, "0.2.99");
+  assert.equal(packageLock.packages?.["node_modules/lib0"]?.version, "0.2.120");
   assert.equal(packageLock.packages?.["node_modules/isomorphic.js"]?.version, "0.2.5");
 }
 
