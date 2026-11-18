@@ -21,7 +21,7 @@ export class BoundedRateLimitStore implements Store {
     this.clock = clock;
   }
 
-  init(options: Options): void {
+  init(options: Pick<Options, "windowMs">): void {
     if (!Number.isSafeInteger(options.windowMs) || options.windowMs < 1) {
       throw new RangeError("Invalid rate-limit window");
     }

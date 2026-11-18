@@ -20,27 +20,36 @@ import { db, transaction, TransactionCommitOutcomeUnknownError, type DbClient } 
 import { ApiError } from "./http.js";
 import { createId } from "./id.js";
 import { diffWorkspaceManifests } from "./workspace-snapshot-diff.js";
-import { selectAutomaticSnapshotsToPrune } from "./automatic-snapshot-retention.js";
+import { automaticSnapshotRecentHardMaxCount, selectAutomaticSnapshotsToPrune } from "./automatic-snapshot-retention.js";
+import { BoundedRateLimitStore } from "./bounded-rate-limit-store.js";
 
 const snapshotIdPattern = /^snapshot_[a-f0-9]{32}$/;
 const snapshotStorageRoot = path.join(attachmentUploadRoot, ".workspace-snapshots");
 const snapshotDataTransferOptions = Object.freeze({ enforceConfiguredSizeLimits: false });
 const maxSnapshotArchiveBytes = BigInt(env.SNAPSHOT_MAX_ARCHIVE_MB) * 1024n * 1024n;
 const maxSnapshotStorageBytes = BigInt(env.SNAPSHOT_TOTAL_MAX_MB) * 1024n * 1024n;
+const maxAutomaticSnapshotStorageBytes = BigInt(env.SNAPSHOT_AUTO_TOTAL_MAX_MB) * 1024n * 1024n;
+// Keep room for a new safety copy for each kind before post-success pruning.
+// Failed operations and delegated deletes must also stop at this hard limit.
+const maxAutomaticSnapshotCount = 2 * (automaticSnapshotRecentHardMaxCount + 1);
+const activeSnapshotOwners = new Set<string>();
+const automaticSnapshotRateStore = new BoundedRateLimitStore();
+automaticSnapshotRateStore.init({ windowMs: env.DATA_EXPORT_WINDOW_MS });
 
-async function assertSnapshotCapacity(userId: string, client: DbClient, additionalBytes = 0n) {
+async function assertSnapshotCapacity(userId: string, client: DbClient, kind: SnapshotKind, additionalBytes = 0n) {
   // Call only after assertCurrentAuthSessionBoundary has locked the users row.
   // That user lock serializes create/delete quota decisions across callers.
   const usage = await client.queryOne<{ snapshot_count: number; total_bytes: string | number | bigint }>(
     `SELECT COUNT(*) AS snapshot_count, COALESCE(SUM(archive_size), 0) AS total_bytes
-     FROM workspace_snapshots WHERE user_id = ? AND kind = 'MANUAL'`,
+     FROM workspace_snapshots WHERE user_id = ? AND ${kind === "MANUAL" ? "kind = 'MANUAL'" : "kind IN ('PRE_RESTORE', 'PRE_DELETE')"}`,
     [userId]
   );
   const snapshotCount = Number(usage?.snapshot_count ?? 0);
-  if (snapshotCount >= env.SNAPSHOT_MAX_COUNT) {
+  if (snapshotCount >= (kind === "MANUAL" ? env.SNAPSHOT_MAX_COUNT : maxAutomaticSnapshotCount)) {
     throw new ApiError(409, "SNAPSHOT_LIMIT_REACHED", "Delete an existing snapshot before creating another one");
   }
-  const remainingBytes = maxSnapshotStorageBytes - BigInt(usage?.total_bytes ?? 0);
+  const remainingBytes = (kind === "MANUAL" ? maxSnapshotStorageBytes : maxAutomaticSnapshotStorageBytes)
+    - BigInt(usage?.total_bytes ?? 0);
   if (remainingBytes <= 0n || additionalBytes > remainingBytes) {
     throw new ApiError(409, "SNAPSHOT_STORAGE_LIMIT_REACHED", "Delete an existing snapshot to free snapshot storage");
   }
@@ -238,7 +247,11 @@ export async function listWorkspaceSnapshots(userId: string) {
  * their own session instead: the snapshot still belongs to the owner, who is
  * the one who can restore it.
  */
-type SnapshotActor = Readonly<{ userId: string }>;
+type SnapshotActor = Readonly<{
+  userId: string;
+  /** Revalidate the exact destructive operation under the locked users. */
+  authorize?: (client: DbClient) => Promise<void>;
+}>;
 
 async function assertSnapshotBoundary(
   userId: string,
@@ -248,6 +261,7 @@ async function assertSnapshotBoundary(
 ) {
   if (!actor || actor.userId === userId) {
     await assertCurrentAuthSessionBoundary(userId, authScope, client);
+    await actor?.authorize?.(client);
     return;
   }
   // Same deterministic user-lock order as a delegated page deletion.
@@ -258,6 +272,7 @@ async function assertSnapshotBoundary(
   );
   if (!locked.some((row) => row.id === userId)) throw new ApiError(404, "NOT_FOUND", "Workspace owner not found");
   await assertCurrentAuthSessionBoundary(actor.userId, authScope, client);
+  await actor.authorize?.(client);
 }
 
 export async function createWorkspaceSnapshot(
@@ -266,18 +281,48 @@ export async function createWorkspaceSnapshot(
   kind: SnapshotKind = "MANUAL",
   actor?: SnapshotActor
 ) {
-  if (kind === "MANUAL" && actor && actor.userId !== userId) {
-    throw new Error("Only the owner can create a manual snapshot");
+  if (actor && actor.userId !== userId && (kind !== "PRE_DELETE" || !actor.authorize)) {
+    throw new ApiError(403, "SNAPSHOT_OWNER_REQUIRED", "Only an authorized page deletion can create a delegated safety snapshot");
   }
+  // Hold admission until the actual writer settles, including after an HTTP
+  // disconnect. Different delegates cannot stage the same owner's files at once.
+  if (activeSnapshotOwners.has(userId)) {
+    throw new ApiError(429, "DATA_EXPORT_IN_PROGRESS", "Another snapshot is already active for this workspace");
+  }
+  if (activeSnapshotOwners.size >= env.DATA_EXPORT_MAX_CONCURRENT) {
+    throw new ApiError(503, "DATA_EXPORT_BUSY", "The server is already creating the maximum number of snapshots");
+  }
+  activeSnapshotOwners.add(userId);
+  try {
+    return await createAdmittedWorkspaceSnapshot(userId, authScope, kind, actor);
+  } finally {
+    activeSnapshotOwners.delete(userId);
+  }
+}
+
+async function createAdmittedWorkspaceSnapshot(
+  userId: string,
+  authScope: AuthSessionBoundaryScope,
+  kind: SnapshotKind,
+  actor?: SnapshotActor
+) {
   // Reject full accounts before staging/copying any workspace files. The HTTP
   // export gate permits one operation per user; the final locked recheck also
   // covers direct callers and quota changes during archive preparation.
-  // Automatic pre-restore snapshots are bounded by SNAPSHOT_AUTO_MAX_COUNT
-  // instead, so a full manual quota never blocks the safety copy.
+  // Automatic snapshots have their own bounded quota, so a full manual quota
+  // never consumes the storage reserved for a safety copy.
   const remainingBytes = await transaction(async (client) => {
     await assertSnapshotBoundary(userId, authScope, client, actor);
-    return kind === "MANUAL" ? assertSnapshotCapacity(userId, client) : maxSnapshotArchiveBytes;
+    return assertSnapshotCapacity(userId, client, kind);
   });
+  // Charge the actor only after authorization, and only for work that actually
+  // creates an automatic archive. Plain deletes and receipt replays stay cheap.
+  if (kind !== "MANUAL") {
+    const rate = await automaticSnapshotRateStore.increment(actor?.userId ?? userId);
+    if (rate.totalHits > env.DATA_EXPORT_MAX) {
+      throw new ApiError(429, "DATA_EXPORT_RATE_LIMITED", "Too many safety snapshot requests. Try again later.");
+    }
+  }
   const snapshotId = createId("snapshot");
   const { finalPath, inspection, counts, historyEntriesOmitted } = await writeSnapshotArchive(userId, snapshotId, remainingBytes);
 
@@ -287,7 +332,7 @@ export async function createWorkspaceSnapshot(
       // Revalidate the exact credential/device session at the durable insertion
       // boundary so a request admitted before revocation cannot persist recovery data.
       await assertSnapshotBoundary(userId, authScope, client, actor);
-      if (kind === "MANUAL") await assertSnapshotCapacity(userId, client, inspection.size);
+      await assertSnapshotCapacity(userId, client, kind, inspection.size);
       await client.execute(
         `INSERT INTO workspace_snapshots
            (id, user_id, archive_size, archive_sha256, page_count, block_count, attachment_count, page_version_count,
@@ -373,7 +418,7 @@ export async function createPreRestoreSafetySnapshot(
     created = await createWorkspaceSnapshot(userId, authScope, "PRE_RESTORE");
   } catch (error) {
     // A revoked or expired session is not a storage problem; keep its answer.
-    if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) throw error;
+    if (error instanceof ApiError && [401, 403, 429, 503].includes(error.statusCode)) throw error;
     console.error("Pre-restore safety snapshot failed; the restore was not started", { userId, error });
     throw new ApiError(
       409,
@@ -412,7 +457,8 @@ export async function createPreDeleteSafetySnapshot(
     // owner's, so the owner can undo a deletion someone else made.
     return await createWorkspaceSnapshot(userId, authScope, "PRE_DELETE", actor);
   } catch (error) {
-    if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) throw error;
+    if (error instanceof ApiError && ([401, 403, 404, 429, 503].includes(error.statusCode)
+      || ["PAGE_EDIT_CONFLICT", "PAGE_OWNER_CHANGED"].includes(error.code))) throw error;
     console.error("Pre-delete safety snapshot failed; the deletion was not started", { userId, error });
     throw new ApiError(
       409,
@@ -454,6 +500,8 @@ export async function pruneAutomaticSnapshots(
   keepIds: Array<string | null | undefined> = [],
   actor?: SnapshotActor
 ) {
+  // Page administration never authorizes workspace-wide recovery deletion.
+  if (actor && actor.userId !== userId) return;
   const keep = keepIds.filter((id): id is string => typeof id === "string" && id.length > 0);
   try {
     const rows = await db.query<{ id: string; kind: SnapshotKind; recent: number | null }>(
@@ -474,7 +522,7 @@ export async function pruneAutomaticSnapshots(
       });
     }
   } catch (error) {
-    // Keeping one more snapshot than configured is harmless.
+    // Creation's hard quota also bounds snapshots left by failed pruning.
     console.error("Automatic snapshot pruning failed; keeping every snapshot", { userId, error });
   }
 }
@@ -485,8 +533,10 @@ export async function deleteWorkspaceSnapshot(
   authScope: AuthSessionBoundaryScope,
   actor?: SnapshotActor
 ) {
+  if (actor && actor.userId !== userId) {
+    throw new ApiError(403, "SNAPSHOT_OWNER_REQUIRED", "Only the workspace owner can delete recovery snapshots");
+  }
   const id = safeSnapshotId(snapshotId);
-  const delegated = Boolean(actor && actor.userId !== userId);
   const directory = snapshotUserDirectory(userId);
   const finalPath = snapshotArchivePath(userId, id);
   const tombstonePath = path.join(directory, `.${id}.${createId("delete")}.zip`);
@@ -498,11 +548,6 @@ export async function deleteWorkspaceSnapshot(
       // commit must leave both the row and canonical archive intact.
       await assertSnapshotBoundary(userId, authScope, client, actor);
       const row = await getOwnedSnapshotRow(userId, id, client, true);
-      // Someone acting on the owner's workspace only ever prunes the owner's
-      // automatic snapshots; a snapshot the owner made stays the owner's call.
-      if (delegated && row.kind !== "PRE_RESTORE" && row.kind !== "PRE_DELETE") {
-        throw new ApiError(404, "SNAPSHOT_NOT_FOUND", "Snapshot not found");
-      }
       try {
         const fileInfo = await lstat(finalPath);
         if (!fileInfo.isFile()) {

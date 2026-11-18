@@ -367,6 +367,14 @@ async function needsPreDeleteSafetySnapshot(ownerId: string, actorId: string, mu
     [actorId, mutationId]
   );
   if (replay) return false;
+  // An owner hint is only a lock-order hint. Reject strangers/readers/editors
+  // before scanning the owner's tree or reserving snapshot writer capacity.
+  // Both archive boundaries repeat authorization using current locking reads.
+  const access = await getPageAccess(pageId, actorId);
+  assertPageCanAdminister(access);
+  if (access.page.owner_id !== ownerId) {
+    throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed before deletion completed");
+  }
   const rows = await getOwnedPageTreeRows(ownerId);
   const target = rows.find((row) => row.id === pageId);
   if (!target) return false;
@@ -2390,6 +2398,76 @@ pageRouter.delete(
           "SELECT owner_id FROM pages WHERE id = ?",
           [pageId]
         );
+        // Used at both snapshot boundaries and again before deleting any rows.
+        async function validateDeletion(client: DbClient, attachmentGeneration: number) {
+          const deletionAccess = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
+          assertPageCanAdminister(deletionAccess);
+          const workspaceOwnerId = deletionAccess.page.owner_id;
+          if (workspaceOwnerId !== pageOwnerHint?.owner_id) {
+            throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed before deletion completed");
+          }
+
+          const treeRows = await getOwnedPageTreeRows(workspaceOwnerId, client, true);
+          const subtreeRows = getPageSubtreeRows(pageId, treeRows);
+          await assertCollaborationMaterialized(client, subtreeRows.map((page) => page.id));
+          const blockRows = await getPageDeletionBlocks(client, subtreeRows, true);
+          // Moving an ancestor can replace collection membership for every
+          // descendant without advancing each descendant page version. Lock and
+          // hash the authoritative membership rows so a stale confirmation cannot
+          // delete a subtree after it moved into or out of another collection.
+          const membershipRows = await getPageDeletionCollectionMemberships(client, subtreeRows, true);
+          assertPageDeletionMembershipClosure(subtreeRows, membershipRows);
+          assertPageDeletionAuthorizationScope(deletionAccess, subtreeRows, membershipRows);
+          // Share creation/removal also serializes on the owned page row. Hash
+          // the exact grant generations while those page locks are held so a
+          // stale delete cannot erase a page whose sharing lineage changed.
+          const shareRows = await getPageDeletionShares(client, subtreeRows, true);
+          // A restored shared page can legitimately have no collaboration-state
+          // row until its first post-restore session is opened. Session admission
+          // creates a fresh document epoch without changing page/block/share
+          // versions, so bind permanent deletion to that lineage as well.
+          const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows, true);
+          // Owner-controlled icon publication is authorization state introduced after
+          // the original deletion snapshot design. It cascades with the page but
+          // does not advance page/block versions, so lock and hash it explicitly.
+          const customIconPublicationRows = await getPageDeletionCustomIconPublications(client, subtreeRows, true);
+          // The owner's navigation state is durable user-visible workspace data.
+          // It cascades with the page but does not advance page/block versions,
+          // so bind the destructive confirmation to the current preference rows.
+          // Only owner preferences participate: collaborator-only UI churn must
+          // not become an authorization-independent denial of owner deletion.
+          const ownerNavigation = await getPageDeletionOwnerNavigationPreferences(
+            client,
+            subtreeRows,
+            workspaceOwnerId,
+            true
+          );
+          // Discussions are user-authored page data and cascade with the page.
+          // Bind and lock them too, so a comment committed after the preview
+          // invalidates this stale destructive request instead of being erased.
+          const commentRows = await getPageDeletionComments(client, subtreeRows, true);
+          // Resetting history deliberately keeps page edit/content versions
+          // monotonic and unchanged. Lock and hash every cascading history row
+          // so an old confirmation cannot erase a newer reset or appended entry.
+          const versionHistoryRows = await getPageDeletionVersionHistory(client, subtreeRows, true);
+          assertPageDeletionSnapshot(
+            expectedSnapshot,
+            subtreeRows,
+            blockRows,
+            shareRows,
+            collaborationRows,
+            customIconPublicationRows,
+            ownerNavigation.collapsed,
+            ownerNavigation.order,
+            commentRows,
+            membershipRows,
+            versionHistoryRows,
+            workspaceOwnerId,
+            attachmentGeneration
+          );
+
+          return { workspaceOwnerId, subtreeRows, blockRows };
+        }
         // A collection, or a page with nested pages, takes many pages, their
         // history and files with it, and there is no archive for collections.
         // Save the owner's workspace first so the deletion can be undone. The
@@ -2412,7 +2490,14 @@ pageRouter.delete(
             safetySnapshotId = (await createPreDeleteSafetySnapshot(
               workspaceOwnerId,
               authScope,
-              delegatedDeletion ? { userId: user.id } : undefined
+              {
+                userId: user.id,
+                authorize: async (client) => {
+                  const generation = await lockUserAttachmentGeneration(client, workspaceOwnerId);
+                  if (generation === undefined) throw notFound("Page owner");
+                  await validateDeletion(client, generation);
+                }
+              }
             )).id;
           } catch (error) {
             if (delegatedDeletion && error instanceof ApiError && error.code === "DELETE_SAFETY_SNAPSHOT_FAILED") {
@@ -2484,71 +2569,7 @@ pageRouter.delete(
             : await lockUserAttachmentGeneration(client, pageOwnerHint.owner_id);
           if (attachmentGeneration === undefined) throw notFound("Page owner");
 
-          const deletionAccess = await getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true });
-          assertPageCanAdminister(deletionAccess);
-          const workspaceOwnerId = deletionAccess.page.owner_id;
-          if (workspaceOwnerId !== pageOwnerHint.owner_id) {
-            throw new ApiError(409, "PAGE_OWNER_CHANGED", "The page owner changed before deletion completed");
-          }
-
-          const treeRows = await getOwnedPageTreeRows(workspaceOwnerId, client, true);
-          const subtreeRows = getPageSubtreeRows(pageId, treeRows);
-          await assertCollaborationMaterialized(client, subtreeRows.map((page) => page.id));
-          const blockRows = await getPageDeletionBlocks(client, subtreeRows, true);
-          // Moving an ancestor can replace collection membership for every
-          // descendant without advancing each descendant page version. Lock and
-          // hash the authoritative membership rows so a stale confirmation cannot
-          // delete a subtree after it moved into or out of another collection.
-          const membershipRows = await getPageDeletionCollectionMemberships(client, subtreeRows, true);
-          assertPageDeletionMembershipClosure(subtreeRows, membershipRows);
-          assertPageDeletionAuthorizationScope(deletionAccess, subtreeRows, membershipRows);
-          // Share creation/removal also serializes on the owned page row. Hash
-          // the exact grant generations while those page locks are held so a
-          // stale delete cannot erase a page whose sharing lineage changed.
-          const shareRows = await getPageDeletionShares(client, subtreeRows, true);
-          // A restored shared page can legitimately have no collaboration-state
-          // row until its first post-restore session is opened. Session admission
-          // creates a fresh document epoch without changing page/block/share
-          // versions, so bind permanent deletion to that lineage as well.
-          const collaborationRows = await getPageDeletionCollaborationStates(client, subtreeRows, true);
-          // Owner-controlled icon publication is authorization state introduced after
-          // the original deletion snapshot design. It cascades with the page but
-          // does not advance page/block versions, so lock and hash it explicitly.
-          const customIconPublicationRows = await getPageDeletionCustomIconPublications(client, subtreeRows, true);
-          // The owner's navigation state is durable user-visible workspace data.
-          // It cascades with the page but does not advance page/block versions,
-          // so bind the destructive confirmation to the current preference rows.
-          // Only owner preferences participate: collaborator-only UI churn must
-          // not become an authorization-independent denial of owner deletion.
-          const ownerNavigation = await getPageDeletionOwnerNavigationPreferences(
-            client,
-            subtreeRows,
-            workspaceOwnerId,
-            true
-          );
-          // Discussions are user-authored page data and cascade with the page.
-          // Bind and lock them too, so a comment committed after the preview
-          // invalidates this stale destructive request instead of being erased.
-          const commentRows = await getPageDeletionComments(client, subtreeRows, true);
-          // Resetting history deliberately keeps page edit/content versions
-          // monotonic and unchanged. Lock and hash every cascading history row
-          // so an old confirmation cannot erase a newer reset or appended entry.
-          const versionHistoryRows = await getPageDeletionVersionHistory(client, subtreeRows, true);
-          assertPageDeletionSnapshot(
-            expectedSnapshot,
-            subtreeRows,
-            blockRows,
-            shareRows,
-            collaborationRows,
-            customIconPublicationRows,
-            ownerNavigation.collapsed,
-            ownerNavigation.order,
-            commentRows,
-            membershipRows,
-            versionHistoryRows,
-            workspaceOwnerId,
-            attachmentGeneration
-          );
+          const { workspaceOwnerId, subtreeRows, blockRows } = await validateDeletion(client, attachmentGeneration);
 
           const pageIds = subtreeRows.map((row) => row.id);
           // Capture the durable collaboration lineage while the owned page rows
@@ -2629,12 +2650,9 @@ pageRouter.delete(
           );
         }
         if (safetySnapshotId && workspaceOwnerId) {
-          await pruneAutomaticSnapshots(
-            workspaceOwnerId,
-            authScope,
-            [safetySnapshotId],
-            delegatedDeletion ? { userId: user.id } : undefined
-          );
+          if (!delegatedDeletion) {
+            await pruneAutomaticSnapshots(workspaceOwnerId, authScope, [safetySnapshotId]);
+          }
           // The owner restores it from their own snapshot list; an administrator
           // cannot open the owner's snapshots, so only the owner is told its id.
           if (delegatedDeletion) res.setHeader(deleteSafetySnapshotOwnerHeader, "1");

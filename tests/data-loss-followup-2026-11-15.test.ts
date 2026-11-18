@@ -278,9 +278,10 @@ describe("a collection administrator's deletion can be undone by the owner", () 
     expect(boundary).toMatch(/assertCurrentAuthSessionBoundary\(actor\.userId, authScope, client\)/);
   });
 
-  it("lets a delegate prune only the owner's automatic snapshots", () => {
-    expect(snapshots).toMatch(/delegated && row\.kind !== "PRE_RESTORE" && row\.kind !== "PRE_DELETE"/);
-    expect(snapshots).toMatch(/Only the owner can create a manual snapshot/);
+  it("keeps recovery deletion and pruning under the owner's authority", () => {
+    expect(snapshots).toMatch(/if \(actor && actor\.userId !== userId\) return;/);
+    expect(snapshots).toMatch(/Only the workspace owner can delete recovery snapshots/);
+    expect(deleteRoute).toMatch(/if \(!delegatedDeletion\) \{\s*await pruneAutomaticSnapshots/);
   });
 });
 

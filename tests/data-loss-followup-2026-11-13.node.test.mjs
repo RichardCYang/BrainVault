@@ -132,7 +132,7 @@ test("an ended session keeps unsent comments for the same account only", () => {
 
 test("a restore saves the current workspace first and stops if it cannot", () => {
   assert.match(migration, /ADD COLUMN kind ENUM\('MANUAL', 'PRE_RESTORE'\) NOT NULL DEFAULT 'MANUAL'/);
-  assert.match(snapshots, /WHERE user_id = \? AND kind = 'MANUAL'/);
+  assert.match(snapshots, /kind === "MANUAL" \? "kind = 'MANUAL'" : "kind IN \('PRE_RESTORE', 'PRE_DELETE'\)"/);
   assert.match(snapshots, /createWorkspaceSnapshot\(userId, authScope, "PRE_RESTORE"\)/);
   assert.match(snapshots, /"RESTORE_SAFETY_SNAPSHOT_FAILED"/);
   // The hook runs after validation and the completed-retry replay, before the destructive transaction.

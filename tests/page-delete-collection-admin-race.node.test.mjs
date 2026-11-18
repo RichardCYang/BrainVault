@@ -32,7 +32,7 @@ test("permanent collection-admin deletion authorizes only after current page loc
   const receiptLookup = deleteRoute.indexOf("FROM page_delete_mutations", transactionStart);
   const missingHintCheck = deleteRoute.indexOf('if (!pageOwnerHint) throw notFound("Page")', transactionStart);
   const lockedAuthorization = deleteRoute.indexOf(
-    "getPageAccess(pageId, user.id, client, { lockPage: true, lockAccess: true })",
+    "await validateDeletion(client, attachmentGeneration)",
     transactionStart
   );
 
@@ -45,7 +45,7 @@ test("permanent collection-admin deletion authorizes only after current page loc
     false,
     "no plain page read may establish a stale authorization snapshot inside the transaction"
   );
-  assert.match(deleteRoute, /workspaceOwnerId !== pageOwnerHint\.owner_id/);
+  assert.match(deleteRoute, /workspaceOwnerId !== pageOwnerHint\?\.owner_id/);
   assert.match(deleteRoute, /assertPageCanAdminister\(deletionAccess\)/);
   assert.match(
     deleteRoute,

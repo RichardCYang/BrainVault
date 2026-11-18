@@ -151,7 +151,7 @@ test("server reconciles a page-delete receipt before querying a page that may al
   assert.match(deleteRoute, /JSON\.stringify\(attachmentIds\),\s*attachmentGeneration/);
   assert.match(deleteRoute, /deletion\.attachmentGeneration !== undefined/);
   assert.ok(
-    deleteRoute.indexOf("FROM page_delete_mutations") < deleteRoute.indexOf("getOwnedPageTreeRows("),
+    deleteRoute.indexOf("FROM page_delete_mutations") < deleteRoute.indexOf("await validateDeletion(client, attachmentGeneration)"),
     "a committed delete must be replayable before the deleted page tree is queried"
   );
   assert.ok(

@@ -40,7 +40,8 @@ vi.mock("../src/lib/storage-sync.js", async (original) => {
 });
 
 import { env } from "../src/config/env.js";
-import { createWorkspaceSnapshot, deleteWorkspaceSnapshot, restoreWorkspaceSnapshot } from "../src/lib/workspace-snapshots.js";
+import { BoundedRateLimitStore } from "../src/lib/bounded-rate-limit-store.js";
+import { createWorkspaceSnapshot, deleteWorkspaceSnapshot, pruneAutomaticSnapshots, restoreWorkspaceSnapshot } from "../src/lib/workspace-snapshots.js";
 const userId = "usr_snapshot_report";
 const scope = { authVersion: 1, workspaceGeneration: 1, sessionId: "session_report" };
 const bytes = Buffer.from("snapshot test archive");
@@ -69,6 +70,7 @@ beforeEach(() => {
   mocks.execute.mockImplementation(async (sql, values) => {
     if (sql.includes("INSERT INTO workspace_snapshots")) row = {
       id: values[0], user_id: values[1], archive_size: values[2], archive_sha256: values[3],
+      kind: values[9],
       page_count: 0, block_count: 0, attachment_count: 0, page_version_count: 0, created_at: "2026-11-06"
     };
     if (sql.includes("DELETE FROM workspace_snapshots")) row = undefined;
@@ -147,6 +149,126 @@ describe("BV-2026-003 snapshot creation", () => {
         // The pre-restore safety snapshot runs inside the import, after validation.
         beforeReplace: expect.any(Function)
       });
+  });
+});
+
+describe("snapshot report authorization and automatic capacity", () => {
+  it.each(["PRE_DELETE", "PRE_RESTORE"])("bounds %s count before copying the workspace", async (kind) => {
+    usage.snapshot_count = 42;
+    await expect(createWorkspaceSnapshot(userId, scope, kind)).rejects.toMatchObject({ code: "SNAPSHOT_LIMIT_REACHED" });
+    expect(mocks.prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(["PRE_DELETE", "PRE_RESTORE"])("bounds %s bytes before copying the workspace", async (kind) => {
+    usage.total_bytes = String(BigInt(env.SNAPSHOT_AUTO_TOTAL_MAX_MB) * 1024n * 1024n);
+    await expect(createWorkspaceSnapshot(userId, scope, kind)).rejects.toMatchObject({ code: "SNAPSHOT_STORAGE_LIMIT_REACHED" });
+    expect(mocks.prepare).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unscoped delegated creation before preparing an archive", async () => {
+    mocks.query.mockResolvedValue([{ id: userId }, { id: "usr_delegate" }]);
+    await expect(createWorkspaceSnapshot(userId, scope, "PRE_DELETE", { userId: "usr_delegate" }))
+      .rejects.toMatchObject({ statusCode: 403 });
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(row).toBeUndefined();
+  });
+
+  it.each(["PRE_DELETE", "PRE_RESTORE"])("rechecks %s quota at insertion and removes rejected bytes", async (kind) => {
+    finalUsage = { snapshot_count: 0, total_bytes: String(BigInt(env.SNAPSHOT_AUTO_TOTAL_MAX_MB) * 1024n * 1024n - 1n) };
+    await expect(createWorkspaceSnapshot(userId, scope, kind)).rejects.toMatchObject({ code: "SNAPSHOT_STORAGE_LIMIT_REACHED" });
+    expect(row).toBeUndefined();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("caps automatic archive preparation by its own remaining storage", async () => {
+    usage.total_bytes = String(BigInt(env.SNAPSHOT_AUTO_TOTAL_MAX_MB) * 1024n * 1024n - BigInt(bytes.length));
+    await createWorkspaceSnapshot(userId, scope, "PRE_DELETE");
+    expect(mocks.prepare).toHaveBeenCalledWith(userId, expect.objectContaining({ maxArchiveBytes: BigInt(bytes.length) }));
+    const quotaQueries = mocks.queryOne.mock.calls.filter(([sql]) => sql.includes("COUNT(*) AS snapshot_count"));
+    expect(quotaQueries).toHaveLength(2);
+    for (const [sql] of quotaQueries) expect(sql).toContain("kind IN ('PRE_RESTORE', 'PRE_DELETE')");
+  });
+
+  it("rate-limits the delegated actor before streaming", async () => {
+    mocks.query.mockResolvedValue([{ id: userId }, { id: "usr_delegate" }]);
+    const increment = vi.spyOn(BoundedRateLimitStore.prototype, "increment")
+      .mockResolvedValueOnce({ totalHits: env.DATA_EXPORT_MAX + 1 });
+    try {
+      await expect(createWorkspaceSnapshot(userId, scope, "PRE_DELETE", { userId: "usr_delegate", authorize: async () => {} }))
+        .rejects.toMatchObject({ statusCode: 429, code: "DATA_EXPORT_RATE_LIMITED" });
+      expect(increment).toHaveBeenCalledWith("usr_delegate");
+      expect(mocks.prepare).not.toHaveBeenCalled();
+    } finally { increment.mockRestore(); }
+  });
+
+  it("retains the workspace admission slot until streaming finishes, across different delegates", async () => {
+    let release;
+    let entered;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    const started = new Promise((resolve) => { entered = resolve; });
+    const prepare = mocks.prepare.getMockImplementation();
+    mocks.prepare.mockImplementationOnce(async (...args) => { entered(); await waiting; return prepare(...args); });
+    const first = createWorkspaceSnapshot(userId, scope, "PRE_DELETE");
+    await started;
+    try {
+      await expect(createWorkspaceSnapshot(userId, scope, "PRE_DELETE", { userId: "usr_other_delegate", authorize: async () => {} }))
+        .rejects.toMatchObject({ statusCode: 429, code: "DATA_EXPORT_IN_PROGRESS" });
+      expect(mocks.prepare).toHaveBeenCalledTimes(1);
+    } finally { release(); await first; }
+    // A completed request releases admission for the next actual writer.
+    mocks.auth.mockClear(); quotaChecks = 0;
+    await createWorkspaceSnapshot(userId, scope, "PRE_DELETE");
+    expect(mocks.prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds concurrent snapshot writers across workspaces", async () => {
+    const pending = [];
+    const release = [];
+    const prepare = mocks.prepare.getMockImplementation();
+    try {
+      for (let i = 0; i < env.DATA_EXPORT_MAX_CONCURRENT; i++) {
+        let entered;
+        const started = new Promise((resolve) => { entered = resolve; });
+        const waiting = new Promise((resolve) => { release.push(resolve); });
+        mocks.prepare.mockImplementationOnce(async (...args) => { entered(); await waiting; return prepare(...args); });
+        pending.push(createWorkspaceSnapshot(`${userId}_slot${i}`, scope, "PRE_DELETE"));
+        await started;
+      }
+      await expect(createWorkspaceSnapshot(userId, scope, "PRE_DELETE"))
+        .rejects.toMatchObject({ statusCode: 503, code: "DATA_EXPORT_BUSY" });
+      expect(mocks.prepare).toHaveBeenCalledTimes(env.DATA_EXPORT_MAX_CONCURRENT);
+    } finally {
+      for (let i = 0; i < pending.length; i++) { release[i](); await pending[i]; }
+    }
+  });
+
+  it("rechecks delegated page authorization after streaming and removes the rejected ZIP", async () => {
+    mocks.query.mockResolvedValue([{ id: userId }, { id: "usr_delegate" }]);
+    const authorize = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("grant revoked"));
+    await expect(createWorkspaceSnapshot(userId, scope, "PRE_DELETE", { userId: "usr_delegate", authorize }))
+      .rejects.toThrow("grant revoked");
+    expect(authorize).toHaveBeenCalledTimes(2);
+    expect(row).toBeUndefined();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it.each(["MANUAL", "PRE_DELETE", "PRE_RESTORE"])("a delegate cannot remove a %s row or archive", async (kind) => {
+    const snapshot = await createWorkspaceSnapshot(userId, scope, kind);
+    mocks.query.mockResolvedValue([{ id: userId }, { id: "usr_delegate" }]);
+    await expect(deleteWorkspaceSnapshot(userId, snapshot.id, scope, { userId: "usr_delegate" }))
+      .rejects.toMatchObject({ statusCode: 403 });
+    expect(row.id).toBe(snapshot.id);
+    expect(await readdir(directory)).toEqual([`${snapshot.id}.zip`]);
+  });
+
+  it("a delegated prune preserves unrelated automatic recovery rows and ZIPs", async () => {
+    const snapshot = await createWorkspaceSnapshot(userId, scope, "PRE_DELETE");
+    mocks.query.mockImplementation(async (sql) => sql.includes("FROM users")
+      ? [{ id: userId }, { id: "usr_delegate" }]
+      : Array.from({ length: 21 }, (_, i) => ({ id: i === 20 ? snapshot.id : `snapshot_${String(i).padStart(32, "0")}`, kind: "PRE_DELETE", recent: 1 })));
+    await pruneAutomaticSnapshots(userId, scope, [], { userId: "usr_delegate" });
+    expect(row.id).toBe(snapshot.id);
+    expect(await readdir(directory)).toEqual([`${snapshot.id}.zip`]);
   });
 });
 

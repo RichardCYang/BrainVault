@@ -75,14 +75,16 @@ Never commit a real `.env` file.
 | `ATTACHMENT_UPLOAD_MAX_CONCURRENT` | `4` | Maximum attachment uploads processed concurrently by one application process; each account is also limited to one active upload |
 | `DATA_TRANSFER_MAX_SIZE_MB` | `1024` | Maximum size of one complete-data backup archive in megabytes; enforced on upload, ZIP contents, export staging, and the final export plan |
 | `DATA_TRANSFER_MAX_MANIFEST_SIZE_MB` | `16` | Maximum JSON manifest size buffered and parsed during backup export or import |
-| `SNAPSHOT_MAX_COUNT` | `20` | Maximum private workspace snapshots per account; checked before archive preparation and again at insertion |
-| `SNAPSHOT_AUTO_MAX_COUNT` | `3` | Automatic snapshots kept per account. One is saved just before every restore or backup import; the oldest beyond this count is removed. They do not count toward `SNAPSHOT_MAX_COUNT` or `SNAPSHOT_TOTAL_MAX_MB` |
-| `SNAPSHOT_AUTO_RETENTION_HOURS` | `168` | Automatic snapshots younger than this many hours are kept even beyond `SNAPSHOT_AUTO_MAX_COUNT`, up to 20 in all, so several restores in a row cannot prune the workspace as it was before the first one. `0` keeps only the count rule |
+| `SNAPSHOT_MAX_COUNT` | `20` | Maximum manual workspace snapshots per account; checked before archive preparation and again at insertion |
+| `SNAPSHOT_AUTO_MAX_COUNT` | `3` | Minimum newest automatic snapshots kept per kind after a successful owner restore or permanent deletion. Delegated deletions never prune owner recovery points. Automatic snapshots use separate quotas, with a hard creation ceiling of 42 across both kinds (40 retained plus two safety-copy slots) |
+| `SNAPSHOT_AUTO_TOTAL_MAX_MB` | `8192` | Maximum combined archive bytes for `PRE_DELETE` and `PRE_RESTORE` per owner; checked under user locks before preparation and at insertion. Full quotas stop safety-copy creation without removing existing recovery points |
+| `SNAPSHOT_AUTO_RETENTION_HOURS` | `168` | Automatic snapshots younger than this many hours are retained beyond `SNAPSHOT_AUTO_MAX_COUNT`, up to 20 per kind during owner pruning. `0` keeps only the count rule |
 | `SNAPSHOT_MAX_ARCHIVE_MB` | `2048` | Maximum complete ZIP size for a new snapshot, including ZIP overhead; also bounds file staging |
-| `SNAPSHOT_TOTAL_MAX_MB` | `8192` | Maximum sum of snapshot archive bytes per account; checked under the user row lock |
+| `SNAPSHOT_TOTAL_MAX_MB` | `8192` | Maximum sum of manual snapshot archive bytes per account; checked under the user row lock |
 | `SNAPSHOT_MAX_MANIFEST_MB` | `16` | Maximum JSON manifest size when creating a snapshot; independent of network backup limits |
-| `DATA_EXPORT_WINDOW_MS` | `3600000` | Complete-data export limit window per authenticated user |
-| `DATA_EXPORT_MAX` | `20` | Complete-data exports allowed per authenticated user and window |
+| `DATA_EXPORT_WINDOW_MS` | `3600000` | Complete-data export limit window; also used by the separate automatic-snapshot counter per initiating actor |
+| `DATA_EXPORT_MAX` | `20` | Complete-data exports allowed per user and window; also the automatic-snapshot creation limit per actor, checked after authorization. Plain deletions and receipt replays do not consume this automatic-snapshot budget |
+| `DATA_EXPORT_MAX_CONCURRENT` | `2` | Maximum concurrent data exports; also bounds a separate pool of active snapshot writers. Snapshot admission allows one writer per workspace and remains held until processing ends, including after client disconnection |
 | `DATA_IMPORT_WINDOW_MS` | `3600000` | Complete-data import limit window per authenticated user or fallback IP key |
 | `DATA_IMPORT_MAX` | `3` | Complete-data imports admitted per principal and window before multipart upload processing |
 | `DATA_IMPORT_MAX_CONCURRENT` | `2` | Maximum imports processed concurrently by one application process; each principal is also limited to one active import |
