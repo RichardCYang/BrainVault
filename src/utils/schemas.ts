@@ -1,7 +1,11 @@
 import { z } from "zod";
+import { sanitizeDisplayLabel } from "./display-label.js";
 import {
   bcryptPasswordLimitMessage,
-  isPasswordWithinBcryptLimit
+  isPasswordWithinBcryptLimit,
+  isNewPasswordUncommon,
+  newPasswordMinLength,
+  weakPasswordMessage
 } from "../lib/password-policy.js";
 
 export function httpUrlSchema(maxLength: number) {
@@ -22,6 +26,16 @@ export function passwordInputSchema(minLength: number) {
     .min(minLength)
     .max(128)
     .refine(isPasswordWithinBcryptLimit, bcryptPasswordLimitMessage);
+}
+
+// Login and current-password verification deliberately retain the legacy input
+// schema so existing accounts can sign in and choose a stronger password.
+export const newPasswordSchema = passwordInputSchema(newPasswordMinLength)
+  .refine(isNewPasswordUncommon, weakPasswordMessage);
+
+export function displayLabelSchema(maxLength: number, minLength = 1) {
+  return z.string().max(maxLength).transform(sanitizeDisplayLabel)
+    .pipe(z.string().trim().min(minLength).max(maxLength));
 }
 
 export const usernameSchema = z

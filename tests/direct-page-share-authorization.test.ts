@@ -42,14 +42,22 @@ const collection = { ...page, id: "pag_share_collection", is_collection: 1, pare
 const privateGeneration = "share_private_editor_generation";
 const collectionGeneration = "cshare_admin_generation";
 const permissions = new Map([[admin.id, "ADMIN"], [writer.id, "WRITE"], [reader.id, "READ"]]);
+let directSharePresent = true;
+let collectionShareCount = 3;
 const cookieFor = (user: typeof owner) => `${legacyAuthSessionCookieName}=${signAuthToken({
   sub: user.id, username: user.username, authVersion: 1
 })}`;
 const isDirectShareList = (sql: string) => sql.includes("FROM page_shares ps") && sql.includes("INNER JOIN users u");
 
 beforeEach(() => {
+  page.is_archived = 0;
+  directSharePresent = true;
+  collectionShareCount = 3;
   vi.clearAllMocks();
-  database.execute.mockReset().mockResolvedValue({ affectedRows: 1 });
+  database.execute.mockReset().mockImplementation(async (sql: string) => {
+    if (sql.includes("DELETE FROM page_shares")) directSharePresent = false;
+    return { affectedRows: 1 };
+  });
   database.query.mockReset().mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("AS cursor_created_at")) {
       return [page, collection].map((target) => ({ ...target, cursor_created_at: target.created_at }));
@@ -58,10 +66,10 @@ beforeEach(() => {
       return [page, collection].map((target) => ({ page_id: target.id,
         collection_id: collection.id, collection_permission: permissions.get(String(params[0])) ?? null }));
     }
-    if (sql.includes("FROM users") && sql.includes("WHERE id IN")) return [owner];
+    if (sql.includes("FROM users") && sql.includes("WHERE id IN")) return users.filter((user) => params.includes(user.id));
     if (isDirectShareList(sql)) {
       expect(params).toEqual([owner.id, page.id]);
-      return [{ ...editor, permission: "EDIT", shared_at: owner.created_at, share_generation: privateGeneration }];
+      return directSharePresent ? [{ ...editor, permission: "EDIT", shared_at: owner.created_at, share_generation: privateGeneration }] : [];
     }
     if (sql.includes("FROM collection_shares cs") && sql.includes("INNER JOIN users u")) {
       return [{ ...admin, permission: "ADMIN", shared_at: owner.created_at,
@@ -75,14 +83,14 @@ beforeEach(() => {
     if (sql.includes("FROM pages WHERE id = ?")) {
       return [page, collection].find((target) => target.id === params[0]);
     }
-    if (sql.includes("SELECT COUNT(*) AS share_count")) return { share_count: 4 };
+    if (sql.includes("SELECT COUNT(*) AS share_count")) return { share_count: collectionShareCount + Number(directSharePresent) };
     if (sql.includes("FROM page_collection_memberships")) return { collection_id: collection.id };
     if (sql.includes("FROM collection_shares")) {
       const permission = permissions.get(String(params[1]));
       return permission ? { permission, generation: collectionGeneration } : undefined;
     }
     if (sql.includes("FROM page_shares")) {
-      return params[0] === page.id && params[1] === editor.id ? { generation: privateGeneration } : undefined;
+      return directSharePresent && params[0] === page.id && params[1] === editor.id ? { user_id: editor.id, generation: privateGeneration } : undefined;
     }
     if (sql.includes("cs.permission AS collection_permission")) {
       const actorId = String(params[0]);
@@ -99,6 +107,60 @@ beforeEach(() => {
 });
 
 describe("IDOR-2026-001 direct page-share authorization", () => {
+  it("allows the owner to list and revoke an archived page's grants without restoring it", async () => {
+    page.is_archived = 1;
+    const app = createApp();
+    const list = await request(app).get(`/api/pages/${page.id}/shares`)
+      .set("Cookie", cookieFor(owner)).expect(200);
+    expect(list.body.shares[0].generation).toBe(privateGeneration);
+    await request(app).delete(`/api/pages/${page.id}/shares/${editor.id}`)
+      .set("Cookie", cookieFor(owner)).set("Origin", env.PUBLIC_ORIGIN)
+      .send({ expectedGeneration: privateGeneration }).expect(200);
+    expect(database.execute.mock.calls.some(([sql]) => sql.includes("DELETE FROM page_shares"))).toBe(true);
+    expect(database.execute.mock.calls.some(([sql]) => sql.includes("UPDATE pages"))).toBe(false);
+    expect(page.is_archived).toBe(1);
+    await request(app).get(`/api/pages/${page.id}`).set("Cookie", cookieFor(editor)).expect(404);
+  });
+
+  it("revokes the last direct grant while the page remains archived", async () => {
+    page.is_archived = 1;
+    collectionShareCount = 0;
+    const app = createApp();
+    const removal = await request(app).delete(`/api/pages/${page.id}/shares/${editor.id}`)
+      .set("Cookie", cookieFor(owner)).set("Origin", env.PUBLIC_ORIGIN)
+      .send({ expectedGeneration: privateGeneration }).expect(200);
+    expect(removal.body).toMatchObject({ removed: true, count: 0 });
+    await request(app).get(`/api/pages/${page.id}`).set("Cookie", cookieFor(editor)).expect(404);
+    expect(page.is_archived).toBe(1);
+  });
+
+  it("retains generation fences and owner-only revocation on archived pages", async () => {
+    page.is_archived = 1;
+    const stale = await request(createApp()).delete(`/api/pages/${page.id}/shares/${editor.id}`)
+      .set("Cookie", cookieFor(owner)).set("Origin", env.PUBLIC_ORIGIN)
+      .send({ expectedGeneration: "share_stale_generation" }).expect(409);
+    expect(stale.body.error.code).toBe("PAGE_SHARE_GENERATION_CHANGED");
+    await request(createApp()).delete(`/api/pages/${page.id}/shares/${editor.id}`)
+      .set("Cookie", cookieFor(admin)).set("Origin", env.PUBLIC_ORIGIN)
+      .send({ expectedGeneration: privateGeneration }).expect(403);
+    expect(database.execute.mock.calls.some(([sql]) => sql.includes("DELETE FROM page_shares"))).toBe(false);
+  });
+
+  it("still blocks new sharing and live sessions while archived, while allowing reads", async () => {
+    page.is_archived = 1;
+    const app = createApp();
+    const response = await request(app).post(`/api/pages/${page.id}/shares`)
+      .set("Cookie", cookieFor(owner)).set("Origin", env.PUBLIC_ORIGIN)
+      .send({ username: outsider.username }).expect(400);
+    expect(response.body.error.code).toBe("ARCHIVED_PAGE_SHARING_UNSUPPORTED");
+    await request(app).post(`/api/pages/${page.id}/collaboration/session`)
+      .set("Cookie", cookieFor(editor)).set("Origin", env.PUBLIC_ORIGIN)
+      .send({ documentEpochProtocol: 2 }).expect(400);
+    const read = await request(app).get(`/api/pages/${page.id}`)
+      .set("Cookie", cookieFor(editor)).expect(200);
+    expect(read.body.page.isArchived).toBe(true);
+  });
+
   it("returns the direct collaborator and generation to the owner", async () => {
     const response = await request(createApp()).get(`/api/pages/${page.id}/shares`)
       .set("Cookie", cookieFor(owner)).expect(200);

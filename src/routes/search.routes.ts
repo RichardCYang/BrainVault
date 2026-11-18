@@ -5,6 +5,7 @@ import { toSqlLikeContainsPattern } from "../lib/sql-like.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { requireUser } from "../utils/schemas.js";
+import { sanitizeDisplayLabel } from "../utils/display-label.js";
 import type { BlockRow, PageRow } from "../types/domain.js";
 
 export const searchRouter = Router();
@@ -87,7 +88,7 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
         ...pages.map((page) => ({
           kind: "page" as const,
           pageId: page.id,
-          title: page.title,
+          title: sanitizeDisplayLabel(page.title),
           icon: page.icon,
           updatedAt: page.updated_at
         })),
@@ -95,7 +96,7 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
           kind: "block" as const,
           blockId: block.id,
           pageId: block.page_id,
-          pageTitle: block.page_title,
+          pageTitle: sanitizeDisplayLabel(block.page_title),
           pageIcon: block.page_icon,
           type: block.type,
           snippet: snippet(block.markdown, query.q),

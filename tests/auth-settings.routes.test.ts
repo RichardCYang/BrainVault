@@ -39,7 +39,8 @@ beforeEach(async () => {
   database.queryOne.mockReset();
   database.execute.mockReset();
 
-  database.queryOne.mockImplementation(async (sql: string) => {
+  database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.includes("FROM user_auth_sessions")) return { id: params[0] };
     if (sql.includes("FROM users WHERE id = ?") || sql.includes("SELECT * FROM users WHERE id = ?")) return { ...user };
     return undefined;
   });
@@ -104,7 +105,7 @@ describe("Account settings routes", () => {
       .expect(400);
   });
 
-  it("persists built-in and uploaded custom collection icons", async () => {
+  it("persists built-in collection icons and rejects inline images that bypass the upload boundary", async () => {
     const builtIn = await request(createApp())
       .patch("/api/auth/profile")
       .set("Authorization", `Bearer ${token}`)
@@ -119,10 +120,10 @@ describe("Account settings routes", () => {
       .patch("/api/auth/profile")
       .set("Authorization", `Bearer ${token}`)
       .send({ defaultCollectionIcon: `image:${imageData}` })
-      .expect(200);
+      .expect(400);
 
-    expect(custom.body.user.defaultCollectionIcon).toBe(`image:${imageData}`);
-    expect(user.default_collection_icon).toBe(`image:${imageData}`);
+    expect(custom.body.error.code).toBe("VALIDATION_ERROR");
+    expect(user.default_collection_icon).toBe("icon:folder");
   });
 
   it("rejects an invalid profile image", async () => {

@@ -3,9 +3,10 @@ const forbiddenRenderedTags = new Set(["script", "style", "svg", "math", "textar
 // Keep this policy aligned with src/lib/markdown.ts. Never allow editor or
 // application-chrome classes through persisted HTML, including legacy caches.
 const renderedClassPattern = /^(?:rendered-[a-z0-9_-]+|language-[a-z0-9_-]+|math-expression(?:--(?:inline|display))?|youtube-video-(?:frame|iframe|open-link)|is-(?:active|current|complete|weekend|today)|visually-hidden)$/;
+const renderedChromeClassPattern = /^rendered-ai-chat-link-tooltip(?:-|$)/;
 
 function sanitizeRenderedClass(value) {
-  return value.split(/\s+/).filter((token) => renderedClassPattern.test(token)).join(" ");
+  return value.split(/\s+/).filter((token) => renderedClassPattern.test(token) && !renderedChromeClassPattern.test(token)).join(" ");
 }
 
 // Keep this set aligned with sanitize-html's server policy in src/lib/markdown.ts.

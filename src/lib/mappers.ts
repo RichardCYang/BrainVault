@@ -1,4 +1,5 @@
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
+import { sanitizeDisplayLabel } from "../utils/display-label.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "./markdown.js";
 import { isCurrentAiChatHtmlCache } from "./ai-chat-cache.js";
 import { validateStoredBlockMetadata } from "./structured-metadata-integrity.js";
@@ -44,7 +45,7 @@ export function toPublicUser(
   return {
     id: row.id,
     username: row.username,
-    name: row.name,
+    name: typeof row.name === "string" ? sanitizeDisplayLabel(row.name) : row.name,
     avatarData: row.avatar_data ?? null,
     preferredLanguage: row.preferred_language ?? null,
     defaultCollectionIcon: row.default_collection_icon ?? null,
@@ -70,7 +71,7 @@ export function toPublicUserFanout(row: Parameters<typeof toPublicUser>[0]) {
 export function toPage(row: PageRow) {
   return {
     id: row.id,
-    title: row.title,
+    title: sanitizeDisplayLabel(row.title),
     icon: row.icon,
     coverUrl: toPublicPageCoverUrl(row.id, row.cover_url, Number(row.edit_version ?? 1)),
     coverPositionX: Math.min(100, Math.max(0, Number(row.cover_position_x ?? 50))),
@@ -112,7 +113,7 @@ export function toBlock(row: BlockRow) {
 export function toTag(row: TagRow) {
   return {
     id: row.id,
-    name: row.name,
+    name: sanitizeDisplayLabel(row.name),
     createdAt: row.created_at
   };
 }

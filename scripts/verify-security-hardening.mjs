@@ -115,7 +115,8 @@ const authRoutesSource = contains("src/routes/auth.routes.ts", [
   "same status, response shape",
   /"\/register",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/,
   /"\/login",\s+requireSameOriginBrowserRequest,\s+requireJsonRequestBody,/,
-  "passwordInputSchema(8)",
+  "password: newPasswordSchema",
+  "newPassword: newPasswordSchema",
   "passwordInputSchema(1)"
 ]);
 assert.doesNotMatch(authRoutesSource, /res\.json\(\{[^}]*token/, "Authentication responses must not expose JWTs");
@@ -291,8 +292,8 @@ contains("scripts/generate-secrets.mjs", [
 ]);
 contains("scripts/seed.ts", [
   "BRAINVAULT_SEED_DEMO",
-  "BRAINVAULT_DEMO_PASSWORD must contain 12-128 characters and no more than 72 UTF-8 bytes",
-  "isPasswordWithinBcryptLimit(password)"
+  "BRAINVAULT_DEMO_PASSWORD",
+  "newPasswordSchema.safeParse(password)"
 ]);
 const browserSource = read("public/app.js");
 assert.ok(!browserSource.includes("brainvault.token"), "The browser must not persist the JWT in localStorage");

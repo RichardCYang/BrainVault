@@ -71,7 +71,7 @@ import {
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
-import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
+import { displayLabelSchema, idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
 import type { BlockRow, PageRow, TagRow, UserRow } from "../types/domain.js";
 import { assertNoActiveCollaborationWriteLeases } from "../lib/collaboration-write-lease.js";
 import {
@@ -133,7 +133,7 @@ function encodePageListCursor(row: { id: string; cursor_created_at: string }) {
 }
 
 const createPageSchema = z.object({
-  title: z.string().trim().min(1).max(160),
+  title: displayLabelSchema(160),
   icon: iconMutationValueSchema.optional(),
   coverUrl: pageCoverUrlSchema.optional(),
   coverPositionX: pageCoverPositionSchema.optional(),
@@ -141,26 +141,26 @@ const createPageSchema = z.object({
   parentPageId: routeIdSchema.optional(),
   isCollection: z.boolean().optional().default(false),
   initialMarkdown: z.string().max(20_000).optional(),
-  tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+  tags: z.array(displayLabelSchema(50)).max(20).optional(),
   mutationId: mutationIdSchema.optional()
 });
 
 const updatePageSchema = z.object({
-  title: z.string().trim().min(1).max(160).optional(),
+  title: displayLabelSchema(160).optional(),
   icon: iconMutationValueSchema.nullable().optional(),
   coverUrl: pageCoverUrlSchema.nullable().optional(),
   coverPositionX: pageCoverPositionSchema.optional(),
   coverPositionY: pageCoverPositionSchema.optional(),
   isArchived: z.boolean().optional(),
   parentPageId: routeIdSchema.nullable().optional(),
-  tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+  tags: z.array(displayLabelSchema(50)).max(20).optional(),
   expectedVersion: safeVersionSchema,
   expectedContentVersion: safeVersionSchema.optional(),
   mutationId: mutationIdSchema.optional()
 });
 
 const tagSchema = z.object({
-  tags: z.array(z.string().trim().min(1).max(50)).max(20),
+  tags: z.array(displayLabelSchema(50)).max(20),
   expectedVersion: safeVersionSchema
 });
 

@@ -42,7 +42,7 @@ test("every password-bearing route and seed path shares the byte policy", async 
   assert.match(schemas, /refine\(isPasswordWithinBcryptLimit, bcryptPasswordLimitMessage\)/);
   assert.ok((authRoutes.match(/passwordInputSchema\(/g) ?? []).length >= 4);
   assert.ok((mfaRoutes.match(/passwordInputSchema\(/g) ?? []).length >= 2);
-  assert.match(seed, /isPasswordWithinBcryptLimit\(password\)/);
+  assert.match(seed, /newPasswordSchema.safeParse\(password\)/);
 });
 
 test("standalone reproduction shows the vulnerable collision and remediated rejection", () => {

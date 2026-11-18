@@ -70,7 +70,7 @@ import {
   registrationRateLimit
 } from "../middleware/auth-rate-limit.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
-import { passwordInputSchema, requireUser, usernameSchema } from "../utils/schemas.js";
+import { displayLabelSchema, newPasswordSchema, passwordInputSchema, requireUser, usernameSchema } from "../utils/schemas.js";
 import type { UserRow } from "../types/domain.js";
 import {
   consumeMfaStepUpIfRequired,
@@ -90,8 +90,8 @@ const defaultPageModeSchema = z.enum(supportedDefaultPageModes);
 
 const registerSchema = z.object({
   username: usernameSchema,
-  password: passwordInputSchema(8),
-  name: z.string().trim().min(1).max(80).optional(),
+  password: newPasswordSchema,
+  name: displayLabelSchema(80).optional(),
   preferredLanguage: preferredLanguageSchema.optional()
 });
 
@@ -102,7 +102,7 @@ const loginSchema = z.object({
 
 const profileSchema = z
   .object({
-    name: z.string().trim().max(80).nullable().optional(),
+    name: displayLabelSchema(80, 0).nullable().optional(),
     avatarData: z.string().max(Math.ceil((maxAvatarBytes * 4) / 3) + 128).nullable().optional(),
     preferredLanguage: preferredLanguageSchema.nullable().optional(),
     defaultCollectionIcon: iconMutationValueSchema.nullable().optional(),
@@ -191,7 +191,7 @@ const navigationOrderSchema = z.object({
 const passwordSchema = z
   .object({
     currentPassword: passwordInputSchema(1),
-    newPassword: passwordInputSchema(8),
+    newPassword: newPasswordSchema,
     stepUpToken: mfaStepUpTokenSchema.optional()
   })
   .refine((value) => value.currentPassword !== value.newPassword, {

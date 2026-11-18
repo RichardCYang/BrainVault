@@ -99,7 +99,7 @@
                 <input id="password" name="password" type="password" autocomplete="current-password" required />
                 <button id="password-visibility-toggle" class="password-visibility-toggle" type="button" aria-controls="password" aria-pressed="false">Show</button>
               </div>
-              <p id="password-hint" class="field-help auth-register-hint hidden" data-i18n="auth.passwordHint">At least 8 characters (up to 72 bytes).</p>
+              <p id="password-hint" class="field-help auth-register-hint hidden" data-i18n="auth.passwordHint">At least 12 characters (up to 72 bytes).</p>
             </div>
 
             <div id="register-fields" class="register-fields hidden">
@@ -1191,12 +1191,12 @@
                 </div>
                 <div class="form-field">
                   <label for="account-new-password" data-i18n="account.newPassword">New password</label>
-                  <input id="account-new-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required aria-describedby="account-password-hint" />
+                  <input id="account-new-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required aria-describedby="account-password-hint" />
                 </div>
                 <div class="form-field">
                   <label for="account-confirm-password" data-i18n="account.confirmPassword">Confirm new password</label>
-                  <input id="account-confirm-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required />
-                  <p id="account-password-hint" class="field-help" data-i18n="account.passwordHint">Use at least 8 characters and no more than 72 UTF-8 bytes.</p>
+                  <input id="account-confirm-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+                  <p id="account-password-hint" class="field-help" data-i18n="account.passwordHint">Use at least 12 characters and no more than 72 UTF-8 bytes.</p>
                 </div>
                 <div class="account-form-actions">
                   <button id="account-password-save" type="submit" data-i18n="account.changePassword">Change password</button>

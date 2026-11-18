@@ -550,9 +550,12 @@ const forbiddenRenderedTags = new Set(["script", "style", "svg", "math", "textar
 // classes belong in an untrusted cache; editor/chrome classes can escape the
 // block via global CSS (for example, fixed account-settings overlays).
 const renderedClassPattern = /^(?:rendered-[a-z0-9_-]+|language-[a-z0-9_-]+|math-expression(?:--(?:inline|display))?|youtube-video-(?:frame|iframe|open-link)|is-(?:active|current|complete|weekend|today)|visually-hidden)$/;
+// This popover is created by trusted browser code outside the note container.
+// Its fixed positioning must never be available to user HTML or stored caches.
+const renderedChromeClassPattern = /^rendered-ai-chat-link-tooltip(?:-|$)/;
 
 export function sanitizeRenderedClass(value: string) {
-  return value.split(/\s+/).filter((token) => renderedClassPattern.test(token)).join(" ");
+  return value.split(/\s+/).filter((token) => renderedClassPattern.test(token) && !renderedChromeClassPattern.test(token)).join(" ");
 }
 
 const allowedTags = sanitizeHtml.defaults.allowedTags.concat([

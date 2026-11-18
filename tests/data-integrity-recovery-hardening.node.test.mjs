@@ -328,13 +328,14 @@ test("browser recovery sync uploads additively and never auto-deletes local reco
   assert.match(sync, /RECOVERY_GRANT_NOT_FOUND/);
 });
 
-test("recovery candidate deletion permits either the uploader or the vault owner", () => {
+test("recovery candidate deletion is confined to the submitting principal", () => {
   const recovery = read("src/lib/recovery-candidates.ts");
   const deletionStart = recovery.indexOf("export async function deleteRecoveryCandidate");
   assert.notEqual(deletionStart, -1, "missing recovery candidate deletion function");
   const deletion = recovery.slice(deletionStart);
-  assert.match(deletion, /WHERE id = \? AND \(principal_id = \? OR owner_id = \?\)/);
-  assert.match(deletion, /\[candidateId, userId, userId\]/);
+  assert.match(deletion, /WHERE id = \? AND principal_id = \?/);
+  assert.doesNotMatch(deletion, /OR owner_id = \?/);
+  assert.match(deletion, /\[candidateId, userId\]/);
   assert.match(recovery, /expires_at > CURRENT_TIMESTAMP\(6\)/);
 });
 

@@ -144,10 +144,19 @@ for(const reverse of [false,true])test(`300-level all-memo tree no longer revisi
   assert.ok(after.metrics.setAdds<before.metrics.setAdds/20);
 });
 
-test('search query validation, authentication registration and response serialization are byte-identical',()=>{
+test('search query validation, authentication registration and response serialization are byte-identical outside bidi display hardening',()=>{
   const before=sourceFor('src/routes/search.routes.ts','baseline'),after=sourceFor('src/routes/search.routes.ts');
-  assert.equal(after.slice(0,after.indexOf('function snippet(')),before.slice(0,before.indexOf('function snippet(')));
-  assert.equal(after.slice(after.indexOf('    res.setHeader')),before.slice(before.indexOf('    res.setHeader')));
+  assert.equal(after.slice(0,after.indexOf('function snippet(')).replace(/^import \{ sanitizeDisplayLabel \}[^\n]+\n/m, ''),before.slice(0,before.indexOf('function snippet(')));
+  assert.equal(after.slice(after.indexOf('    res.setHeader')).replace(/sanitizeDisplayLabel\((page\.title|block\.page_title)\)/g, '$1'),before.slice(before.indexOf('    res.setHeader')));
+});
+
+test('search neutralizes bidi controls in both page and block title projections',async()=>{
+  const data=searchFixture(1,0);
+  data.pages[0].title='invoice\u202Egnp.exe';
+  data.blocks[0].page_title='invoice\u202Egnp.exe';
+  const result=await makeSearch('current',data).run();
+  assert.equal(result.nextError,undefined);
+  for(const hit of result.response.results) assert.equal(hit.title??hit.pageTitle,'invoicegnp.exe');
 });
 for(const q of ['needle','한글','%','_','!','%_!','x\' OR 1=1 --','\\','😀'])test(`search preserves literal escaping, query predicates, transaction and output: ${JSON.stringify(q)}`,async()=>{
   const data=searchFixture(5,100),before=makeSearch('baseline',data),after=makeSearch('current',data);

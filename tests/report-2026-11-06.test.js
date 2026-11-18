@@ -74,7 +74,9 @@ function browserSanitize(html, allowAiControls = false) {
 describe("BV-2026-001 content classes", () => {
   const chromeClasses = ["account-settings-layer", "account-settings-backdrop", "account-settings-dialog",
     "share-page-layer", "emoji-picker-layer", "mobile-sidebar-backdrop", "kanban-card-style-panel",
-    "database-property-menu", "is-open", "is-dragging"];
+    "database-property-menu", "is-open", "is-dragging",
+    "rendered-ai-chat-link-tooltip", "rendered-ai-chat-link-tooltip-title",
+    "rendered-ai-chat-link-tooltip-navigation", "rendered-ai-chat-link-tooltip-nav--next"];
 
   it.each(chromeClasses)("removes %s from fresh Markdown and legacy caches in both sanitizers", (token) => {
     const payload = `<div class='${token} rendered-code-shell'><a class='${token}' href='https://example.com/login'>Sign in</a></div>`;

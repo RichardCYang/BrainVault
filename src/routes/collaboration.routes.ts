@@ -447,11 +447,11 @@ function toSafeHistoryMetric(value: unknown, label: string) {
   return metric;
 }
 
-function assertShareablePage(page: PageRow) {
+function assertShareablePage(page: PageRow, { allowArchived = false } = {}) {
   if (page.is_collection) {
     throw new ApiError(400, "COLLECTION_SHARING_UNSUPPORTED", "Collections cannot be shared for live editing");
   }
-  if (page.is_archived) {
+  if (page.is_archived && !allowArchived) {
     throw new ApiError(400, "ARCHIVED_PAGE_SHARING_UNSUPPORTED", "Restore the page before sharing it");
   }
 }
@@ -1072,7 +1072,7 @@ collaborationRouter.get(
         const access = await getPageAccess(pageId, user.id, client);
         assertPageCanAdminister(access);
         assertDirectPageShareOwner(access, "Direct page shares can only be viewed by the workspace owner");
-        assertShareablePage(access.page);
+        assertShareablePage(access.page, { allowArchived: true });
         return getShareRows(pageId, access.page.owner_id, client);
       });
       res.setHeader("Cache-Control", "private, no-store");
@@ -1244,7 +1244,9 @@ collaborationRouter.delete(
         assertPageShareAdministrationMutationAdmission(administrationAdmission, actor.id, access);
         const page = access.page;
         const workspaceOwnerId = page.owner_id;
-        assertShareablePage(page);
+        // Archiving is read-only storage, not access revocation. The owner must
+        // still be able to inspect and revoke existing grants without restoring.
+        assertShareablePage(page, { allowArchived: true });
         await assertNoActiveCollaborationWriteLeases(client, [pageId]);
         const existingShare = await client.queryOne<{ user_id: string; generation: string }>(
           `SELECT user_id, generation FROM page_shares

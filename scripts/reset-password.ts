@@ -2,7 +2,7 @@ import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { hashPassword, normalizeAuthVersion } from "../src/lib/auth.js";
 import { closeDb, transaction } from "../src/lib/db.js";
-import { passwordInputSchema } from "../src/utils/schemas.js";
+import { newPasswordSchema } from "../src/utils/schemas.js";
 
 // Run only from a trusted operator shell after verifying the account holder
 // through an independent channel. This is deliberately not an unauthenticated
@@ -59,9 +59,9 @@ async function main() {
   }
 
   const password = await readNewPassword();
-  const parsed = passwordInputSchema(8).safeParse(password);
+  const parsed = newPasswordSchema.safeParse(password);
   if (!parsed.success) {
-    throw new Error("The password must be at least 8 characters and at most 72 bytes. Nothing was changed.");
+    throw new Error(`${parsed.error.issues.map((issue) => issue.message).join("; ")}. Nothing was changed.`);
   }
   const passwordHash = await hashPassword(parsed.data);
 

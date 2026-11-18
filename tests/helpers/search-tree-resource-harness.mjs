@@ -2,6 +2,7 @@
 // does not replace the project's real Express/MariaDB integration tests.
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
+import { sanitizeDisplayLabel } from '../../src/utils/display-label.ts';
 export const baseline = JSON.parse(readFileSync(new URL('../fixtures/search-tree-resource-baseline.json', import.meta.url), 'utf8'));
 export function sourceFor(path, mode = 'current') {
   return mode === 'baseline' ? baseline.files[path].source : readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
@@ -99,8 +100,8 @@ export function makeSearch(mode = 'current', {pages = [], blocks = [], failAt = 
   };
   let source = stripTypeScriptTypes(sourceFor('src/routes/search.routes.ts', mode));
   source = source.slice(source.indexOf('function snippet('));
-  new Function('searchRouter','validate','searchQuerySchema','requireUser','getValidatedQuery','transaction','toSqlLikeContainsPattern', source)(
-    router, value => value, {}, user => { if (!user) throw new Error('Unauthenticated'); return user; }, req => req.query, transaction, literalPattern);
+  new Function('searchRouter','validate','searchQuerySchema','requireUser','getValidatedQuery','transaction','toSqlLikeContainsPattern','sanitizeDisplayLabel', source)(
+    router, value => value, {}, user => { if (!user) throw new Error('Unauthenticated'); return user; }, req => req.query, transaction, literalPattern, sanitizeDisplayLabel);
   return { calls, registrations, headers,
     async run({user = {id:'user-owner'}, q = 'needle', limit = 20} = {}) {
       await handler({user,query:{q,limit}}, {setHeader(name,value) {headers[name]=value;}, json(value) {response=value;}}, error => {nextError=error;});

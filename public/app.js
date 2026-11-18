@@ -1917,7 +1917,7 @@ function setAuthMode(mode, updateHash = true) {
   elements.passwordHint.classList.toggle("hidden", !isRegister);
   toggleAttribute(elements.username, "aria-describedby", isRegister ? "username-hint" : null);
   toggleAttribute(elements.password, "aria-describedby", isRegister ? "password-hint" : null);
-  toggleAttribute(elements.password, "minlength", isRegister ? "8" : null);
+  toggleAttribute(elements.password, "minlength", isRegister ? "12" : null);
   elements.username.setCustomValidity("");
   syncPasswordVisibilityToggle();
 
@@ -12155,7 +12155,10 @@ function applyCollaborationSnapshot(snapshot, { source = "remote" } = {}) {
   const nextBlockSignature = source === "local"
     ? null
     : getCollaborationBlockSignature(nextBlocks);
-  const nextTitle = requirePageTitleWithinLimit(snapshot.title);
+  // Neutralize bidi controls at the display boundary without rewriting durable
+  // Yjs history (including old documents restored from backups).
+  const nextTitle = requirePageTitleWithinLimit(snapshot.title)
+    .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
   const previousBlocks = state.selectedPage.blocks ?? [];
 
   state.selectedPage.title = nextTitle;

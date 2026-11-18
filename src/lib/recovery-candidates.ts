@@ -350,6 +350,9 @@ export async function storeRecoveryCandidate(input: {
 }
 
 export async function listRecoveryCandidates(userId: string) {
+  // A page owner owns committed content, not another author's unsaved drafts.
+  // Keep list/download/delete scoped to the submitting principal, even after
+  // sharing is revoked. Owner identity is retained for provenance and quotas.
   return db.query<{
     id: string;
     page_id: string;
@@ -366,9 +369,9 @@ export async function listRecoveryCandidates(userId: string) {
     `SELECT id, page_id, principal_id, owner_id, lineage_key, kind, source_id, generation,
             payload_sha256, OCTET_LENGTH(payload) AS payload_bytes, created_at
      FROM page_recovery_candidates
-     WHERE principal_id = ? OR owner_id = ?
+     WHERE principal_id = ?
      ORDER BY created_at DESC, id DESC`,
-    [userId, userId]
+    [userId]
   );
 }
 
@@ -389,8 +392,8 @@ export async function getRecoveryCandidate(candidateId: string, userId: string) 
     `SELECT id, page_id, principal_id, owner_id, lineage_key, kind, source_id, generation,
             payload_sha256, payload, created_at
      FROM page_recovery_candidates
-     WHERE id = ? AND (principal_id = ? OR owner_id = ?)`,
-    [candidateId, userId, userId]
+     WHERE id = ? AND principal_id = ?`,
+    [candidateId, userId]
   );
   if (!row) throw notFound("Recovery candidate");
 
@@ -414,8 +417,8 @@ export async function deleteRecoveryCandidate(
 ) {
   const result = await client.execute<{ affectedRows: number }>(
     `DELETE FROM page_recovery_candidates
-     WHERE id = ? AND (principal_id = ? OR owner_id = ?)`,
-    [candidateId, userId, userId]
+     WHERE id = ? AND principal_id = ?`,
+    [candidateId, userId]
   );
   if (Number(result.affectedRows) === 0) throw notFound("Recovery candidate");
 }
