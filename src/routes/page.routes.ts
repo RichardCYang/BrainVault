@@ -340,12 +340,6 @@ function getPageSubtreeRows(pageId: string, rows: PageDeletionPageRow[]) {
   return ordered;
 }
 
-/**
- * True for a first (not replayed) permanent deletion of a collection or of a
- * page with nested pages: the deletions that cannot be archived instead and
- * take many pages at once. A plain read; the deletion transaction re-checks
- * everything under its locks.
- */
 async function assertWorkspacePageCapacity(client: DbClient, ownerId: string) {
   const usage = await client.queryOne<{ page_count: number | string }>(
     "SELECT COUNT(*) AS page_count FROM pages WHERE owner_id = ?",
@@ -360,6 +354,11 @@ async function assertWorkspacePageCapacity(client: DbClient, ownerId: string) {
   }
 }
 
+/**
+ * Every first delegated deletion needs an owner recovery copy, including a
+ * single ordinary page. Owner deletions need one for collections or subtrees.
+ * These are plain reads; snapshot creation and deletion re-check under locks.
+ */
 async function needsPreDeleteSafetySnapshot(ownerId: string, actorId: string, mutationId: string, pageId: string) {
   // Receipts are keyed by whoever sent the deletion, the owner or a delegate.
   const replay = await db.queryOne<{ mutation_id: string }>(
@@ -378,6 +377,7 @@ async function needsPreDeleteSafetySnapshot(ownerId: string, actorId: string, mu
   const rows = await getOwnedPageTreeRows(ownerId);
   const target = rows.find((row) => row.id === pageId);
   if (!target) return false;
+  if (actorId !== ownerId) return true;
   return Boolean(target.is_collection) || getPageSubtreeRows(pageId, rows).length > 1;
 }
 
@@ -2474,10 +2474,10 @@ pageRouter.delete(
         // deletion below still checks the confirmed preview hash, so anything
         // that changed after this copy was taken stops the deletion instead.
         //
-        // A collection administrator deleting someone else's pages gets the same
-        // protection for the owner: the copy is saved in the owner's workspace,
-        // where the owner can restore it. Only the owner may decide to delete
-        // without that copy, so the skip header is ignored for anyone else.
+        // A collection administrator deleting someone else's pages always saves
+        // a copy in the owner's workspace, even for a single ordinary page.
+        // Only the owner may decide to delete without that copy, so the skip
+        // header is ignored for anyone else.
         let safetySnapshotId: string | null = null;
         const workspaceOwnerId = pageOwnerHint?.owner_id ?? null;
         const delegatedDeletion = workspaceOwnerId !== null && workspaceOwnerId !== user.id;

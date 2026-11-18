@@ -86,8 +86,8 @@ beforeEach(() => {
     });
     return { affectedRows: 1 };
   });
-  state.prepare.mockResolvedValue({ archiveSize: 7n, manifest: { data: { pages: [], blocks: [] }, attachments: [] } });
-  state.write.mockImplementation(async (_plan, output) => { output.write("archive"); await state.afterWrite?.(); });
+  state.prepare.mockReset().mockResolvedValue({ archiveSize: 7n, manifest: { data: { pages: [], blocks: [] }, attachments: [] } });
+  state.write.mockReset().mockImplementation(async (_plan, output) => { output.write("archive"); await state.afterWrite?.(); });
 });
 afterEach(async () => { await rm(state.root, { recursive: true, force: true }); });
 
@@ -153,5 +153,81 @@ describe("permanent deletion snapshot authorization over HTTP", () => {
     await deletion(snapshot).expect(204);
     expect(state.snapshots.size).toBe(1);
     expect(await archives()).toHaveLength(1);
+  });
+
+  it.each(["pag_member", "pag_child"])("the owner may skip a safety copy for %s", async (pageId) => {
+    state.actor = owner;
+    await deletion(await preview(pageId), pageId, { "X-Delete-Skip-Safety-Snapshot": "1" }).expect(204);
+    expect(state.pages.has(pageId)).toBe(false);
+    expect(state.prepare).not.toHaveBeenCalled();
+    expect(state.snapshots.size).toBe(0);
+    expect(await archives()).toEqual([]);
+  });
+});
+
+describe("delegated permanent deletion of a single ordinary page", () => {
+  const pageId = "pag_child";
+
+  it.each([{}, { "X-Delete-Skip-Safety-Snapshot": "1" }])("saves an owner copy before deleting with headers %j", async (headers) => {
+    state.afterWrite = () => expect(state.pages.has(pageId)).toBe(true);
+    const snapshot = await preview(pageId);
+    const response = await deletion(snapshot, pageId, headers).expect(204);
+
+    expect(response.headers["x-delete-safety-snapshot-owner"]).toBe("1");
+    expect(response.headers["x-delete-safety-snapshot-id"]).toBeUndefined();
+    expect(state.prepare).toHaveBeenCalledWith(owner, expect.any(Object));
+    expect([...state.snapshots.values()]).toEqual([
+      expect.objectContaining({ user_id: owner, kind: "PRE_DELETE" })
+    ]);
+    expect(await archives()).toHaveLength(1);
+    expect([...state.pages.keys()]).toEqual(["pag_collection", "pag_member"]);
+
+    // A lost response must replay the receipt without creating another copy.
+    await deletion(snapshot, pageId, headers).expect(204);
+    expect(state.prepare).toHaveBeenCalledTimes(1);
+    expect(state.snapshots.size).toBe(1);
+    expect(await archives()).toHaveLength(1);
+  });
+
+  it.each(["prepare", "write"])("stops deletion when snapshot %s fails even with the skip header", async (stage) => {
+    const failure = new Error("fixture snapshot failure");
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      state[stage].mockRejectedValueOnce(failure);
+      const response = await deletion(await preview(pageId), pageId, {
+        "X-Delete-Skip-Safety-Snapshot": "1"
+      }).expect(409);
+
+      expect(response.body.error.code).toBe("OWNER_DELETE_SAFETY_SNAPSHOT_FAILED");
+      expect(state.pages.size).toBe(3);
+      expect(state.receipts.size).toBe(0);
+      expect(state.snapshots.size).toBe(0);
+      expect(await archives()).toEqual([]);
+      expect(state.execute.mock.calls.some(([sql]) => sql.includes("DELETE FROM pages"))).toBe(false);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it.each([null, "READ", "WRITE"])("permission %s cannot allocate a leaf safety copy", async (permission) => {
+    state.permission = permission;
+    await deletion(undefined, pageId).expect(permission === null ? 404 : 403);
+    expect(state.prepare).not.toHaveBeenCalled();
+    expect(state.pages.size).toBe(3);
+    expect(await archives()).toEqual([]);
+  });
+
+  it.each(["revocation", "restore", "content"])("fences a leaf %s change during snapshot creation", async (change) => {
+    const snapshot = await preview(pageId);
+    state.afterWrite = () => {
+      if (change === "revocation") state.permission = null;
+      if (change === "restore") state.generation++;
+      if (change === "content") state.pages.get(pageId).content_version++;
+    };
+    await deletion(snapshot, pageId).expect(change === "revocation" ? 404 : 409);
+    expect(state.pages.size).toBe(3);
+    expect(state.receipts.size).toBe(0);
+    expect(state.snapshots.size).toBe(0);
+    expect(await archives()).toEqual([]);
   });
 });

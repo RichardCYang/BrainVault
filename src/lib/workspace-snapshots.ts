@@ -204,6 +204,9 @@ async function writeSnapshotArchive(userId: string, snapshotId: string, remainin
     };
   } catch (error) {
     output?.destroy();
+    // destroy() can return while the file is still opening or closing. Wait
+    // before unlinking, otherwise a failed writer can leave an untracked ZIP.
+    if (output) await finished(output).catch(() => undefined);
     if (!backupWriterInvoked) {
       await rm(plan.operationRoot, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -438,13 +441,12 @@ export const deleteSafetySnapshotIdHeader = "X-Delete-Safety-Snapshot-Id";
 export const deleteSafetySnapshotOwnerHeader = "X-Delete-Safety-Snapshot-Owner";
 
 /**
- * Saves the workspace just before a collection or a page with nested pages is
- * permanently deleted. Those deletions remove many pages, their history and
- * files at once and cannot be archived instead, so the snapshot is what makes
- * them undoable. Pruned like the "Before restore" snapshots.
+ * Saves the owner's workspace before a collection/subtree permanent deletion
+ * or any delegated permanent deletion, including a single ordinary page.
+ * Only owner deletions may prune old automatic snapshots after success.
  *
- * Any failure stops the deletion with DELETE_SAFETY_SNAPSHOT_FAILED; the person
- * can then choose to delete without the safety copy.
+ * Failure stops deletion; backup failures use DELETE_SAFETY_SNAPSHOT_FAILED.
+ * Only the owner can choose to delete without the safety copy.
  */
 export async function createPreDeleteSafetySnapshot(
   userId: string,
