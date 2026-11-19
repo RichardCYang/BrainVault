@@ -1,3 +1,4 @@
+import { setUiIcon } from "./ui-icons.js";
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, t } from "./i18n.js";
 import { AI_CHAT_ANSWER_MAX_LENGTH } from "./runtime-config.js";
@@ -273,7 +274,7 @@ function ensureAiChatCitationPopover() {
   previousButton.type = "button";
   previousButton.className = "rendered-ai-chat-link-tooltip-nav rendered-ai-chat-link-tooltip-nav--previous";
   previousButton.setAttribute("aria-label", t("aiChat.citationPreviousSource"));
-  previousButton.textContent = "‹";
+  setUiIcon(previousButton, "chevron-left");
   previousButton.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation?.();
@@ -284,7 +285,7 @@ function ensureAiChatCitationPopover() {
   nextButton.type = "button";
   nextButton.className = "rendered-ai-chat-link-tooltip-nav rendered-ai-chat-link-tooltip-nav--next";
   nextButton.setAttribute("aria-label", t("aiChat.citationNextSource"));
-  nextButton.textContent = "›";
+  setUiIcon(nextButton, "chevron-right");
   nextButton.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation?.();
@@ -1832,7 +1833,7 @@ function createTurnEditor(editor, row, turnData, { onDirty } = {}) {
   removeButton.type = "button";
   removeButton.className = "ai-chat-remove-turn";
   removeButton.dataset.action = "remove-ai-chat-turn";
-  removeButton.textContent = "×";
+  setUiIcon(removeButton, "close");
   removeButton.addEventListener("click", () => {
     if (editor.querySelectorAll(".ai-chat-turn").length <= 1) return;
     turn.remove();

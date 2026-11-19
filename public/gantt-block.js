@@ -1,3 +1,4 @@
+import { createUiIcon } from "./ui-icons.js";
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, formatNumber, t } from "./i18n.js";
 import { showConfirmDialog } from "./app-dialog.js";
@@ -219,7 +220,8 @@ function makeButton(action, label, title, data = {}) {
   button.type = "button";
   button.className = "gantt-action-button";
   button.dataset.action = action;
-  button.textContent = label;
+  if (typeof label === "object" && label !== null) button.append(label);
+  else button.textContent = label;
   button.title = title;
   button.setAttribute("aria-label", title);
   Object.entries(data).forEach(([key, value]) => {
@@ -313,7 +315,7 @@ function createTaskEditorRow(task) {
   assignee.placeholder = t("gantt.assigneePlaceholder");
   assignee.setAttribute("aria-label", t("gantt.assigneeAria", { task: task.title || t("gantt.untitledTask") }));
 
-  const remove = makeButton("gantt-delete-task", "×", t("gantt.deleteTask"), { taskId: task.id });
+  const remove = makeButton("gantt-delete-task", createUiIcon("close"), t("gantt.deleteTask"), { taskId: task.id });
   remove.classList.add("gantt-delete-task");
   main.append(status, title, assignee, remove);
 
@@ -680,9 +682,9 @@ export function createGanttEditor(row, value, { onDirty = () => {} } = {}) {
   weekendLabel.textContent = t("gantt.weekends");
   weekends.append(weekendCheckbox, weekendLabel);
 
-  const previous = makeButton("gantt-previous", "‹", t("gantt.previousRange"));
+  const previous = makeButton("gantt-previous", createUiIcon("chevron-left"), t("gantt.previousRange"));
   const today = makeButton("gantt-today", t("gantt.today"), t("gantt.today"));
-  const next = makeButton("gantt-next", "›", t("gantt.nextRange"));
+  const next = makeButton("gantt-next", createUiIcon("chevron-right"), t("gantt.nextRange"));
   controls.append(scale, weekends, previous, today, next);
   toolbar.append(viewBar, controls);
 

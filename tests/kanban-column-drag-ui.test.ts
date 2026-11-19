@@ -6,7 +6,7 @@ const styles = readFileSync(new URL("../public/styles.css", import.meta.url), "u
 
 describe("Kanban column drag ordering", () => {
   it("uses the existing three-dot delete button as a pointer drag handle on mouse and touch", () => {
-    expect(client).toContain('deleteColumn.setAttribute("aria-grabbed", "false")');
+    expect(client).toContain('deleteColumn.setAttribute("data-dragging", "false")');
     expect(client).toContain('const handle = event.target.closest(".kanban-column-menu")');
     expect(client).toContain('handle.setPointerCapture?.(event.pointerId)');
     expect(client).toContain('const threshold = event.pointerType === "touch" ? 7 : 4;');

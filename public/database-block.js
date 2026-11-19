@@ -1,3 +1,4 @@
+import { createUiIcon, setUiIcon } from "./ui-icons.js";
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatNumber, t } from "./i18n.js";
 import { showConfirmDialog } from "./app-dialog.js";
@@ -932,7 +933,8 @@ function makeButton(action, label, title, data = {}) {
   const button = document.createElement("button");
   button.type = "button";
   button.dataset.action = action;
-  button.textContent = label;
+  if (typeof label === "object" && label !== null) button.append(label);
+  else button.textContent = label;
   button.title = title;
   button.setAttribute("aria-label", title);
   Object.entries(data).forEach(([key, value]) => {
@@ -1366,7 +1368,7 @@ function createPropertyManager(editor, row, database, onDirty, replaceEditor) {
     visibility.append(visible, document.createTextNode(t("database.visibleInView")));
     item.append(visibility);
 
-    const remove = makeButton("database-delete-property", "×", t("database.deleteProperty"), { propertyId: property.id });
+    const remove = makeButton("database-delete-property", createUiIcon("close"), t("database.deleteProperty"), { propertyId: property.id });
     remove.className = "database-property-delete";
     remove.disabled = property.type === "title" || database.properties.length <= 1;
     item.append(remove);
@@ -1676,7 +1678,7 @@ function createTableView(row, database, view, rows, onDirty, replaceEditor) {
       }
       tr.append(td);
     });
-    const remove = makeButton("database-delete-row", "×", t("database.deleteRow"), { rowId: dataRow.id });
+    const remove = makeButton("database-delete-row", createUiIcon("close"), t("database.deleteRow"), { rowId: dataRow.id });
     remove.className = "database-delete-row database-table-delete-row";
     tr.lastElementChild?.append(remove);
     tbody.append(tr);
@@ -1723,7 +1725,7 @@ function createListView(row, database, view, rows, onDirty, replaceEditor) {
       }));
       properties.append(field);
     });
-    const remove = makeButton("database-delete-row", "×", t("database.deleteRow"), { rowId: dataRow.id });
+    const remove = makeButton("database-delete-row", createUiIcon("close"), t("database.deleteRow"), { rowId: dataRow.id });
     remove.className = "database-delete-row";
     item.append(title, properties, remove);
     list.append(item);
@@ -1819,7 +1821,7 @@ function createBoardView(row, database, view, rows, onDirty, replaceEditor) {
         }));
         card.append(field);
       });
-      const remove = makeButton("database-delete-row", "×", t("database.deleteRow"), { rowId: dataRow.id });
+      const remove = makeButton("database-delete-row", createUiIcon("close"), t("database.deleteRow"), { rowId: dataRow.id });
       remove.className = "database-delete-row";
       card.append(remove);
       cards.append(card);
@@ -1946,7 +1948,7 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
   addViewMenu.className = "database-add-view-menu";
   const addViewSummary = document.createElement("summary");
   addViewSummary.className = "database-add-view-select";
-  addViewSummary.textContent = "+";
+  setUiIcon(addViewSummary, "plus");
   addViewSummary.title = t("database.addView");
   addViewSummary.setAttribute("aria-label", t("database.addView"));
   if (viewLimitReached) addViewSummary.setAttribute("aria-disabled", "true");
@@ -2029,7 +2031,7 @@ export function createDatabaseEditor(row, value, { onDirty = () => {} } = {}) {
   const newMenu = document.createElement("details");
   newMenu.className = "database-new-menu";
   const newMenuSummary = document.createElement("summary");
-  newMenuSummary.textContent = "⌄";
+  setUiIcon(newMenuSummary, "chevron-down");
   newMenuSummary.setAttribute("aria-label", t("database.newOptions"));
   const newMenuPopover = document.createElement("div");
   newMenuPopover.className = "database-toolbar-popover database-new-menu-popover";

@@ -16,7 +16,7 @@ describe("Sidebar navigation drag ordering", () => {
   });
 
   it("drags from the existing three-dot action button with Pointer Events on mouse and touch", () => {
-    expect(client).toContain('button.setAttribute("aria-grabbed", "false")');
+    expect(client).toContain('button.setAttribute("data-dragging", "false")');
     expect(client).toContain('elements.appSidebar.addEventListener("pointerdown"');
     expect(client).toContain('elements.appSidebar.addEventListener("pointermove"');
     expect(client).toContain('elements.appSidebar.addEventListener("pointerup"');

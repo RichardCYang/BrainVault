@@ -1,3 +1,4 @@
+import { setUiIcon } from "./ui-icons.js";
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatNumber, t } from "./i18n.js";
 import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
@@ -204,7 +205,7 @@ export function createAccordionEditor(row, value, options = {}) {
     dragHandle.className = "accordion-item-drag-handle";
     dragHandle.draggable = true;
     dragHandle.dataset.accordionItemId = item.id;
-    dragHandle.textContent = "⠿";
+    setUiIcon(dragHandle, "grip");
     dragHandle.title = t("accordion.dragItem");
     dragHandle.setAttribute("aria-label", t("accordion.dragItem"));
 
@@ -234,7 +235,7 @@ export function createAccordionEditor(row, value, options = {}) {
     const chevron = document.createElement("span");
     chevron.className = "accordion-item-chevron";
     chevron.setAttribute("aria-hidden", "true");
-    chevron.textContent = item.open ? "⌄" : "›";
+    setUiIcon(chevron, item.open ? "chevron-down" : "chevron-right");
     disclosure.append(chevron);
 
     const itemTitle = document.createElement("input");
@@ -253,7 +254,7 @@ export function createAccordionEditor(row, value, options = {}) {
     moveUp.dataset.action = "accordion-move-up";
     moveUp.dataset.accordionItemId = item.id;
     moveUp.className = "accordion-item-action";
-    moveUp.textContent = "↑";
+    setUiIcon(moveUp, "arrow-up");
     moveUp.title = t("accordion.moveUp");
     moveUp.setAttribute("aria-label", t("accordion.moveUp"));
     moveUp.disabled = index === 0;
@@ -262,7 +263,7 @@ export function createAccordionEditor(row, value, options = {}) {
     moveDown.dataset.action = "accordion-move-down";
     moveDown.dataset.accordionItemId = item.id;
     moveDown.className = "accordion-item-action";
-    moveDown.textContent = "↓";
+    setUiIcon(moveDown, "arrow-down");
     moveDown.title = t("accordion.moveDown");
     moveDown.setAttribute("aria-label", t("accordion.moveDown"));
     moveDown.disabled = index === data.items.length - 1;
@@ -271,7 +272,7 @@ export function createAccordionEditor(row, value, options = {}) {
     remove.dataset.action = "accordion-remove-item";
     remove.dataset.accordionItemId = item.id;
     remove.className = "accordion-item-action accordion-item-remove";
-    remove.textContent = "⌫";
+    setUiIcon(remove, "trash");
     remove.title = t("accordion.removeItem");
     remove.setAttribute("aria-label", t("accordion.removeItem"));
     controls.append(moveUp, moveDown, remove);
@@ -428,7 +429,7 @@ export function createAccordionEditor(row, value, options = {}) {
       item.open = !item.open;
       button.setAttribute("aria-expanded", String(item.open));
       button.title = t(item.open ? "accordion.collapseItem" : "accordion.expandItem");
-      button.querySelector(".accordion-item-chevron").textContent = item.open ? "⌄" : "›";
+      setUiIcon(button.querySelector(".accordion-item-chevron"), item.open ? "chevron-down" : "chevron-right");
       const panel = editor.querySelector(`#accordion-panel-${CSS.escape(item.id)}`);
       if (panel) panel.hidden = !item.open;
       editor.accordionData = data;

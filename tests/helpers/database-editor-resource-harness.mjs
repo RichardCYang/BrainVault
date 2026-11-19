@@ -59,7 +59,15 @@ export function controls(element, result = []) {
   for (const child of element.children ?? []) if (child && typeof child === 'object') controls(child, result);
   return result;
 }
+// Control glyphs became ui-icons.js icons on purpose; compare them as the glyph the baseline rendered.
+const legacyIconGlyphs = {close:"×",plus:"+","chevron-down":"⌄"};
+function iconGlyph(element) {
+  const [only] = element.children;
+  return element.children.length === 1 && only?.dataset?.icon in legacyIconGlyphs ? legacyIconGlyphs[only.dataset.icon] : null;
+}
 export function snapshot(element) {
+  const glyph = iconGlyph(element);
+  if (glyph !== null) return snapshot(Object.assign(Object.create(Object.getPrototypeOf(element)), element, {textContent: glyph, children: []}));
   return {tag:element.tag,text:element.textContent,value:element.value,type:element.type,checked:element.checked,classes:element.className,
     attributes:element.attributes,dataset:element.dataset,maxLength:element.maxLength,placeholder:element.placeholder,
     children:element.children.map(child => typeof child === 'object' ? snapshot(child) : child)};

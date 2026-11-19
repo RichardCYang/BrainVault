@@ -16,7 +16,7 @@ describe("Page and collection deletion menus", () => {
 
   it("renders vertical three-dot buttons beside pages and custom collections", () => {
     expect(client).toContain('button.className = "navigation-more-button"');
-    expect(client).toContain('button.textContent = "⋮"');
+    expect(client).toContain('setUiIcon(button, "more-vertical")');
     expect(client).toContain('button.setAttribute("aria-haspopup", "menu")');
     expect(client).toContain('button.setAttribute("aria-expanded", "false")');
     expect(client).toContain('kind: "page"');

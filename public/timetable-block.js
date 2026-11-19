@@ -1,3 +1,4 @@
+import { createUiIcon, setUiIcon } from "./ui-icons.js";
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { formatDateTime, formatNumber, t } from "./i18n.js";
 import { showConfirmDialog } from "./app-dialog.js";
@@ -164,7 +165,8 @@ function makeButton(action, label, title, data = {}) {
   button.type = "button";
   button.className = "timetable-action-button";
   button.dataset.action = action;
-  button.textContent = label;
+  if (typeof label === "object" && label !== null) button.append(label);
+  else button.textContent = label;
   button.title = title;
   button.setAttribute("aria-label", title);
   Object.entries(data).forEach(([key, value]) => {
@@ -246,7 +248,7 @@ function createEntryRow(entry) {
 
   const actionCell = document.createElement("td");
   actionCell.className = "timetable-row-actions";
-  const remove = makeButton("timetable-delete-entry", "×", t("timetable.deleteEntry"), { entryId: entry.id });
+  const remove = makeButton("timetable-delete-entry", createUiIcon("close"), t("timetable.deleteEntry"), { entryId: entry.id });
   remove.classList.add("timetable-delete-entry");
   actionCell.append(remove);
 
@@ -330,7 +332,7 @@ export function createTimetableEditor(row, value, { onDirty = () => {} } = {}) {
   view.setAttribute("aria-current", "true");
   const viewIcon = document.createElement("span");
   viewIcon.className = "timetable-view-icon";
-  viewIcon.textContent = "▦";
+  setUiIcon(viewIcon, "grid");
   viewIcon.setAttribute("aria-hidden", "true");
   const viewLabel = document.createElement("span");
   viewLabel.textContent = t("timetable.dayView");
@@ -339,11 +341,11 @@ export function createTimetableEditor(row, value, { onDirty = () => {} } = {}) {
 
   const controls = document.createElement("div");
   controls.className = "timetable-toolbar-controls";
-  const previous = makeButton("timetable-previous-day", "‹", t("timetable.previousDay"));
+  const previous = makeButton("timetable-previous-day", createUiIcon("chevron-left"), t("timetable.previousDay"));
   previous.classList.add("timetable-date-nav");
   const today = makeButton("timetable-today", t("timetable.today"), t("timetable.today"));
   today.classList.add("timetable-date-nav");
-  const next = makeButton("timetable-next-day", "›", t("timetable.nextDay"));
+  const next = makeButton("timetable-next-day", createUiIcon("chevron-right"), t("timetable.nextDay"));
   next.classList.add("timetable-date-nav");
   const date = document.createElement("input");
   date.type = "date";

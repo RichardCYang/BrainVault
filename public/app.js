@@ -1,3 +1,4 @@
+import { setUiIcon } from "./ui-icons.js";
 import { joinSummaryPrefix } from "./summary-prefix.js";
 import { isoCountryCodes } from "./country-codes.js";
 import {
@@ -208,6 +209,23 @@ const customIconMimeTypes = Object.freeze(["image/png", "image/jpeg", "image/web
 const defaultPageCoverPaths = Object.freeze(
   Array.from({ length: 5 }, (_, index) => `/img/default_cover/coverimg${index + 1}.png`)
 );
+// Pages keep the PNG path as the stored cover value (server validation, backups
+// and older clients depend on it); the banner shows a same-size WebP copy that is
+// about a tenth of the download.
+const defaultPageCoverDisplayPaths = new Map(
+  defaultPageCoverPaths.map((path) => [path, path.replace("/coverimg", "/display/coverimg").replace(/\.png$/, ".webp")])
+);
+function getPageCoverDisplaySource(source) {
+  if (!source || source.startsWith("data:")) return source;
+  try {
+    const url = new URL(source, window.location.href);
+    if (url.origin !== window.location.origin || url.search || url.hash) return source;
+    const displayPath = defaultPageCoverDisplayPaths.get(url.pathname);
+    return displayPath ? new URL(displayPath, url).toString() : source;
+  } catch {
+    return source;
+  }
+}
 const customCoverMimeTypes = Object.freeze(["image/png", "image/jpeg", "image/webp"]);
 const customCoverMaxBytes = 2 * 1024 * 1024;
 const customCoverSourceMaxBytes = 20 * 1024 * 1024;
@@ -2052,7 +2070,7 @@ function setStatus(message, isError = false, { dismissAfter, action } = {}) {
   dismissButton.className = "status-dismiss";
   dismissButton.setAttribute("aria-label", t("status.dismiss"));
   dismissButton.title = t("status.dismiss");
-  dismissButton.textContent = "×";
+  setUiIcon(dismissButton, "close");
   dismissButton.addEventListener("click", clearStatus, { once: true });
   children.push(dismissButton);
   elements.status.replaceChildren(...children);
@@ -4633,7 +4651,7 @@ function renderCountryLoginPolicy() {
       remove.type = "button";
       remove.dataset.countryCode = countryCode;
       remove.setAttribute("aria-label", t("account.countryLoginRemove", { country: getCountryLoginCountryLabel(countryCode) }));
-      remove.textContent = "×";
+      setUiIcon(remove, "close");
       remove.disabled = busy;
       chip.append(label, remove);
       elements.accountCountryLoginSelected.append(chip);
@@ -6410,7 +6428,7 @@ function renderCustomIconLibrary() {
     removeButton.title = t("emoji.customLibraryRemoveShort");
     removeButton.disabled = state.customIconLibraryRemovingValues.has(entry.value);
     const removeGlyph = document.createElement("span");
-    removeGlyph.textContent = "×";
+    setUiIcon(removeGlyph, "close");
     removeGlyph.setAttribute("aria-hidden", "true");
     removeButton.append(removeGlyph);
 
@@ -7220,9 +7238,9 @@ function makeNavigationMenuButton({ id, kind, title }) {
   button.setAttribute("aria-haspopup", "menu");
   button.setAttribute("aria-expanded", "false");
   button.setAttribute("aria-controls", "navigation-context-menu");
-  button.setAttribute("aria-grabbed", "false");
+  button.setAttribute("data-dragging", "false");
   button.dataset.navigationOrderId = id;
-  button.textContent = "⋮";
+  setUiIcon(button, "more-vertical");
   return button;
 }
 
@@ -7555,7 +7573,7 @@ function activateNavigationDrag(event) {
   } else {
     drag.handle.classList.add("is-pressed");
   }
-  drag.handle.setAttribute("aria-grabbed", "true");
+  drag.handle.setAttribute("data-dragging", "true");
   document.body.classList.add("is-navigation-dragging");
   placeNavigationDropIndicator(drag);
   event.preventDefault();
@@ -7584,7 +7602,7 @@ function clearNavigationDragVisuals(drag) {
   drag.node?.classList.remove("is-navigation-dragging");
   drag.indicator?.remove();
   drag.handle?.classList.remove("is-pressed");
-  drag.handle?.setAttribute("aria-grabbed", "false");
+  drag.handle?.setAttribute("data-dragging", "false");
   document.body.classList.remove("is-navigation-dragging");
 }
 
@@ -14022,7 +14040,7 @@ function setToggleBlockOpen(row, open, { persist = true } = {}) {
   button?.setAttribute("aria-expanded", String(expanded));
   if (button) button.title = t(expanded ? "toggle.collapse" : "toggle.expand");
   if (content) content.hidden = !expanded;
-  if (indicator) indicator.textContent = expanded ? "⌄" : "›";
+  if (indicator) setUiIcon(indicator, expanded ? "chevron-down" : "chevron-right");
   row.querySelector(".toggle-block-surface")?.classList.toggle("is-open", expanded);
   if (persist) scheduleBlockSave(row);
 }
@@ -15024,7 +15042,7 @@ function createKanbanEditor(row, boardValue) {
 
   const viewIcon = document.createElement("span");
   viewIcon.className = "kanban-view-tab-icon";
-  viewIcon.textContent = "▦";
+  setUiIcon(viewIcon, "grid");
   viewIcon.setAttribute("aria-hidden", "true");
 
   const viewLabel = document.createElement("span");
@@ -15106,7 +15124,7 @@ function createKanbanEditor(row, boardValue) {
       { columnId: column.id }
     );
     deleteColumn.classList.add("kanban-column-menu");
-    deleteColumn.setAttribute("aria-grabbed", "false");
+    deleteColumn.setAttribute("data-dragging", "false");
     deleteColumn.disabled = boardData.columns.length <= 1;
 
     columnHeader.append(columnLabel, count, deleteColumn);
@@ -15139,7 +15157,7 @@ function createKanbanEditor(row, boardValue) {
       dragHandle.className = "kanban-card-drag-handle";
       dragHandle.draggable = true;
       dragHandle.tabIndex = 0;
-      dragHandle.textContent = "⠿";
+      setUiIcon(dragHandle, "grip");
       dragHandle.title = t("kanban.dragCard");
       dragHandle.setAttribute("aria-label", t("kanban.dragCard"));
       dragHandle.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown ArrowLeft ArrowRight");
@@ -15526,7 +15544,7 @@ function activateKanbanColumnDrag(event) {
 
   drag.column.classList.add("is-column-dragging");
   drag.handle.classList.add("is-pressed");
-  drag.handle.setAttribute("aria-grabbed", "true");
+  drag.handle.setAttribute("data-dragging", "true");
   document.body.classList.add("is-kanban-column-dragging");
   placeKanbanColumnDropIndicator(drag);
   event.preventDefault();
@@ -15555,7 +15573,7 @@ function clearKanbanColumnDragVisuals(drag) {
   drag.column?.classList.remove("is-column-dragging");
   drag.indicator?.remove();
   drag.handle?.classList.remove("is-pressed");
-  drag.handle?.setAttribute("aria-grabbed", "false");
+  drag.handle?.setAttribute("data-dragging", "false");
   document.body.classList.remove("is-kanban-column-dragging");
 }
 
@@ -16041,7 +16059,7 @@ function createToggleBlockEditor(row, block) {
   toggleButton.setAttribute("aria-expanded", String(expanded));
   toggleButton.title = t(expanded ? "toggle.collapse" : "toggle.expand");
   content.hidden = !expanded;
-  indicator.textContent = expanded ? "⌄" : "›";
+  setUiIcon(indicator, expanded ? "chevron-down" : "chevron-right");
   surface.classList.toggle("is-open", expanded);
 
   editor.append(surface, preview);
@@ -16057,7 +16075,7 @@ function createAttachmentEditor(block) {
   const icon = document.createElement("span");
   icon.className = "attachment-block-icon";
   icon.setAttribute("aria-hidden", "true");
-  icon.textContent = "📎";
+  setUiIcon(icon, "paperclip");
 
   const details = document.createElement("div");
   details.className = "attachment-block-details";
@@ -16138,7 +16156,7 @@ function createBookmarkItem(item, view) {
     const fallback = document.createElement("span");
     fallback.className = "bookmark-card-media-fallback";
     fallback.setAttribute("aria-hidden", "true");
-    fallback.textContent = "🔖";
+    setUiIcon(fallback, "bookmark");
     media.append(fallback);
     const imageSource = getRenderableImageSource(item.imageUrl, { allowData: false });
     if (imageSource) {
@@ -16571,12 +16589,12 @@ function renderBlock(block, renderedDraft = null) {
   handle.className = "block-handle";
   handle.title = t("block.handleTitle");
   handle.setAttribute("aria-label", t("block.handleAria"));
-  handle.setAttribute("aria-grabbed", "false");
+  handle.setAttribute("data-dragging", "false");
   handle.setAttribute("aria-haspopup", "menu");
   handle.setAttribute("aria-expanded", "false");
   handle.setAttribute("aria-controls", "block-context-menu");
   handle.dataset.action = "open-block-menu";
-  handle.textContent = "⠿";
+  setUiIcon(handle, "grip");
 
   const body = document.createElement("div");
   body.className = "block-row-body";
@@ -17677,7 +17695,7 @@ function activateBlockDrag(event) {
   drag.indicator.setAttribute("aria-hidden", "true");
 
   for (const row of drag.groupRows) row.classList.add("is-dragging");
-  drag.handle.setAttribute("aria-grabbed", "true");
+  drag.handle.setAttribute("data-dragging", "true");
   document.body.classList.add("is-block-dragging");
   placeBlockDropIndicator(drag.indicator, drag.candidates, drag.targetIndex, drag.row);
   event.preventDefault();
@@ -17705,7 +17723,7 @@ function clearBlockDragVisuals(drag) {
   for (const row of drag.groupRows ?? []) row.classList.remove("is-dragging");
   drag.indicator?.remove();
   drag.handle.classList.remove("is-pressed");
-  drag.handle.setAttribute("aria-grabbed", "false");
+  drag.handle.setAttribute("data-dragging", "false");
   document.body.classList.remove("is-block-dragging");
 }
 
@@ -20922,9 +20940,9 @@ function renderPageCover(page) {
   if (pageCoverPositionDraft && !isPageCoverPositionDraftForPage(pageCoverPositionDraft, page?.id)) {
     closePageCoverPositionEditor();
   }
-  const coverSource = getRenderableImageSource(page?.coverUrl, {
+  const coverSource = getPageCoverDisplaySource(getRenderableImageSource(page?.coverUrl, {
     allowedApplicationApiPath: page?.id ? `/api/pages/${encodeURIComponent(page.id)}/cover` : ""
-  });
+  }));
   const hasCover = Boolean(coverSource);
   elements.pageViewHeader.classList.toggle("has-page-cover", hasCover);
   elements.pageView.classList.toggle("has-page-cover", hasCover);

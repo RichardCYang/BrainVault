@@ -204,7 +204,7 @@ describe("AI conversation block", () => {
 
     expect(html).toContain("<code>npm test</code>");
     expect(html).toContain('<pre class="rendered-code-pre"><code class="language-bash">');
-    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content :not\(pre\) > code\s*\{[^}]*border:\s*1px solid color-mix\(in srgb, var\(--accent-text\) 38%, var\(--line-strong\)\);[^}]*background:\s*var\(--accent-soft-strong\);[^}]*color:\s*var\(--ink-strong\);[^}]*padding:\s*0\.1em 0\.34em;[^}]*font-weight:\s*600;/s);
+    expect(styles).toMatch(/\.rendered-ai-chat-answer \.rendered-ai-chat-content :not\(pre\) > code\s*\{[^}]*border:\s*1px solid color-mix\(in srgb, var\(--accent-text\) 38%, var\(--line-strong\)\);[^}]*background:\s*var\(--accent-soft-strong\);[^}]*color:\s*var\(--ink-strong\);[^}]*padding:\s*0\.1em 0\.34em;[^}]*font-weight:\s*var\(--weight-semibold\);/s);
   });
 
   it("renders remote Markdown images only in AI answers and groups consecutive image lines", () => {
