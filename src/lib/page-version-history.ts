@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
 import { failFastArray } from "./validation-errors.js";
+import { checkPageStorageGrowth } from "./workspace-storage.js";
 import type { DbClient } from "./db.js";
 import { describePageCoverUrlForHistory } from "./page-cover.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
@@ -836,7 +837,10 @@ export async function recordPageVersion(
     throw new Error("Page version history revision cannot be advanced safely");
   }
   const coalesced = await coalescePageVersion(client, input, page, currentRevision);
-  if (coalesced) return coalesced;
+  if (coalesced) {
+    await checkPageStorageGrowth(client, input.pageId);
+    return coalesced;
+  }
   const revision = currentRevision + 1;
   const summary = summarizePageVersionChanges(input.changes);
   const changeCount = countPageVersionChanges(input.changes);
@@ -866,6 +870,7 @@ export async function recordPageVersion(
   );
 
   await prunePageVersionHistory(client, input.pageId, revision);
+  await checkPageStorageGrowth(client, input.pageId, input.source === "COLLABORATION");
 
   return { id: Number(result.insertId), revision };
 }

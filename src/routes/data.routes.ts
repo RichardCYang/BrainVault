@@ -26,6 +26,7 @@ import { toPublicUser } from "../lib/mappers.js";
 import { requireAuth, requireRequestAuthScope, requireSameOriginCookieRequest } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
+  finishDataExportProcessing,
   dataExportConcurrencyLimit,
   dataExportRateLimit,
   dataImportConcurrencyLimit,
@@ -110,6 +111,10 @@ dataRouter.get(
   try {
     const user = requireUser(req.user);
     const plan = await prepareUserDataBackup(user.id);
+    if (res.destroyed) {
+      await rm(plan.operationRoot, { recursive: true, force: true });
+      return;
+    }
     const date = new Date().toISOString().slice(0, 10);
     const safeUsername = plan.account.username.replace(/[^a-zA-Z0-9._-]/g, "_");
     const filename = `BrainVault-${safeUsername}-${date}.zip`;
@@ -136,6 +141,7 @@ dataRouter.get(
     next(error);
   } finally {
     clearTimeout(exportDeadline);
+    finishDataExportProcessing(res);
   }
   }
 );

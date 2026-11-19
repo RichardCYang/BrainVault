@@ -21,6 +21,7 @@ export function isNewPasswordUncommon(password: string) {
   const comparison = password.normalize("NFKC").trim().toLowerCase();
   return [...comparison].length >= newPasswordMinLength
     && !commonPasswords.has(comparison)
+    && !/^(?:qwerty(?:uiop)?|asdfgh(?:jkl)?|zxcvbnm|password|letmein|welcome|admin)[\d\p{P}\p{S}]*$/u.test(comparison)
     && !/^(.{1,4})\1+$/u.test(comparison);
 }
 

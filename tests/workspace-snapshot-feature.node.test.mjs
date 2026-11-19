@@ -35,7 +35,8 @@ test("workspace snapshots stay owner-scoped, private, checksummed, and bounded a
 
   assert.match(env, /SNAPSHOT_MAX_COUNT/);
   assert.doesNotMatch(env, /SNAPSHOT_STORAGE_MAX_MB/);
-  assert.match(snapshotLib, /snapshotCount >= \(kind === "MANUAL" \? env\.SNAPSHOT_MAX_COUNT : maxAutomaticSnapshotCount\)/);
+  assert.match(snapshotLib, /maxCount = kind === "MANUAL" \? env\.SNAPSHOT_MAX_COUNT : maxAutomaticSnapshotCount/);
+  assert.match(snapshotLib, /snapshotCount >= \(delegated \? Math\.floor\(maxCount \* 0\.75\) : maxCount\)/);
   assert.match(snapshotLib, /SNAPSHOT_STORAGE_LIMIT_REACHED/);
   assert.match(snapshotLib, /maxSnapshotStorageBytes/);
   assert.match(env, /SNAPSHOT_MAX_ARCHIVE_MB/);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { reserveBackupResourceIds } from "../src/lib/backup-resource-owners.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
@@ -94,7 +95,7 @@ function setup({ duringReplay, beforeRequest, workerError } = {}) {
   const dependencies = {
     ApiError, CollaborationDocumentError, CollaborationValidationCapacityError,
     CollaborationValidationResourceLimitError, CollaborationHistoryTimeoutError,
-    Buffer, console, assertStoredPageResourceBudget, emptyPageResourceUsage, addPageBlockUsage,
+    Buffer, console, reserveBackupResourceIds, assertStoredPageResourceBudget, emptyPageResourceUsage, addPageBlockUsage,
     toBlocksWithinPageBudget: (blocks) => blocks,
     requireUser: (user) => user,
     requireRequestAuthScope: () => ({ authVersion: 1, workspaceGeneration: 1 }),

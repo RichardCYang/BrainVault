@@ -5,7 +5,7 @@ import { createReadStream } from "node:fs";
 import type { Dirent } from "node:fs";
 import type { Writable } from "node:stream";
 import { access, copyFile, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { getHeapStatistics } from "node:v8";
+import { readWorkspaceUsage, rebuildWorkspaceUsage, workspaceDataBudgetBytes } from "./workspace-storage.js";
 import { z } from "zod";
 import { assertManifestValidationBudget, manifestValidationLimits } from "./backup-validation.js";
 import { failFastArray as backupArray } from "./validation-errors.js";
@@ -64,6 +64,7 @@ import {
   pageCoverUrlSchema,
   storedCustomPageCoverSentinel
 } from "./page-cover.js";
+import { reserveBackupResourceIds } from "./backup-resource-owners.js";
 import { createId } from "./id.js";
 import {
   getBackupPageShareIdentityMode,
@@ -81,7 +82,6 @@ import {
   parsePageVersionSummaryJson
 } from "./page-version-history.js";
 import {
-  computeBackupDataBudgetBytes,
   dataTransferResourceLimits,
   measureJsonUtf8BytesWithinLimit
 } from "./data-transfer-limits.js";
@@ -136,13 +136,7 @@ const shardPathPattern = /^data-shards\/(blocks|pageTags|pageComments|pageVersio
 
 /** Total backup JSON one export or restore may hold; see computeBackupDataBudgetBytes. */
 export function backupDataBudgetBytes() {
-  return computeBackupDataBudgetBytes({
-    configuredBytes: env.DATA_TRANSFER_MAX_DATA_SIZE_MB * 1024 * 1024,
-    heapLimitBytes: getHeapStatistics().heap_size_limit,
-    // A restore first saves a safety snapshot, so count one export more.
-    concurrentOperations: env.DATA_EXPORT_MAX_CONCURRENT + env.DATA_IMPORT_MAX_CONCURRENT + 1,
-    minimumBytes: maxManifestBytes
-  });
+  return workspaceDataBudgetBytes(env);
 }
 
 /**
@@ -1560,6 +1554,10 @@ function rebindPageVersionChangesJson(value: string, sourceUserId: string, targe
     if (candidate !== null && typeof candidate !== "string") {
       invalidBackup("Page version history contains an invalid icon value");
     }
+    // Historical foreign references are descriptive only. Preserve their original
+    // value without assigning ownership or publication rights during a restore.
+    const path = localCustomIconPublicPath(candidate as string | null);
+    if (path && !path.startsWith(`${customIconPublicPrefix}${sourceUserId}/`)) return candidate;
     return rebindCustomIconValue(candidate as string | null, sourceUserId, targetUserId);
   };
   const rebindHistoryBlockMetadata = (blockType: unknown, candidate: unknown) => {
@@ -1576,7 +1574,7 @@ function rebindPageVersionChangesJson(value: string, sourceUserId: string, targe
       if (!item || typeof item !== "object" || Array.isArray(item)) continue;
       const itemRecord = item as Record<string, unknown>;
       if (typeof itemRecord.icon !== "string" || !localCustomIconPublicPath(itemRecord.icon)) continue;
-      itemRecord.icon = rebindCustomIconValue(itemRecord.icon, sourceUserId, targetUserId);
+      itemRecord.icon = rebindHistoryIcon(itemRecord.icon);
     }
     return candidate;
   };
@@ -2446,6 +2444,24 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       return { snapshot, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles };
     });
 
+    const availableIcons = new Set(customIconFiles.map((file) => customIconPublicPath(userId, file.fileName)));
+    const exportIcon = (value: string | null) => {
+      const normalized = normalizeIconValue(value);
+      const local = localCustomIconPublicPath(normalized);
+      return local && !availableIcons.has(local) ? null : normalized;
+    };
+    for (const block of snapshot.blocks) {
+      if (block.type !== "ACCORDION" || !block.metadata) continue;
+      const model = JSON.parse(block.metadata);
+      let changed = false;
+      for (const item of model?.accordion?.items ?? []) {
+        if (typeof item?.icon === "string" && localCustomIconPublicPath(item.icon) && exportIcon(item.icon) === null) {
+          item.icon = "📄";
+          changed = true;
+        }
+      }
+      if (changed) block.metadata = JSON.stringify(model);
+    }
     const manifest: BrainVaultBackup = {
       format: backupFormat,
       version: backupVersion,
@@ -2455,14 +2471,14 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
         name: snapshot.account.name,
         avatar_data: snapshot.account.avatar_data,
         preferred_language: preferredLanguageSchema.nullable().parse(snapshot.account.preferred_language),
-        default_collection_icon: normalizeIconValue(snapshot.account.default_collection_icon),
+        default_collection_icon: exportIcon(snapshot.account.default_collection_icon),
         theme: snapshot.account.theme,
         default_page_mode: snapshot.account.default_page_mode
       },
       data: {
         pages: snapshot.pages.map((page) => ({
           ...page,
-          icon: normalizeIconValue(page.icon)
+          icon: exportIcon(page.icon)
         })),
         blocks: snapshot.blocks,
         tags: snapshot.tags,
@@ -4394,6 +4410,9 @@ export async function importUserDataBackup(
             "The workspace changed while the backup was being prepared. No data was replaced."
           );
         }
+        await reserveBackupResourceIds(client, userId, "page", manifest.data.pages.map((row) => row.id));
+        await reserveBackupResourceIds(client, userId, "block", manifest.data.blocks.map((row) => row.id));
+        await reserveBackupResourceIds(client, userId, "comment", (manifest.data.pageComments ?? []).map((row) => row.id));
         restoreSharingPlan = await prepareRestoreSharingPlan(
           client,
           userId,
@@ -4459,6 +4478,7 @@ export async function importUserDataBackup(
         // above serialize explicit revocation/credential rotation, while this
         // second check also catches a session that expired during restore planning.
         await assertCurrentDataRestoreAuthentication(client, userId, authScope);
+        const priorUsage = enforceConfiguredSizeLimits ? await readWorkspaceUsage(client, userId) : null;
         await importRows(
           client,
           userId,
@@ -4470,6 +4490,14 @@ export async function importUserDataBackup(
           restoreCollaboratorNavigation,
           stagedPageCoverDir
         );
+        await rebuildWorkspaceUsage(client, userId);
+        if (priorUsage) {
+          const restored = await readWorkspaceUsage(client, userId);
+          const limit = workspaceDataBudgetBytes(env);
+          if (restored.content > Math.max(limit, priorUsage.content) || restored.history > Math.max(limit, priorUsage.history)) {
+            throw new ApiError(413, "WORKSPACE_STORAGE_LIMIT", "Restored content or version history exceeds the workspace storage budget");
+          }
+        }
 
         await mkdir(path.dirname(targetAttachmentDir), { recursive: true });
         if (await pathExists(targetAttachmentDir)) {
@@ -4602,9 +4630,7 @@ export async function getWorkspaceBackupCapacity(userId: string) {
   const row = await db.queryOne<{ page_count: number | string; content_bytes: number | string | null }>(
     `SELECT
        (SELECT COUNT(*) FROM pages WHERE owner_id = ?) AS page_count,
-       (SELECT COALESCE(SUM(LENGTH(b.markdown) + COALESCE(LENGTH(b.metadata), 0) + 320), 0)
-          FROM blocks b INNER JOIN pages p ON p.id = b.page_id
-          WHERE p.owner_id = ?) AS content_bytes`,
+       (SELECT COALESCE(SUM(content_bytes), 0) FROM page_storage_usage WHERE owner_id = ?) AS content_bytes`,
     [userId, userId]
   );
   return {

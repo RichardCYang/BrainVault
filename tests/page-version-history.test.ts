@@ -183,6 +183,8 @@ describe("Page version history", () => {
         return { affectedRows: 0 };
       },
       queryOne: async (sql: string) => {
+        if (sql.includes("SELECT u.id FROM users")) return { id: "usr_owner" };
+        if (sql.includes("SUM(content_bytes)")) return { content: 768, history: 512, page_content: 768, page_history: 512 };
         if (sql.includes("SELECT edit_version, content_version")) {
           return { edit_version: 7, content_version: 11 };
         }

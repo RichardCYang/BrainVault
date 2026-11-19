@@ -36,7 +36,7 @@ const activeSnapshotOwners = new Set<string>();
 const automaticSnapshotRateStore = new BoundedRateLimitStore();
 automaticSnapshotRateStore.init({ windowMs: env.DATA_EXPORT_WINDOW_MS });
 
-async function assertSnapshotCapacity(userId: string, client: DbClient, kind: SnapshotKind, additionalBytes = 0n) {
+async function assertSnapshotCapacity(userId: string, client: DbClient, kind: SnapshotKind, additionalBytes = 0n, delegated = false) {
   // Call only after assertCurrentAuthSessionBoundary has locked the users row.
   // That user lock serializes create/delete quota decisions across callers.
   const usage = await client.queryOne<{ snapshot_count: number; total_bytes: string | number | bigint }>(
@@ -45,11 +45,12 @@ async function assertSnapshotCapacity(userId: string, client: DbClient, kind: Sn
     [userId]
   );
   const snapshotCount = Number(usage?.snapshot_count ?? 0);
-  if (snapshotCount >= (kind === "MANUAL" ? env.SNAPSHOT_MAX_COUNT : maxAutomaticSnapshotCount)) {
+  const maxCount = kind === "MANUAL" ? env.SNAPSHOT_MAX_COUNT : maxAutomaticSnapshotCount;
+  if (snapshotCount >= (delegated ? Math.floor(maxCount * 0.75) : maxCount)) {
     throw new ApiError(409, "SNAPSHOT_LIMIT_REACHED", "Delete an existing snapshot before creating another one");
   }
-  const remainingBytes = (kind === "MANUAL" ? maxSnapshotStorageBytes : maxAutomaticSnapshotStorageBytes)
-    - BigInt(usage?.total_bytes ?? 0);
+  const maxBytes = kind === "MANUAL" ? maxSnapshotStorageBytes : maxAutomaticSnapshotStorageBytes;
+  const remainingBytes = (delegated ? maxBytes * 3n / 4n : maxBytes) - BigInt(usage?.total_bytes ?? 0);
   if (remainingBytes <= 0n || additionalBytes > remainingBytes) {
     throw new ApiError(409, "SNAPSHOT_STORAGE_LIMIT_REACHED", "Delete an existing snapshot to free snapshot storage");
   }
@@ -316,7 +317,7 @@ async function createAdmittedWorkspaceSnapshot(
   // never consumes the storage reserved for a safety copy.
   const remainingBytes = await transaction(async (client) => {
     await assertSnapshotBoundary(userId, authScope, client, actor);
-    return assertSnapshotCapacity(userId, client, kind);
+    return assertSnapshotCapacity(userId, client, kind, 0n, Boolean(actor && actor.userId !== userId));
   });
   // Charge the actor only after authorization, and only for work that actually
   // creates an automatic archive. Plain deletes and receipt replays stay cheap.
@@ -335,7 +336,7 @@ async function createAdmittedWorkspaceSnapshot(
       // Revalidate the exact credential/device session at the durable insertion
       // boundary so a request admitted before revocation cannot persist recovery data.
       await assertSnapshotBoundary(userId, authScope, client, actor);
-      await assertSnapshotCapacity(userId, client, kind, inspection.size);
+      await assertSnapshotCapacity(userId, client, kind, inspection.size, Boolean(actor && actor.userId !== userId));
       await client.execute(
         `INSERT INTO workspace_snapshots
            (id, user_id, archive_size, archive_sha256, page_count, block_count, attachment_count, page_version_count,

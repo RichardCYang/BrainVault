@@ -33,6 +33,12 @@ export const dataExportRateLimit = rateLimit({
 
 const activeDataExportPrincipals = new Set<string>();
 let activeDataExportCount = 0;
+const exportCompletions = new WeakMap<Response, () => void>();
+
+export function finishDataExportProcessing(res: Response) {
+  exportCompletions.get(res)?.();
+  exportCompletions.delete(res);
+}
 
 export function dataExportConcurrencyLimit(req: Request, res: Response, next: NextFunction) {
   const principal = dataKey("export", req);
@@ -58,16 +64,25 @@ export function dataExportConcurrencyLimit(req: Request, res: Response, next: Ne
 
   activeDataExportPrincipals.add(principal);
   activeDataExportCount += 1;
-  let released = false;
+  let processingComplete = false;
+  let responseComplete = false;
   const release = () => {
-    if (released) return;
-    released = true;
-    activeDataExportPrincipals.delete(principal);
-    activeDataExportCount = Math.max(0, activeDataExportCount - 1);
+    if (processingComplete && responseComplete && activeDataExportPrincipals.delete(principal)) {
+      activeDataExportCount--;
+    }
   };
-  res.once("finish", release);
-  res.once("close", release);
-  req.once("aborted", release);
+  const onResponseEnd = () => {
+    res.off("finish", onResponseEnd);
+    res.off("close", onResponseEnd);
+    responseComplete = true;
+    release();
+  };
+  exportCompletions.set(res, () => {
+    processingComplete = true;
+    release();
+  });
+  res.once("finish", onResponseEnd);
+  res.once("close", onResponseEnd);
   next();
 }
 
@@ -118,8 +133,13 @@ export function beginDataImportProcessing(res: Response) {
 
 export function dataImportConcurrencyLimit(req: Request, res: Response, next: NextFunction) {
   const principal = dataKey("import", req);
-  const admission = dataImportAdmissionGate.tryAcquire(principal);
+  const admission = dataImportAdmissionGate.tryAcquire(principal, req.route?.path === "/import");
   if (!admission.accepted) {
+    if (admission.reason === "server-capacity") {
+      res.setHeader("Retry-After", "5");
+      next(new ApiError(503, "DATA_IMPORT_BUSY", "The server has reached its concurrent backup upload limit"));
+      return;
+    }
     res.status(429).json({
       error: {
         code: "DATA_IMPORT_IN_PROGRESS",

@@ -18,6 +18,9 @@ import {
 } from "../middleware/recovery-upload.js";
 import { idParamSchema, requireUser, routeIdSchema, safeVersionSchema, usernameSchema } from "../utils/schemas.js";
 import { ApiError, notFound } from "../lib/http.js";
+import { deletedCommentRetentionDays as pageCommentDeletionRetentionDays } from "../lib/retention.js";
+import { checkPageStorageGrowth } from "../lib/workspace-storage.js";
+import { reserveBackupResourceIds } from "../lib/backup-resource-owners.js";
 import { createId } from "../lib/id.js";
 import { createMutationRequestHash } from "../lib/mutation.js";
 import {
@@ -29,6 +32,7 @@ import {
   assertPageCanAdminister,
   assertPageCanEdit,
   assertPageNotArchived,
+  type CollectionSharePermission,
   type PageAccess,
   getEffectivePageShareCount,
   getPageAccess,
@@ -336,8 +340,6 @@ const pageCommentParamsSchema = z.object({
 });
 
 const maxPageCommentsPerPage = 500;
-/** How long a deleted comment can still be brought back (see page_comment_deletions). */
-const pageCommentDeletionRetentionDays = 30;
 const pageCommentsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(100),
   cursor: z.string().min(1).max(256).optional()
@@ -793,11 +795,13 @@ collaborationRouter.post(
           throw new ApiError(409, "PAGE_COMMENT_LIMIT_REACHED", `A page can contain up to ${maxPageCommentsPerPage} comments`);
         }
         const commentId = createId("cmt");
+        await reserveBackupResourceIds(client, access.page.owner_id, "comment", [commentId]);
         await client.execute(
           `INSERT INTO page_comments (id, page_id, user_id, body)
            VALUES (?, ?, ?, ?)`,
           [commentId, pageId, user.id, body]
         );
+        await checkPageStorageGrowth(client, pageId);
         if (mutationId && requestHash) {
           const receiptUpdate = await client.execute<{ affectedRows: number }>(
             `UPDATE page_comment_create_mutations
@@ -882,6 +886,7 @@ collaborationRouter.patch(
             "This comment changed in another session. Your change was not applied."
           );
         }
+        await checkPageStorageGrowth(client, pageId);
         const updated = await getPageCommentRow(pageId, commentId, client);
         if (!updated) throw notFound("Page comment");
         return toPageCommentPayload(updated, { id: user.id, isOwner: access.role === "OWNER" || access.role === "ADMIN" });
@@ -964,6 +969,7 @@ collaborationRouter.delete(
             "This comment changed before deletion completed. It was not deleted."
           );
         }
+        await checkPageStorageGrowth(client, pageId);
       });
       res.status(204).end();
     } catch (error) {
@@ -1016,7 +1022,7 @@ collaborationRouter.post(
           throw new ApiError(404, "PAGE_COMMENT_RESTORE_UNAVAILABLE", "This deleted comment can no longer be restored");
         }
         const isAdministrator = access.role === "OWNER" || access.role === "ADMIN";
-        if (deleted.deleted_by !== user.id && !isAdministrator) {
+        if (deleted.deleted_by !== user.id && access.role !== "OWNER") {
           throw new ApiError(403, "PAGE_COMMENT_RESTORE_FORBIDDEN", "You cannot restore this comment");
         }
         const existing = await client.queryOne<{ id: string }>(
@@ -1045,6 +1051,7 @@ collaborationRouter.post(
           "DELETE FROM page_comment_deletions WHERE page_id = ? AND id = ?",
           [pageId, commentId]
         );
+        await checkPageStorageGrowth(client, pageId);
         const restored = await getPageCommentRow(pageId, commentId, client);
         if (!restored) throw notFound("Page comment");
         return toPageCommentPayload(restored, { id: user.id, isOwner: isAdministrator });
@@ -1085,8 +1092,8 @@ collaborationRouter.get(
 
 collaborationRouter.post(
   "/pages/:pageId/shares",
-  collaborationShareIpRateLimit,
   collaborationShareAccountRateLimit,
+  collaborationShareIpRateLimit,
   validate({ params: idParamSchema, body: shareUserSchema }),
   async (req, res, next) => {
     try {
@@ -1314,6 +1321,11 @@ collaborationRouter.delete(
           );
         }
         const remaining = await getEffectivePageShareCount(pageId, client, access.collectionId);
+        const collectionGrant = remaining && access.collectionId
+          ? await client.queryOne<{ permission: CollectionSharePermission }>(
+            "SELECT permission FROM collection_shares WHERE collection_id = ? AND user_id = ?",
+            [access.collectionId, sharedUserId]
+          ) : null;
         if (remaining === 0) {
           const latestUpdateRow = await client.queryOne<{ max_update_id: number | null }>(
             "SELECT MAX(id) AS max_update_id FROM page_yjs_updates WHERE page_id = ?",
@@ -1373,6 +1385,7 @@ collaborationRouter.delete(
         return {
           remaining,
           removedShareGeneration: existingShare.generation,
+          remainingCollectionPermission: collectionGrant?.permission ?? null,
           removedDocumentEpoch: remaining === 0 ? (preRemovalState?.document_epoch ?? null) : null
         };
       });
@@ -1393,7 +1406,7 @@ collaborationRouter.delete(
           "Page access was removed"
         );
       }
-      res.json({ removed: true, count: result.remaining });
+      res.json({ removed: true, count: result.remaining, remainingCollectionPermission: result.remainingCollectionPermission ?? null });
     } catch (error) {
       next(error);
     }
@@ -1911,6 +1924,7 @@ collaborationRouter.put(
           const newBlockIds = orderedBlocks
             .map((block) => block.id)
             .filter((blockId) => !existingById.has(blockId));
+          await reserveBackupResourceIds(client, attachmentOwnerId, "block", newBlockIds);
           for (let offset = 0; offset < newBlockIds.length; offset += 500) {
             const batch = newBlockIds.slice(offset, offset + 500);
             if (!batch.length) continue;
@@ -2204,7 +2218,7 @@ collaborationRouter.put(
 
           const checkpoint = await client.execute<{ affectedRows: number }>(
             `UPDATE page_collaboration_state
-             SET materialized_update_id = ?, materialization_version = ?,
+             SET materialized_update_id = ?, materialization_version = ?, pending_content_growth = 0,
                  materialized_at = CURRENT_TIMESTAMP(3)
              WHERE page_id = ? AND document_epoch = ?`,
             [

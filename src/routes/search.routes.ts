@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
+import { workspaceQueryRateLimit } from "../middleware/workspace-read-limits.js";
+import { pageSummaryIconSql } from "../lib/icon-value.js";
 import { transaction } from "../lib/db.js";
 import { toSqlLikeContainsPattern } from "../lib/sql-like.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -11,6 +13,7 @@ import type { BlockRow, PageRow } from "../types/domain.js";
 export const searchRouter = Router();
 
 searchRouter.use(requireAuth);
+searchRouter.use(workspaceQueryRateLimit);
 
 const searchQuerySchema = z.object({
   q: z.string().trim().min(1).max(120),
@@ -37,7 +40,7 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
     // assemble one search response from different workspace generations.
     const { pages, blocks } = await transaction(async (client) => {
       const pages = await client.query<Pick<PageRow, "id" | "title" | "icon" | "updated_at">>(
-        `SELECT p.id, p.title, p.icon, p.updated_at FROM pages p
+        `SET STATEMENT max_statement_time=5 FOR SELECT p.id, p.title, ${pageSummaryIconSql("p")} AS icon, p.updated_at FROM pages p
          WHERE (p.owner_id = ? OR EXISTS (
            SELECT 1 FROM collection_shares cs
            INNER JOIN page_collection_memberships pcm ON pcm.collection_id = cs.collection_id
@@ -58,7 +61,7 @@ searchRouter.get("/", validate({ query: searchQuerySchema }), async (req, res, n
 
       // Search only returns a markdown snippet, never full metadata/HTML caches.
       const blocks = await client.query<Pick<BlockRow, "id" | "page_id" | "type" | "markdown" | "updated_at"> & { page_title: string; page_icon: string | null }>(
-        `SELECT b.id, b.page_id, b.type, b.markdown, b.updated_at, p.title AS page_title, p.icon AS page_icon
+        `SET STATEMENT max_statement_time=5 FOR SELECT b.id, b.page_id, b.type, b.markdown, b.updated_at, p.title AS page_title, ${pageSummaryIconSql("p")} AS page_icon
          FROM blocks b
          INNER JOIN pages p ON p.id = b.page_id
          WHERE (p.owner_id = ? OR EXISTS (

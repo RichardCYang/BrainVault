@@ -41,6 +41,9 @@ import {
   maxCollaborationUpdateBytes,
   type CollaborationWriteRejectionReason
 } from "./collaboration-protocol.js";
+import { reserveBackupResourceIds } from "./backup-resource-owners.js";
+import { reserveCollaborationStorage } from "./workspace-storage.js";
+import { assertNewAccordionImages } from "./custom-icons.js";
 import { CollaborationDocumentError } from "./collaboration-document.js";
 import { getClientIpAddressFromTrustedProxyRequest, isHttpsRequestFromTrustedProxy } from "./reverse-proxy.js";
 import {
@@ -1630,6 +1633,11 @@ export class PageCollaborationHub {
           }
         }
 
+        if (validation.workspaceChange) {
+          await reserveCollaborationStorage(dbClient, room.pageId, access.page.owner_id, validation.workspaceChange.contentDelta);
+          await reserveBackupResourceIds(dbClient, access.page.owner_id, "block", validation.workspaceChange.addedBlockIds);
+        }
+        await assertNewAccordionImages(validation.newAccordionImages ?? [], access.page.owner_id, client.user.id, dbClient);
         const insert = await dbClient.execute<{ insertId: number | bigint }>(
           `INSERT INTO page_yjs_updates (page_id, user_id, update_data, is_snapshot)
            VALUES (?, ?, ?, ?)`,
@@ -1643,6 +1651,10 @@ export class PageCollaborationHub {
       }).catch((error) => {
         if (error instanceof ApiError && error.code === "COLLABORATION_LINEAGE_CHANGED") {
           this.invalidateRoomForLineageChange(room);
+          return null;
+        }
+        if (error instanceof ApiError && ["WORKSPACE_STORAGE_LIMIT", "BACKUP_ID_CONFLICT", "INVALID_CUSTOM_ICON"].includes(error.code)) {
+          if (client.socket.isOpen) client.socket.close(1008, error.message);
           return null;
         }
         if (error instanceof ApiError && [401, 403, 404].includes(error.statusCode)) {

@@ -44,7 +44,10 @@ export async function acquireApplicationInstanceLease(
     const heartbeat = setInterval(() => {
       if (released || leaseLost || heartbeatInFlight) return;
       heartbeatInFlight = true;
-      void connection.query("SELECT 1 AS application_instance_lease_heartbeat")
+      void connection.query("SELECT IS_USED_LOCK(?) = CONNECTION_ID() AS application_instance_lease_heartbeat", [lockName])
+        .then((rows) => {
+          if (Number(rows[0]?.application_instance_lease_heartbeat) !== 1) throw new Error("Application instance lease lost");
+        })
         .catch((error) => {
           if (released || leaseLost) return;
           leaseLost = true;

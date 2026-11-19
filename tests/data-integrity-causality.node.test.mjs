@@ -107,7 +107,7 @@ test("post-COMMIT page disconnects are fenced against a later restore generation
   const archiveRead = archiveFence.indexOf("SELECT is_archived, edit_version");
   const archiveRowLock = archiveFence.indexOf("FOR UPDATE", archiveRead);
   const archiveVersionFence = archiveFence.indexOf("Number(currentPage.edit_version ?? 1) !== archivedVersion");
-  const archiveDisconnect = archiveFence.indexOf("disconnectPageCollaborators(pageId");
+  const archiveDisconnect = archiveFence.indexOf("disconnectPageCollaborators(id");
   const archiveTransactionEnd = archiveFence.indexOf("\n    });", archiveDisconnect);
   assert.ok(archiveTransaction >= 0);
   assert.ok(archiveRead > archiveTransaction);

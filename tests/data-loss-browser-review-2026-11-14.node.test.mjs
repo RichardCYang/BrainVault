@@ -20,6 +20,8 @@ import {
   recordPageVersion
 } from "../src/lib/page-version-history.ts";
 
+process.env.DATABASE_URL ??= "mariadb://report:unused@127.0.0.1:1/report";
+
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8").then((text) => text.replace(/\r\n/g, "\n"));
 const [app, i18n] = await Promise.all([read("public/app.js"), read("public/i18n.js")]);
 
@@ -81,6 +83,8 @@ function historyClient({ latest, revision = 5 }) {
         return sql.includes("INSERT") ? { insertId: 99, affectedRows: 1 } : { affectedRows: 1 };
       },
       queryOne: async (sql) => {
+        if (sql.includes("SELECT u.id FROM users")) return { id: "usr_owner" };
+        if (sql.includes("SUM(content_bytes)")) return { content: 1000, history: 128, page_content: 1000, page_history: 128 };
         if (sql.includes("SELECT edit_version, content_version")) return { edit_version: 3, content_version: 8 };
         if (sql.includes("SELECT MAX(revision)")) return { revision };
         if (sql.includes("FROM page_versions WHERE page_id = ? AND revision = ?")) return latest;

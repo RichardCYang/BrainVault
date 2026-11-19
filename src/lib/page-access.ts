@@ -1,6 +1,7 @@
 import { db, type DbClient } from "./db.js";
 import { ApiError, notFound } from "./http.js";
 import { toPublicUser } from "./mappers.js";
+import { pageSummaryIconSql } from "./icon-value.js";
 import { storedCustomPageCoverSentinel } from "./page-cover.js";
 import type { BlockRow, PageRow, UserRow } from "../types/domain.js";
 
@@ -17,6 +18,7 @@ export type PageAccess = {
   collectionPermission: CollectionSharePermission | null;
   owner: ReturnType<typeof toPublicUser>;
   shareCount: number;
+  collectionArchived: boolean;
 };
 
 export function assertPageNotArchived(
@@ -60,10 +62,10 @@ export function assertPageOwner(access: Pick<PageAccess, "role" | "scope">): voi
   }
 }
 
-function pageRowProjection(alias = "") {
+function pageRowProjection(alias = "", summary = false) {
   const column = (name: string) => alias ? `${alias}.${name}` : name;
   return [
-    "id", "title", "icon",
+    "id", "title", summary ? `${pageSummaryIconSql(alias || "pages")} AS icon` : "icon",
     `CASE WHEN ${column("cover_url")} LIKE 'data:image/%;base64,%' THEN '${storedCustomPageCoverSentinel}' ELSE ${column("cover_url")} END AS cover_url`,
     "cover_position_x", "cover_position_y", "is_archived", "is_collection", "owner_id",
     "parent_page_id", "edit_version", "content_version", "last_mutation_id", "last_mutation_hash",
@@ -72,7 +74,7 @@ function pageRowProjection(alias = "") {
 }
 
 export function pageSummaryProjection(alias = "") {
-  return pageRowProjection(alias);
+  return pageRowProjection(alias, true);
 }
 
 type OwnerProfileRow = Pick<
@@ -186,6 +188,11 @@ export async function getPageAccess(
     [pageId]
   );
   const collectionId = membership?.collection_id ?? null;
+  const collection = collectionId && collectionId !== pageId
+    ? await client.queryOne<{ is_archived: number }>(
+      `SELECT is_archived FROM pages WHERE id = ?${lockPage || lockAccess ? " FOR UPDATE" : ""}`, [collectionId]
+    ) : null;
+  const collectionArchived = Boolean(collection?.is_archived);
   let role: PageAccessRole;
   let scope: PageAccessScope;
   let shareGeneration: string | null = null;
@@ -238,7 +245,8 @@ export async function getPageAccess(
   if (!owner) throw notFound("Page owner");
 
   return {
-    page,
+    page: collectionArchived ? { ...page, is_archived: 1 } : page,
+    collectionArchived,
     role,
     scope,
     shareGeneration,

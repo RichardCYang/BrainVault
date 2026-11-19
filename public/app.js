@@ -6127,6 +6127,7 @@ function getRenderableImageSource(value, { allowData = true, allowedApplicationA
 function getCustomImageSource(iconValue) {
   if (typeof iconValue !== "string" || !iconValue.startsWith(imageIconPrefix)) return null;
   const source = iconValue.slice(imageIconPrefix.length).trim();
+  if (/^\/api\/pages\/[A-Za-z0-9_-]{1,64}\/icon$/.test(source)) return source;
   if (/^\/upload\/icons\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,96}\.(?:png|jpg|webp|ico)$/.test(source)) return source;
   if (/^data:image\/(?:png|jpeg|webp|vnd\.microsoft\.icon|x-icon);base64,[a-z0-9+/]+=*$/i.test(source)) return source;
   return null;
@@ -8596,7 +8597,7 @@ function syncPageModeUi({ contentRebuilt = false, focusPending = false } = {}) {
   elements.savePageButton.disabled = controlsReadOnly;
   elements.savePageButton.classList.toggle("hidden", readOnly);
   syncPageSaveIndicator({ force: true });
-  elements.archivePageButton.disabled = controlsReadOnly || !manager;
+  elements.archivePageButton.disabled = controlsReadOnly || !manager || (state.selectedPage?.isCollection && !isPageOwner());
   elements.archivePageButton.classList.toggle("hidden", !manager);
   elements.sharePageButton.classList.toggle("hidden", !state.selectedPage || !canManagePageSharing());
   elements.sharePageButton.disabled = interactionLocked;
@@ -12984,6 +12985,7 @@ function renderPageCommentItem(comment) {
   } else {
     const body = document.createElement("p");
     body.className = "page-comment-body";
+    body.dir = "auto";
     body.textContent = comment.body;
     content.append(body);
   }
@@ -24604,7 +24606,9 @@ elements.sharePageList.addEventListener("click", async (event) => {
       renderSharePageList();
       await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
       if (!isShareMutationCurrent()) return null;
-      setSharePageMessage(t("sharing.removed", { username }));
+      setSharePageMessage(data.remainingCollectionPermission
+        ? t("sharing.directRemoved", { username, permission: data.remainingCollectionPermission })
+        : t("sharing.removed", { username }));
     });
   } catch (error) {
     if (!isShareMutationCurrent()) return;
@@ -24804,7 +24808,7 @@ elements.shareCollectionList.addEventListener("click", async (event) => {
     if (data === skippedApiRequest || !isShareMutationCurrent()) return;
     state.shareCollectionEntries = state.shareCollectionEntries.filter((share) => share.user?.id !== userId);
     renderShareCollectionList();
-    setShareCollectionMessage(t("sharing.removed", { username }));
+    setShareCollectionMessage(t("sharing.collectionRemoved", { username }));
   } catch (error) {
     if (!isShareMutationCurrent()) return;
     setShareCollectionMessage(error?.message || t("errors.unknown"), true);
@@ -25512,7 +25516,7 @@ function renderArchiveDialog() {
     restore.type = "button";
     restore.className = "secondary compact";
     restore.dataset.pageId = page.id;
-    restore.disabled = restoring;
+    restore.disabled = restoring || !canManagePage(page) || (page.isCollection && !isPageOwner(page));
     restore.textContent = restoring ? t("archive.restoring") : t("archive.restore");
     restore.setAttribute("aria-label", `${t("archive.restore")}: ${title}`);
 

@@ -144,10 +144,14 @@ for(const reverse of [false,true])test(`300-level all-memo tree no longer revisi
   assert.ok(after.metrics.setAdds<before.metrics.setAdds/20);
 });
 
-test('search query validation, authentication registration and response serialization are byte-identical outside bidi display hardening',()=>{
+test('search keeps authentication ahead of account throttling and preserves the response contract',()=>{
   const before=sourceFor('src/routes/search.routes.ts','baseline'),after=sourceFor('src/routes/search.routes.ts');
-  assert.equal(after.slice(0,after.indexOf('function snippet(')).replace(/^import \{ sanitizeDisplayLabel \}[^\n]+\n/m, ''),before.slice(0,before.indexOf('function snippet(')));
-  assert.equal(after.slice(after.indexOf('    res.setHeader')).replace(/sanitizeDisplayLabel\((page\.title|block\.page_title)\)/g, '$1'),before.slice(before.indexOf('    res.setHeader')));
+  for (const source of [before, after]) {
+    assert.match(source, /searchRouter\.use\(requireAuth\);/);
+    assert.match(source, /max\(120\)/);
+  }
+  assert.ok(after.indexOf('searchRouter.use(workspaceQueryRateLimit)') > after.indexOf('searchRouter.use(requireAuth)'));
+  assert.equal(after.slice(after.indexOf('    res.setHeader')).replaceAll('\r\n','\n').replace(/sanitizeDisplayLabel\((page\.title|block\.page_title)\)/g, '$1'),before.slice(before.indexOf('    res.setHeader')).replaceAll('\r\n','\n'));
 });
 
 test('search neutralizes bidi controls in both page and block title projections',async()=>{

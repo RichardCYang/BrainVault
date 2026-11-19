@@ -41,20 +41,23 @@ server {
     ssl_certificate     /etc/letsencrypt/live/notes.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/notes.example.com/privkey.pem;
 
+    limit_req zone=brainvault_api burst=60 nodelay;
+    limit_req zone=brainvault_auth burst=10 nodelay;
+    limit_req_status 429;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header Upgrade           $http_upgrade;
+    proxy_set_header Connection        $connection_upgrade;
+
     location / {
-        limit_req zone=brainvault_api burst=60 nodelay;
-        limit_req zone=brainvault_auth burst=10 nodelay;
-        limit_req_status 429;
         proxy_pass http://127.0.0.1:4000;
-        proxy_http_version 1.1;
-
-        proxy_set_header Host              $host;
-        proxy_set_header X-Forwarded-Host  $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 120s;
+    }
+    location ~ ^/api/(collaboration/|data/|snapshots(?:/|$)) {
+        proxy_pass http://127.0.0.1:4000;
         proxy_read_timeout 3600s;
     }
 }

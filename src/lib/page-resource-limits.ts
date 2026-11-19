@@ -141,20 +141,32 @@ export function assertPageRenderBudget(bytes: number) {
 // close must not admit more work while the abandoned request is still fetching
 // or rendering its page. All admitted routes finish with a JSON/error response.
 let activeProjections = 0;
-export const admitPageProjection: RequestHandler = (_req, res, next) => {
+const projectingUsers = new Set<string>();
+export const admitPageProjection: RequestHandler = (req, res, next) => {
+  const principal = req.user?.id;
+  if (principal && projectingUsers.has(principal)) {
+    res.setHeader("Retry-After", "1");
+    next(new ApiError(429, "PAGE_PROJECTION_BUSY", "Another page request is active for this account. Retry shortly."));
+    return;
+  }
   if (activeProjections >= pageResourceLimits.concurrentProjections) {
     res.setHeader("Retry-After", "1");
     next(new ApiError(503, "PAGE_PROJECTION_BUSY", "Page processing is busy. Retry shortly."));
     return;
   }
   activeProjections++;
+  const deadline = setTimeout(() => res.destroy(), 120_000);
+  deadline.unref();
+  if (principal) projectingUsers.add(principal);
   let released = false;
   let processingComplete = false;
   let responseComplete = false;
   const release = () => {
     if (released || !processingComplete || !responseComplete) return;
     released = true;
+    clearTimeout(deadline);
     activeProjections--;
+    if (principal) projectingUsers.delete(principal);
     res.off("finish", finish);
     res.off("close", close);
   };

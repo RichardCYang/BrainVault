@@ -158,8 +158,8 @@ test("both page archive routes fence active collaboration write leases", () => {
   );
   assertBefore(
     patchArchive,
-    "await assertCollaborationMaterialized(client, [pageId])",
-    "await assertNoActiveCollaborationWriteLeases(client, [pageId])",
+    "await assertCollaborationMaterialized(client, pageIds)",
+    "await assertNoActiveCollaborationWriteLeases(client, pageIds)",
     "PATCH archive collaboration fence"
   );
 
@@ -176,8 +176,8 @@ test("both page archive routes fence active collaboration write leases", () => {
   assert.match(archiveBranch, /\{ lockPage: true, lockAccess: true \}/);
   assertBefore(
     archiveBranch,
-    "await assertCollaborationMaterialized(client, [pageId])",
-    "await assertNoActiveCollaborationWriteLeases(client, [pageId])",
+    "await assertCollaborationMaterialized(client, pageIds)",
+    "await assertNoActiveCollaborationWriteLeases(client, pageIds)",
     "DELETE archive collaboration fence"
   );
 });

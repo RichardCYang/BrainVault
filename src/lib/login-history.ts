@@ -1,3 +1,4 @@
+import { env } from "../config/env.js";
 import net from "node:net";
 import type { Request } from "express";
 import { db, type DbClient, type DbValue } from "./db.js";
@@ -8,12 +9,12 @@ import {
   normalizeCountryCode,
   normalizeCountryLookupIp
 } from "./geo-country.js";
+import { loginHistoryRetentionMonths } from "./retention.js";
 import { createId } from "./id.js";
 
 export const defaultLoginHistoryMonths = 3;
 export const maxLoginHistoryMonths = 12;
 export const loginHistoryResultLimit = 500;
-const loginHistoryRetentionMonths = maxLoginHistoryMonths + 1;
 
 export type LoginAttemptOutcome = "SUCCESS" | "FAILURE" | "LOCKED";
 
@@ -130,7 +131,7 @@ export async function listLoginAttempts(userId: string, months: number, client: 
   const truncated = rows.length > loginHistoryResultLimit;
   const visibleRows = rows.slice(0, loginHistoryResultLimit);
 
-  const publicRows = visibleRows.filter((row) => isPublicCountryLookupIp(row.ip_address));
+  const publicRows = env.LOGIN_HISTORY_GEOIP_ENABLED ? visibleRows.filter((row) => isPublicCountryLookupIp(row.ip_address)) : [];
   const datasetUpdatedAt = publicRows.length > 0 ? await getCountryDatasetUpdatedAt() : null;
   const ipsToRefresh = publicRows
     .filter((row) => needsCountryRefresh(row, datasetUpdatedAt))

@@ -1,5 +1,5 @@
 import net from "node:net";
-const countryApiBaseUrl = "https://api.country.is";
+const countryApiBaseUrl = (process.env.GEOIP_PROVIDER_URL?.trim() || "https://api.country.is").replace(/\/+$/, "");
 const countryApiTimeoutMs = 2_000;
 const countryApiBatchSize = 100;
 const countryApiInfoMaxBytes = 64 * 1024;

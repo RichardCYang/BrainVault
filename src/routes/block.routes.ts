@@ -7,6 +7,10 @@ import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { admitPageProjection, assertStoredPageResourceBudget, addPageBlockUsage, pageResourceLimits } from "../lib/page-resource-limits.js";
 import { compactBlockOrderSchema, expandCompactBlockOrder } from "../lib/block-order-request.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
+import { changedAccordionImages } from "../lib/accordion-image-references.js";
+import { assertNewAccordionImages } from "../lib/custom-icons.js";
+import { reserveMediaDownload } from "../middleware/workspace-read-limits.js";
+import { reserveBackupResourceIds } from "../lib/backup-resource-owners.js";
 import { createId } from "../lib/id.js";
 import { env } from "../config/env.js";
 import { assertBlockParentChangesDepth, assertHierarchyDepth, maxBlockHierarchyDepth } from "../utils/hierarchy.js";
@@ -1083,7 +1087,8 @@ blockRouter.post(
             currentAttachmentUsage.bytes,
             BigInt(file.size),
             currentAttachmentUsage.files,
-            1
+            1,
+            user.id !== ownerId
           );
           const createSortOrder = await getCollisionFreeBlockCreateSortOrder(
             client,
@@ -1091,6 +1096,7 @@ blockRouter.post(
             body.parentBlockId,
             body.sortOrder
           );
+          await reserveBackupResourceIds(client, ownerId, "block", [id]);
           movedPath = await moveAttachmentFile(file.path, ownerId, id);
           movedAttachmentGeneration = attachmentGeneration;
           cleanupPath = null;
@@ -1297,6 +1303,7 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
     });
 
     try {
+      if (req.method === "GET") await reserveMediaDownload(user.id, claimedAttachment.size, res);
       res.attachment(sanitizeAttachmentDownloadFilename(claimedAttachment.info.originalName));
       res.setHeader("Cache-Control", "private, no-store");
       res.setHeader("Content-Type", claimedAttachment.info.mimeType);
@@ -1304,6 +1311,10 @@ blockRouter.get("/blocks/:blockId/attachment", validate({ params: idParamSchema 
       res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
       res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
       res.setHeader("X-Content-Type-Options", "nosniff");
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
       await pipeline(
         claimedAttachment.handle.createReadStream({ autoClose: false }),
         res
@@ -1380,8 +1391,10 @@ blockRouter.post("/pages/:pageId/blocks", admitPageProjection, validate({ params
 
       assertDirectBlockMutationAllowed(lockedAccess);
       assertPageNotArchived(lockedAccess.page);
+      await reserveBackupResourceIds(client, ownerId, "block", [id]);
       assertCanonicalStructuredMetadataPayload(creation.type, creation.metadata);
       const losslessMetadata = assertLosslessStructuredMetadata(creation.type, creation.metadata);
+      await assertNewAccordionImages(changedAccordionImages(creation.type, losslessMetadata), ownerId, user.id, client);
       const prepared = prepareBlockContent(creation.type, creation.markdown, losslessMetadata);
       await assertParentBlock(creation.parentBlockId, pageId, client);
       const createSortOrder = await getCollisionFreeBlockCreateSortOrder(
@@ -1588,6 +1601,9 @@ blockRouter.patch("/blocks/:blockId", admitPageProjection, validate({ params: id
         body.markdown ?? existing.markdown,
         nextMetadata
       );
+      if (body.metadata !== undefined || body.type !== undefined) {
+        await assertNewAccordionImages(changedAccordionImages(nextType, nextMetadata, existing.metadata), lockedPage.owner_id, user.id, client);
+      }
       const nextChecked = body.checked ?? Boolean(existing.checked);
 
       if (body.type !== undefined) {

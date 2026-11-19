@@ -1,3 +1,4 @@
+import { sanitizeDisplayLabel } from "../utils/display-label.js";
 import { z } from "zod";
 import { ApiError } from "./http.js";
 import { isPrivateOrLocalHostname } from "./network-address.js";
@@ -122,8 +123,12 @@ export const iconValueSchema = z
   .max(maxIconValueLength)
   .refine(isValidIconValue, "Icon value is invalid");
 
+export function pageSummaryIconSql(alias: string) {
+  return `CASE WHEN ${alias}.icon LIKE 'image:data:%' OR OCTET_LENGTH(${alias}.icon) > 4096 THEN CONCAT('image:/api/pages/', ${alias}.id, '/icon') ELSE ${alias}.icon END`;
+}
+
 export function isInlineImageIconValue(value: string) {
-  return value.trim().toLowerCase().startsWith(`${imageIconPrefix}data:image/`);
+  return /^image:\s*data:image\//i.test(value.trim());
 }
 
 // Inline image data remains readable for legacy rows and backup compatibility,
@@ -132,4 +137,4 @@ export function isInlineImageIconValue(value: string) {
 export const iconMutationValueSchema = iconValueSchema.refine(
   (value) => !isInlineImageIconValue(value),
   "Upload custom icon files through the custom icon endpoint instead of embedding image data"
-);
+).refine((value) => value === sanitizeDisplayLabel(value), "Icon contains direction controls");

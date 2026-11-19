@@ -6,6 +6,8 @@ import { assertHierarchyDepth, maxPageHierarchyDepth } from "../utils/hierarchy.
 import { db, transaction, type DbClient, type DbValue } from "../lib/db.js";
 import { dataTransferResourceLimits } from "../lib/data-transfer-limits.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
+import { reserveMediaDownload, workspaceQueryRateLimit } from "../middleware/workspace-read-limits.js";
+import { reserveBackupResourceIds } from "../lib/backup-resource-owners.js";
 import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
@@ -55,7 +57,8 @@ import {
   needsCollaborationMaterialization
 } from "../lib/collaboration-protocol.js";
 import { ApiError, notFound } from "../lib/http.js";
-import { iconMutationValueSchema, normalizeIconValue } from "../lib/icon-value.js";
+import { assertWorkspaceIconReference } from "../lib/custom-icons.js";
+import { iconMutationValueSchema, isInlineImageIconValue, normalizeIconValue } from "../lib/icon-value.js";
 import { inspectCustomCoverDataUrl, pageCoverPositionSchema, pageCoverUrlSchema } from "../lib/page-cover.js";
 import { toSqlLikeContainsPattern } from "../lib/sql-like.js";
 import {
@@ -401,6 +404,7 @@ function assertPageParentFromLockedRows(
   let currentId: string | null = parentPageId;
   const visited = new Set<string>();
   while (currentId) {
+    if (rowById.get(currentId)?.is_archived) throw new ApiError(409, "PARENT_PAGE_ARCHIVED", "Restore the destination before moving this page");
     if (currentId === pageId || visited.has(currentId)) {
       throw new ApiError(400, "INVALID_PARENT_PAGE", "Page hierarchy cannot contain a cycle");
     }
@@ -484,11 +488,12 @@ function assertPageDeletionMembershipClosure(
 }
 
 function assertPageDeletionAuthorizationScope(
-  access: { role: PageAccessRole; scope: PageAccessScope; collectionId: string | null },
+  access: Pick<PageAccess, "role" | "scope" | "collectionId" | "collectionArchived">,
   subtreeRows: PageDeletionPageRow[],
   memberships: PageDeletionCollectionMembershipRow[]
 ) {
   if (access.role !== "ADMIN") return;
+  if (access.collectionArchived) throw new ApiError(409, "PAGE_ARCHIVED", "Restore the collection before deleting a member page");
   // A delegated collection grant authorizes member-page administration, not
   // destruction of the container that defines the grant's own security scope.
   if (access.collectionId && subtreeRows.some((page) => page.id === access.collectionId)) {
@@ -801,6 +806,15 @@ async function assertPageDeleteReplayNotSuperseded(client: DbClient, pageIds: re
   }
 }
 
+async function archiveScopePageIds(client: DbClient, page: Pick<PageRow, "id" | "is_collection">) {
+  if (!page.is_collection) return [page.id];
+  const members = await client.query<{ page_id: string }>(
+    "SELECT page_id FROM page_collection_memberships WHERE collection_id = ? AND page_id <> ? ORDER BY page_id FOR UPDATE",
+    [page.id, page.id]
+  );
+  return [page.id, ...members.map((row) => row.page_id)];
+}
+
 async function disconnectArchivedPageCollaboratorsIfCurrent(
   pageId: string,
   ownerId: string,
@@ -812,8 +826,8 @@ async function disconnectArchivedPageCollaboratorsIfCurrent(
       // same page-row lock. Without the lock, the SELECT can observe the
       // archived generation, a concurrent restore can commit, and this stale
       // handler can then disconnect collaborators from the restored page.
-      const currentPage = await client.queryOne<Pick<PageRow, "is_archived" | "edit_version">>(
-        `SELECT is_archived, edit_version
+      const currentPage = await client.queryOne<Pick<PageRow, "is_archived" | "edit_version" | "is_collection">>(
+        `SELECT is_archived, edit_version, is_collection
          FROM pages
          WHERE id = ? AND owner_id = ?
          FOR UPDATE`,
@@ -829,7 +843,9 @@ async function disconnectArchivedPageCollaboratorsIfCurrent(
 
       // Restore and collaboration-session admission both need this page row.
       // They cannot cross this synchronous disconnect until the lock releases.
-      disconnectPageCollaborators(pageId, "Page was archived");
+      for (const id of await archiveScopePageIds(client, { id: pageId, is_collection: currentPage.is_collection })) {
+        disconnectPageCollaborators(id, "Page was archived");
+      }
     });
   } catch (error) {
     // A failed post-COMMIT verification must not guess that this page id still
@@ -1392,7 +1408,7 @@ async function getPageResponse(pageId: string, userId: string, client: DbClient 
   return response;
 }
 
-pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, next) => {
+pageRouter.get("/", workspaceQueryRateLimit, validate({ query: listPagesQuerySchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
     const query = getValidatedQuery<z.infer<typeof listPagesQuerySchema>>(req);
@@ -1479,7 +1495,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
               ))) AS child_count`;
       const countParams: DbValue[] = query.compact ? [] : [user.id, user.id, user.id];
       const rows = await client.query<PageListRow>(
-        `SELECT ${pageSummaryProjection("p")},
+        `SET STATEMENT max_statement_time=5 FOR SELECT ${pageSummaryProjection("p")},
           DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s.%f') AS cursor_created_at${countProjection}
          FROM pages p
          WHERE ${where.join(" AND ")}
@@ -1500,6 +1516,7 @@ pageRouter.get("/", validate({ query: listPagesQuerySchema }), async (req, res, 
     });
 
     res.setHeader("Cache-Control", "private, no-store");
+    assertPageResponseBudget(result);
     res.json(result);
   } catch (error) {
     next(error);
@@ -1628,6 +1645,8 @@ pageRouter.post("/", admitPageProjection, validate({ body: createPageSchema }), 
       // backup, snapshot or safety copy before a restore or deletion could be
       // made, and every later recovery point would silently stop existing.
       await assertWorkspacePageCapacity(client, pageOwnerId);
+      await reserveBackupResourceIds(client, pageOwnerId, "page", [id]);
+      await assertWorkspaceIconReference(creation.icon, pageOwnerId, user.id, client);
 
       await client.execute(
         `INSERT INTO pages
@@ -1653,10 +1672,12 @@ pageRouter.post("/", admitPageProjection, validate({ body: createPageSchema }), 
       });
 
       if (creation.initialMarkdown) {
+        const blockId = createId("blk");
+        await reserveBackupResourceIds(client, pageOwnerId, "block", [blockId]);
         await client.execute(
           `INSERT INTO blocks (id, page_id, type, markdown, html_cache, sort_order)
            VALUES (?, ?, 'MARKDOWN', ?, ?, 0)`,
-          [createId("blk"), id, creation.initialMarkdown, renderBlockHtml("MARKDOWN", creation.initialMarkdown)]
+          [blockId, id, creation.initialMarkdown, renderBlockHtml("MARKDOWN", creation.initialMarkdown)]
         );
       }
 
@@ -1689,6 +1710,23 @@ pageRouter.post("/", admitPageProjection, validate({ body: createPageSchema }), 
   }
 });
 
+pageRouter.get("/:pageId/icon", validate({ params: idParamSchema }), async (req, res, next) => {
+  try {
+    const user = requireUser(req.user);
+    const { page } = await transaction((client) => getPageAccess(String(req.params.pageId), user.id, client));
+    if (!page.icon || !isInlineImageIconValue(page.icon)) throw notFound("Page icon");
+    const icon = normalizeIconValue(page.icon);
+    if (!icon?.startsWith("image:data:")) throw notFound("Page icon");
+    const separator = icon.indexOf(";base64,");
+    res.setHeader("Cache-Control", "private, no-store");
+    const bytes = Buffer.from(icon.slice(separator + 8), "base64");
+    if (req.method === "GET") await reserveMediaDownload(user.id, bytes.length, res);
+    res.type(icon.slice("image:data:".length, separator)).send(bytes);
+  } catch (error) {
+    next(error);
+  }
+});
+
 pageRouter.get("/:pageId/cover", validate({ params: idParamSchema }), async (req, res, next) => {
   try {
     const user = requireUser(req.user);
@@ -1714,6 +1752,7 @@ pageRouter.get("/:pageId/cover", validate({ params: idParamSchema }), async (req
       return;
     }
 
+    if (req.method === "GET") await reserveMediaDownload(user.id, bytes.length, res);
     res.setHeader("Content-Type", mimeType);
     res.setHeader("Content-Length", String(bytes.length));
     res.setHeader("Content-Disposition", "inline");
@@ -2107,6 +2146,7 @@ pageRouter.patch("/:pageId", admitPageProjection, validate({ params: idParamSche
       );
       assertPageCanAdminister(initialAccess);
       assertPageAdministrationMutationAdmission(administrationAdmission, user.id, initialAccess);
+      if (initialAccess.page.is_collection && updates.isArchived !== undefined) assertPageOwner(initialAccess);
       const workspaceOwnerId = initialAccess.page.owner_id;
       let existingPage: PageRow = initialAccess.page;
       let lockedRows: PageDeletionPageRow[] | undefined;
@@ -2162,6 +2202,8 @@ pageRouter.patch("/:pageId", admitPageProjection, validate({ params: idParamSche
         }
       }
 
+      if (initialAccess.collectionArchived) throw new ApiError(409, "PAGE_ARCHIVED", "Restore the collection before editing this page");
+      await assertWorkspaceIconReference(updates.icon, workspaceOwnerId, user.id, client);
       const isArchivedRestoreOnly =
         updates.isArchived === false && tags === undefined && Object.keys(updates).length === 1;
       if (existingPage.is_archived && !isArchivedRestoreOnly) {
@@ -2181,8 +2223,9 @@ pageRouter.patch("/:pageId", admitPageProjection, validate({ params: idParamSche
       }
 
       if (updates.isArchived === true) {
-        await assertCollaborationMaterialized(client, [pageId]);
-        await assertNoActiveCollaborationWriteLeases(client, [pageId]);
+        const pageIds = await archiveScopePageIds(client, existingPage);
+        await assertCollaborationMaterialized(client, pageIds);
+        await assertNoActiveCollaborationWriteLeases(client, pageIds);
       }
 
       if (existingPage.is_collection && updates.parentPageId) {
@@ -2685,9 +2728,12 @@ pageRouter.delete(
         assertPageCanAdminister(access);
         assertPageAdministrationMutationAdmission(administrationAdmission, user.id, access);
         const page = access.page;
+        if (page.is_collection) assertPageOwner(access);
+        if (access.collectionArchived) throw new ApiError(409, "PAGE_ARCHIVED", "Restore the collection before editing this page");
         const workspaceOwnerId = page.owner_id;
-        await assertCollaborationMaterialized(client, [pageId]);
-        await assertNoActiveCollaborationWriteLeases(client, [pageId]);
+        const pageIds = await archiveScopePageIds(client, page);
+        await assertCollaborationMaterialized(client, pageIds);
+        await assertNoActiveCollaborationWriteLeases(client, pageIds);
         const updateResult = await client.execute<{ affectedRows: number }>(
           `UPDATE pages
            SET is_archived = 1,

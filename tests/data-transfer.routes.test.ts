@@ -195,6 +195,9 @@ beforeEach(async () => {
 
   store.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
     if (sql.includes("FROM user_auth_sessions")) return { id: params[0] };
+    if (sql.includes("FROM page_storage_usage LEFT JOIN page_collaboration_state")) {
+      return { content: Buffer.byteLength(JSON.stringify([...store.blocks.values()])), history: Buffer.byteLength(JSON.stringify(store.pageVersions)) };
+    }
     if (sql.includes("FROM data_restore_receipts")) return store.restoreReceipts.get(String(params[1]));
     if (sql.includes("FROM data_restore_markers")) {
       return store.restoreMarker === params[1] ? { operation_id: store.restoreMarker } : undefined;

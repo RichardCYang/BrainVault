@@ -8,6 +8,7 @@ import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } fro
 import { disconnectAuthSessionCollaborators, disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
 import { clearMfaCeremonyBinding, getOrCreateMfaCeremonyBinding } from "../lib/mfa-ceremony-cookie.js";
+import { assertWorkspaceIconReference } from "../lib/custom-icons.js";
 import { iconMutationValueSchema, normalizeIconValue } from "../lib/icon-value.js";
 import { evaluatePasswordLogin } from "../lib/login-lockout.js";
 import {
@@ -979,6 +980,7 @@ authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), asy
 
     const user = await transaction(async (client) => {
       await assertCurrentAuthSessionBoundary(currentUser.id, authScope, client);
+      await assertWorkspaceIconReference(body.defaultCollectionIcon, currentUser.id, currentUser.id, client);
       await client.execute(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, [...values, currentUser.id]);
       const updatedUser = await client.queryOne<UserRow>("SELECT * FROM users WHERE id = ?", [currentUser.id]);
       if (!updatedUser) throw new ApiError(404, "NOT_FOUND", "User not found");

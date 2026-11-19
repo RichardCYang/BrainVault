@@ -42,6 +42,8 @@ type HistoryMaterializationRequest = {
 };
 
 export type CollaborationValidationResult = {
+  workspaceChange?: { contentDelta: number; addedBlockIds: string[] } | null;
+  newAccordionImages?: string[];
   stateUpdate: Buffer;
   incrementalUpdate: Buffer;
   changed: boolean;
@@ -85,6 +87,8 @@ type WorkerRequest =
   | WorkerHistoryMaterializationRequest;
 
 type WorkerValidationSuccess = {
+  workspaceChange: CollaborationValidationResult["workspaceChange"];
+  newAccordionImages: string[];
   id: number;
   kind: "validation";
   ok: true;
@@ -421,6 +425,8 @@ export class CollaborationValidationPool {
           stateUpdate: Buffer.from(response.stateUpdate),
           incrementalUpdate: Buffer.from(response.incrementalUpdate),
           changed: response.changed,
+          workspaceChange: response.workspaceChange,
+          newAccordionImages: response.newAccordionImages,
           relocatedBlocks: response.relocatedBlocks ?? 0,
           materialization: response.materialization
         });

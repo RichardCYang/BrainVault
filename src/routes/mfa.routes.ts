@@ -52,7 +52,7 @@ import {
 } from "../middleware/auth-rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import type { UserRow } from "../types/domain.js";
-import { passwordInputSchema, requireUser } from "../utils/schemas.js";
+import { displayLabelSchema, passwordInputSchema, requireUser } from "../utils/schemas.js";
 
 export const mfaRouter = Router();
 
@@ -182,7 +182,7 @@ const mfaTokenSchema = z.object({
   mfaToken: opaqueTokenSchema
 });
 
-const passkeyNameSchema = z.string().trim().min(1).max(80);
+const passkeyNameSchema = displayLabelSchema(80);
 
 const passkeyOptionsSchema = z.object({
   currentPassword: passwordInputSchema(1),

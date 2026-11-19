@@ -301,8 +301,14 @@ export function assertAttachmentStorageLimit(
   currentBytes: bigint,
   incomingBytes: bigint,
   currentFiles: number,
-  incomingFiles: number
+  incomingFiles: number,
+  delegatedUpload = false
 ) {
+  // Reserve the last quarter of both quotas for uploads by the workspace owner.
+  if (delegatedUpload && (currentBytes + incomingBytes > maxAttachmentStorageBytes * 3n / 4n
+    || currentFiles + incomingFiles > Math.floor(maxAttachmentFilesPerAccount * 0.75))) {
+    throw new ApiError(413, "ATTACHMENT_OWNER_RESERVE", "The remaining attachment capacity is reserved for the workspace owner");
+  }
   const byteAssessment = assessAttachmentStorageLimit(currentBytes, incomingBytes, maxAttachmentStorageBytes);
   if (!byteAssessment.accepted) {
     throw new ApiError(

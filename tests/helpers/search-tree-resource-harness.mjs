@@ -2,6 +2,7 @@
 // does not replace the project's real Express/MariaDB integration tests.
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
+import { pageSummaryIconSql } from '../../src/lib/icon-value.ts';
 import { sanitizeDisplayLabel } from '../../src/utils/display-label.ts';
 export const baseline = JSON.parse(readFileSync(new URL('../fixtures/search-tree-resource-baseline.json', import.meta.url), 'utf8'));
 export function sourceFor(path, mode = 'current') {
@@ -69,7 +70,9 @@ const literalPattern = new Function(likeSource + '\nreturn toSqlLikeContainsPatt
 // Only SELECT projection is modeled here. Tests separately prove FROM/WHERE/
 // authorization/order/limit SQL and parameters are byte-for-byte unchanged.
 export function projectRow(sql, row) {
-  const projection = sql.slice(sql.indexOf('SELECT') + 6, sql.indexOf('FROM')).trim();
+  const iconExpression = pageSummaryIconSql('p');
+  const simpleSql = sql.replace(iconExpression, 'p.icon');
+  const projection = simpleSql.slice(simpleSql.indexOf('SELECT') + 6, simpleSql.indexOf('FROM')).trim();
   const result = {};
   for (const item of projection.split(',')) {
     const column = item.trim();
@@ -79,7 +82,8 @@ export function projectRow(sql, row) {
       const match = column.match(/^[pb]\.(\w+)(?:\s+AS\s+(\w+))?$/i);
       if (!match) throw new Error(`Unexpected SELECT projection: ${column}`);
       const name = match[2] ?? match[1];
-      result[name] = row[name];
+      const inlineIcon = sql.includes(iconExpression) && match[1] === 'icon' && row[name]?.startsWith('image:data:');
+      result[name] = inlineIcon ? `image:/api/pages/${row.page_id ?? row.id}/icon` : row[name];
     }
   }
   return result;
@@ -100,8 +104,8 @@ export function makeSearch(mode = 'current', {pages = [], blocks = [], failAt = 
   };
   let source = stripTypeScriptTypes(sourceFor('src/routes/search.routes.ts', mode));
   source = source.slice(source.indexOf('function snippet('));
-  new Function('searchRouter','validate','searchQuerySchema','requireUser','getValidatedQuery','transaction','toSqlLikeContainsPattern','sanitizeDisplayLabel', source)(
-    router, value => value, {}, user => { if (!user) throw new Error('Unauthenticated'); return user; }, req => req.query, transaction, literalPattern, sanitizeDisplayLabel);
+  new Function('searchRouter','validate','searchQuerySchema','requireUser','getValidatedQuery','transaction','toSqlLikeContainsPattern','sanitizeDisplayLabel','pageSummaryIconSql', source)(
+    router, value => value, {}, user => { if (!user) throw new Error('Unauthenticated'); return user; }, req => req.query, transaction, literalPattern, sanitizeDisplayLabel, pageSummaryIconSql);
   return { calls, registrations, headers,
     async run({user = {id:'user-owner'}, q = 'needle', limit = 20} = {}) {
       await handler({user,query:{q,limit}}, {setHeader(name,value) {headers[name]=value;}, json(value) {response=value;}}, error => {nextError=error;});

@@ -33,6 +33,8 @@ const tableScope = new Map([
 
   // Backup archives are themselves snapshots of workspace state; nesting the
   // snapshot catalog and its archives recursively is deliberately out of scope.
+  ["page_storage_usage", "operational"],
+  ["backup_resource_owners", "security"],
   ["workspace_snapshots", "snapshot-catalog"],
 
   ["block_create_mutations", "operational"],

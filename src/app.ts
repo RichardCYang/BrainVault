@@ -1,3 +1,4 @@
+import { reserveMediaDownload } from "./middleware/workspace-read-limits.js";
 import express, { type NextFunction, type Request, type Response } from "express";
 import path from "node:path";
 import { type ServerResponse } from "node:http";
@@ -125,6 +126,7 @@ export function createApp() {
     })
   );
   app.use((req, res, next) => {
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     if (req.get(bookmarkFetchGuardHeader) === bookmarkFetchGuardValue) {
       res.status(403).json({
         error: {
@@ -180,6 +182,12 @@ export function createApp() {
   app.use("/api/auth/passkey", express.json({ limit: "64kb" }));
   app.use("/api/auth/mfa/login/passkey", express.json({ limit: "64kb" }));
   app.use(["/api/auth/login", "/api/auth/register", "/api/auth/mfa/login"], express.json({ limit: "64kb" }));
+  // Profile avatars and navigation order have larger, authenticated payloads.
+  const smallAuthJsonParser = express.json({ limit: "64kb" });
+  app.use("/api/auth", (req, res, next) => {
+    if (/^\/(?:profile|navigation-preferences|navigation-order)(?:\/|$)/i.test(req.path)) return next();
+    smallAuthJsonParser(req, res, next);
+  });
   const applicationJsonParser = express.json({ limit: "5mb" });
   app.use((req, res, next) => {
     // Recovery has an authenticated, admitted raw parser. A forged JSON content
@@ -258,6 +266,7 @@ export function createApp() {
           res.sendStatus(404);
           return;
         }
+        if (req.method === "GET") await reserveMediaDownload(userId, fileInfo.size, res);
         next();
       } catch (error) {
         next(error);

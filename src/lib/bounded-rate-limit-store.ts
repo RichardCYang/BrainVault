@@ -55,7 +55,8 @@ export class BoundedRateLimitStore implements Store {
     return counter ? this.info(counter) : undefined;
   }
 
-  async increment(key: string): Promise<IncrementResponse> {
+  async increment(key: string, amount = 1): Promise<IncrementResponse> {
+    if (!Number.isSafeInteger(amount) || amount < 1) throw new RangeError("Invalid rate-limit charge");
     const now = this.now();
     this.prune(now);
     let counter = this.counters.get(key);
@@ -67,7 +68,7 @@ export class BoundedRateLimitStore implements Store {
       counter = { totalHits: 0, expiresAt: now + this.windowMs };
       this.counters.set(key, counter);
     }
-    counter.totalHits = Math.min(Number.MAX_SAFE_INTEGER, counter.totalHits + 1);
+    counter.totalHits = Math.min(Number.MAX_SAFE_INTEGER, counter.totalHits + amount);
     return this.info(counter);
   }
 

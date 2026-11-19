@@ -560,8 +560,8 @@ collectionSharingRouter.get(
 
 collectionSharingRouter.post(
   "/collections/:collectionId/shares",
-  collaborationShareIpRateLimit,
   collaborationShareAccountRateLimit,
+  collaborationShareIpRateLimit,
   validate({ params: collectionIdParamsSchema, body: createCollectionShareSchema }),
   async (req, res, next) => {
     try {
@@ -756,6 +756,12 @@ collectionSharingRouter.patch(
           );
         }
 
+        if (actor.id !== ownerId && existing.shared_by !== actor.id) {
+          if (existing.permission === "ADMIN" || collectionSharePermissionRank[permission] > collectionSharePermissionRank[existing.permission]) {
+            throw new ApiError(403, "COLLECTION_GRANT_ISSUER_REQUIRED", "Only the owner or issuing administrator can change this grant");
+          }
+        }
+
         // Collection grants can themselves be delegated by an ADMIN. Once that
         // ADMIN loses administration authority, every grant whose provenance is
         // rooted in that authority must be revoked as well. Otherwise a delegated
@@ -899,8 +905,9 @@ collectionSharingRouter.delete(
         const existing = await client.queryOne<{
           generation: string;
           permission: CollectionSharePermission;
+          shared_by: string;
         }>(
-          `SELECT generation, permission FROM collection_shares
+          `SELECT generation, permission, shared_by FROM collection_shares
            WHERE collection_id = ? AND user_id = ? FOR UPDATE`,
           [collectionId, sharedUserId]
         );
@@ -911,6 +918,10 @@ collectionSharingRouter.delete(
             "COLLECTION_SHARE_GENERATION_CHANGED",
             "The collection grant changed in another session. Refresh before removing it."
           );
+        }
+
+        if (existing.permission === "ADMIN" && actor.id !== ownerId && actor.id !== existing.shared_by && actor.id !== sharedUserId) {
+          throw new ApiError(403, "COLLECTION_GRANT_ISSUER_REQUIRED", "Only the owner or issuing administrator can remove another administrator");
         }
 
         const cascadedCollectionGrants = await lockDelegatedCollectionGrantCascade(

@@ -1,3 +1,4 @@
+import { changedAccordionImages } from "./accordion-image-references.js";
 import { parentPort } from "node:worker_threads";
 import {
   materializeCollaborationUpdates,
@@ -47,8 +48,19 @@ type CollaborationUpdateValidationSuccess = {
   changed: boolean;
   /** Blocks a merge repair added to hold text a limit would have cut off. */
   relocatedBlocks: number;
+  workspaceChange: { contentDelta: number; addedBlockIds: string[] } | null;
+  newAccordionImages: string[];
   materialization: CollaborationMaterialization | null;
 };
+
+function documentStorageBytes(document: CollaborationMaterialization) {
+  let bytes = Buffer.byteLength(document.title);
+  for (const block of document.blocks) {
+    bytes += 384 + Buffer.byteLength(JSON.stringify(block.markdown));
+    if (block.metadata) bytes += Buffer.byteLength(JSON.stringify(JSON.stringify(block.metadata)));
+  }
+  return bytes;
+}
 
 type CollaborationHistoryReplaySuccess = {
   id: number;
@@ -160,6 +172,22 @@ workerParentPort.on("message", (request: CollaborationWorkerRequest) => {
       materialization = validated.materialization;
       relocatedBlocks = validated.relocatedBlocks;
     }
+    const images = new Set<string>();
+    let workspaceChange: CollaborationUpdateValidationSuccess["workspaceChange"] = null;
+    if (materialization && !request.includeMaterialization) {
+      const prior = materializeCollaborationUpdates([request.currentState]);
+      const previous = new Map(prior.blocks.map((block) => [block.id, block.metadata]));
+      workspaceChange = {
+        contentDelta: documentStorageBytes(materialization) - documentStorageBytes(prior),
+        addedBlockIds: materialization.blocks.filter((block) => !previous.has(block.id)).map((block) => block.id)
+      };
+      for (const block of materialization.blocks) {
+        for (const image of changedAccordionImages(block.type, block.metadata, previous.get(block.id))) {
+          if (/^image:data:/i.test(image)) throw new CollaborationDocumentError("INVALID_COLLABORATION_DOCUMENT", "Upload the accordion icon before using it");
+          images.add(image);
+        }
+      }
+    }
     const stateUpdate = Uint8Array.from(candidate.stateUpdate);
     const incrementalUpdate = Uint8Array.from(candidate.incrementalUpdate);
     const response: CollaborationUpdateValidationSuccess = {
@@ -170,6 +198,8 @@ workerParentPort.on("message", (request: CollaborationWorkerRequest) => {
       incrementalUpdate,
       changed: candidate.changed,
       relocatedBlocks,
+      workspaceChange,
+      newAccordionImages: [...images],
       materialization: request.includeMaterialization ? materialization : null
     };
     workerParentPort.postMessage(response, [stateUpdate.buffer, incrementalUpdate.buffer]);

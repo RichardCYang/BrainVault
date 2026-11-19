@@ -1,6 +1,6 @@
 export type DataImportAdmission =
   | Readonly<{ accepted: true }>
-  | Readonly<{ accepted: false; reason: "principal-active" }>;
+  | Readonly<{ accepted: false; reason: "principal-active" | "server-capacity" }>;
 
 export type DataImportProcessingAdmission =
   | Readonly<{ accepted: true }>
@@ -48,10 +48,13 @@ export class DataImportAdmissionGate {
   // Reserve the principal before multipart parsing so one account cannot start
   // overlapping uploads. This reservation intentionally does not consume a
   // global processing slot while network bytes are still arriving.
-  tryAcquire(principal: string): DataImportAdmission {
+  tryAcquire(principal: string, needsUpload = true): DataImportAdmission {
     if (!principal) throw new TypeError("Data import principal is required");
     if (this.activePrincipals.has(principal)) {
       return { accepted: false, reason: "principal-active" };
+    }
+    if (needsUpload && this.activePrincipals.size - this.processingPrincipals.size >= this.maxConcurrent * 2) {
+      return { accepted: false, reason: "server-capacity" };
     }
     this.activePrincipals.add(principal);
     return { accepted: true };

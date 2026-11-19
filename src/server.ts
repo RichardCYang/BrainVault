@@ -9,6 +9,7 @@ import {
   type ApplicationInstanceLease
 } from "./lib/application-instance-lock.js";
 import { cleanupStaleDataTransferTempFiles, recoverInterruptedDataRestores } from "./lib/data-transfer.js";
+import { pruneExpiredWorkspaceRecords } from "./lib/retention.js";
 import { pruneExpiredAuthSessions } from "./lib/auth-sessions.js";
 import { cleanupStaleAttachmentTempFiles } from "./lib/attachments.js";
 import { attachPageCollaborationServer } from "./lib/collaboration-server.js";
@@ -78,6 +79,7 @@ async function start() {
   const sessionPruneTimer = setInterval(() => {
     if (sessionPruneInFlight) return;
     sessionPruneInFlight = pruneExpiredAuthSessions()
+      .then(pruneExpiredWorkspaceRecords)
       // Retry on the next tick after a transient database failure.
       .catch(() => undefined)
       .finally(() => { sessionPruneInFlight = null; });
@@ -97,6 +99,8 @@ async function start() {
     ? createHttpsServer(poshAcmeTls.options, app)
     : createHttpServer(app);
   const collaborationHub = attachPageCollaborationServer(server);
+  server.headersTimeout = 30_000;
+  server.requestTimeout = 300_000;
   server.listen(env.PORT, env.HOST, () => {
     console.log(`BrainVault API listening on ${listenerUrl}`);
     if (env.HTTPS_MODE === "proxy") {

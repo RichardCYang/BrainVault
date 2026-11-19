@@ -14,6 +14,7 @@ import { requireRestoreOperationId } from "../lib/data-restore-operation.js";
 import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
+  finishDataExportProcessing,
   dataExportConcurrencyLimit,
   dataExportRateLimit,
   dataImportConcurrencyLimit,
@@ -36,16 +37,24 @@ snapshotRouter.get("/", async (req, res) => {
 });
 
 snapshotRouter.post("/", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res) => {
-  const user = requireUser(req.user);
-  const authScope = requireRequestAuthScope(req);
-  const snapshot = await createWorkspaceSnapshot(user.id, authScope);
-  res.status(201).json({ snapshot });
+  try {
+    const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
+    const snapshot = await createWorkspaceSnapshot(user.id, authScope);
+    res.status(201).json({ snapshot });
+  } finally {
+    finishDataExportProcessing(res);
+  }
 });
 
 snapshotRouter.get<SnapshotRouteParams>("/:snapshotId/diff", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res) => {
-  const user = requireUser(req.user);
-  const diff = await diffWorkspaceSnapshot(user.id, req.params.snapshotId);
-  res.json({ diff });
+  try {
+    const user = requireUser(req.user);
+    const diff = await diffWorkspaceSnapshot(user.id, req.params.snapshotId);
+    res.json({ diff });
+  } finally {
+    finishDataExportProcessing(res);
+  }
 });
 
 snapshotRouter.post<SnapshotRouteParams>(

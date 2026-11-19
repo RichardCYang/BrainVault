@@ -3,6 +3,7 @@ import path from "node:path";
 import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { withUserAttachmentLock } from "./attachments.js";
 import { env } from "../config/env.js";
+import { dataTransferResourceLimits } from "./data-transfer-limits.js";
 import { assessCustomIconStorageLimit } from "./custom-icon-storage-limit.js";
 import { db, type DbClient } from "./db.js";
 import { createId } from "./id.js";
@@ -107,6 +108,30 @@ export function getCustomIconFilePath(publicPath: string) {
   if (!match) return null;
   const [, userId, filename] = match;
   return path.join(customIconUploadRoot, safeStorageSegment(userId), filename);
+}
+
+export async function assertNewAccordionImages(values: readonly string[], ownerId: string, actorId: string, client: DbClient) {
+  for (const value of new Set(values)) {
+    if (/^image:data:/i.test(value)) throw new ApiError(400, "INVALID_ICON", "Upload the accordion icon before using it");
+    await assertWorkspaceIconReference(value, ownerId, actorId, client);
+  }
+}
+
+export async function assertWorkspaceIconReference(
+  value: string | null | undefined, ownerId: string, actorId: string, client: DbClient
+) {
+  if (!value?.trim().startsWith(imageIconPrefix)) return;
+  const publicPath = value.trim().slice(imageIconPrefix.length).trim();
+  if (!isServerCustomIconPath(publicPath)) return;
+  const file = getCustomIconFilePath(publicPath);
+  if (!publicPath.startsWith(`${customIconPublicPrefix}${ownerId}/`) || !file
+    || !(await canUserReadCustomIcon(actorId, publicPath, client))
+    || !(await lstat(file).catch((error) => {
+      if (isDefinitivePathAbsenceError(error)) return null;
+      throw error;
+    }))?.isFile()) {
+    throw new ApiError(400, "INVALID_CUSTOM_ICON", "Select an available icon from this workspace");
+  }
 }
 
 export async function canUserReadCustomIcon(
@@ -315,6 +340,13 @@ export async function removeCustomIconFromLibrary(
 
   await withUserAttachmentLock(safeUserId, async (client) => {
     await beforeMutation?.(client);
+    const usage = await client.queryOne<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM custom_icon_library_removals WHERE user_id = ? AND value_hash <> ?",
+      [safeUserId, removedKey]
+    );
+    if (Number(usage?.count) >= dataTransferResourceLimits.maxCustomIconLibraryRemovals) {
+      throw new ApiError(413, "ICON_REMOVAL_LIMIT", "The workspace has reached its icon removal history limit");
+    }
     await client.execute(
       `INSERT INTO custom_icon_library_removals (user_id, value_hash, removed_at)
        VALUES (?, ?, CURRENT_TIMESTAMP(3))

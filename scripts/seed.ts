@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { closeDb, db, transaction, type DbClient } from "../src/lib/db.js";
+import { checkPageStorageGrowth } from "../src/lib/workspace-storage.js";
+import { reserveBackupResourceIds } from "../src/lib/backup-resource-owners.js";
 import { createId } from "../src/lib/id.js";
 import { hashPassword } from "../src/lib/auth.js";
 import { newPasswordSchema } from "../src/utils/schemas.js";
@@ -37,14 +39,16 @@ async function attachTags(client: DbClient, pageId: string, tagNames: string[]) 
   }
 }
 
-async function insertBlocks(client: DbClient, pageId: string, blocks: DemoBlock[]) {
+async function insertBlocks(client: DbClient, ownerId: string, pageId: string, blocks: DemoBlock[]) {
   for (const [sortOrder, block] of blocks.entries()) {
+    const id = createId("blk");
+    await reserveBackupResourceIds(client, ownerId, "block", [id]);
     const metadata = block.metadata ?? null;
     await client.execute(
       `INSERT INTO blocks (id, page_id, type, markdown, html_cache, checked, sort_order, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        createId("blk"),
+        id,
         pageId,
         block.type,
         block.markdown,
@@ -70,14 +74,16 @@ async function createPageIfMissing(
 
   await transaction(async (client) => {
     const pageId = createId("pag");
+    await reserveBackupResourceIds(client, userId, "page", [pageId]);
     await client.execute("INSERT INTO pages (id, owner_id, title, icon) VALUES (?, ?, ?, ?)", [
       pageId,
       userId,
       page.title,
       page.icon
     ]);
-    await insertBlocks(client, pageId, blocks);
+    await insertBlocks(client, userId, pageId, blocks);
     await attachTags(client, pageId, page.tags);
+    await checkPageStorageGrowth(client, pageId);
   });
 
   return true;
