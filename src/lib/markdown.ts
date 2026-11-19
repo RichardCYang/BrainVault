@@ -731,6 +731,17 @@ export function sanitizeRenderedHtml(value: unknown) {
   return sanitizeHtml(typeof value === "string" ? value : "", sanitizeOptions);
 }
 
+// Opening a page re-sanitizes every block's stored html_cache. That took about
+// 12 ms of event-loop time for a 400-block page on each open. Most blocks are
+// unchanged between opens, so the results are kept in a bounded LRU: at most
+// 8,192 entries and 8M UTF-16 code units (about 16 MB), and inputs over 64K
+// characters are never cached.
+const sanitizedBlockHtmlCacheMaxEntries = 8_192;
+const sanitizedBlockHtmlCacheMaxChars = 8 * 1024 * 1024;
+const sanitizedBlockHtmlCacheMaxInputLength = 64 * 1024;
+const sanitizedBlockHtmlCache = new Map<string, string>();
+let sanitizedBlockHtmlCacheChars = 0;
+
 /**
  * Re-sanitize a persisted block cache with the policy for that block type.
  *
@@ -740,7 +751,44 @@ export function sanitizeRenderedHtml(value: unknown) {
  */
 export function sanitizeRenderedBlockHtml(type: BlockType, value: unknown) {
   const options = type === "AI_CHAT" ? aiChatSanitizeOptions : sanitizeOptions;
-  return sanitizeHtml(typeof value === "string" ? value : "", options);
+  const html = typeof value === "string" ? value : "";
+  if (html.length > sanitizedBlockHtmlCacheMaxInputLength) return sanitizeHtml(html, options);
+
+  // The policy is fixed at module load and every transform is pure, so the
+  // same input always yields the same output. The key carries the whole input
+  // and the policy, never a user or page id, so a hit returns exactly what a
+  // fresh sanitize would. Every read still passes through this boundary.
+  const key = `${options === aiChatSanitizeOptions ? "a" : "m"}\u0000${html}`;
+  const cached = sanitizedBlockHtmlCache.get(key);
+  if (cached !== undefined) {
+    sanitizedBlockHtmlCache.delete(key);
+    sanitizedBlockHtmlCache.set(key, cached);
+    return cached;
+  }
+
+  const sanitized = sanitizeHtml(html, options);
+  sanitizedBlockHtmlCache.set(key, sanitized);
+  sanitizedBlockHtmlCacheChars += key.length + sanitized.length;
+  while (
+    sanitizedBlockHtmlCache.size > sanitizedBlockHtmlCacheMaxEntries
+    || sanitizedBlockHtmlCacheChars > sanitizedBlockHtmlCacheMaxChars
+  ) {
+    const oldest = sanitizedBlockHtmlCache.entries().next().value;
+    if (!oldest) break;
+    sanitizedBlockHtmlCache.delete(oldest[0]);
+    sanitizedBlockHtmlCacheChars -= oldest[0].length + oldest[1].length;
+  }
+  return sanitized;
+}
+
+export function getSanitizedBlockHtmlCacheStats() {
+  return {
+    entries: sanitizedBlockHtmlCache.size,
+    chars: sanitizedBlockHtmlCacheChars,
+    maxEntries: sanitizedBlockHtmlCacheMaxEntries,
+    maxChars: sanitizedBlockHtmlCacheMaxChars,
+    maxInputLength: sanitizedBlockHtmlCacheMaxInputLength
+  };
 }
 
 const textAlignments = new Set(["left", "center", "right", "justify"]);
