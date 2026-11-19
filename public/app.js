@@ -2064,6 +2064,145 @@ function setStatus(message, isError = false, { dismissAfter, action } = {}) {
   scheduleStatusDismiss(delay);
 }
 
+// A sign-in session ends at a fixed time. Shortly before that, the app extends
+// it if the person was recently active, and otherwise asks, instead of dropping
+// them at the login screen mid-task (WCAG 2.2.1 Timing Adjustable). Every
+// authenticated response reports the expiry, so an extension made in another
+// tab (the cookie is shared) is picked up by the next request here.
+const sessionExpiryHeaderName = "X-BrainVault-Session-Expires";
+const sessionExpiryWarningMaxLeadMs = 5 * 60_000;
+const sessionExpiryWarningMinLeadMs = 60_000;
+const sessionRecentActivityMs = 15 * 60_000;
+const maxTimerDelayMs = 2_147_483_647;
+let sessionExpiresAtMs = null;
+let sessionExpiryWarningLeadMs = sessionExpiryWarningMaxLeadMs;
+let sessionExpiryTimer = null;
+let sessionExpiryNoticeText = "";
+let sessionExpiryWarningOpen = false;
+let sessionExtendInFlight = null;
+let sessionExtendRetryAt = 0;
+let lastUserActivityAt = Date.now();
+
+function formatSessionExpiryTime(expiresAtMs) {
+  return new Intl.DateTimeFormat(getLocale(), { hour: "numeric", minute: "2-digit" }).format(new Date(expiresAtMs));
+}
+
+function hideSessionExpiryNotice() {
+  sessionExpiryWarningOpen = false;
+  if (sessionExpiryNoticeText) clearStatusIfShowing(sessionExpiryNoticeText);
+  sessionExpiryNoticeText = "";
+}
+
+function stopSessionExpiryMonitor() {
+  window.clearTimeout(sessionExpiryTimer);
+  sessionExpiryTimer = null;
+  sessionExpiresAtMs = null;
+  hideSessionExpiryNotice();
+}
+
+function scheduleSessionExpiryCheck() {
+  window.clearTimeout(sessionExpiryTimer);
+  sessionExpiryTimer = null;
+  if (!state.authenticated || sessionExpiresAtMs === null) return;
+  const delay = Math.max(0, sessionExpiresAtMs - sessionExpiryWarningLeadMs - Date.now());
+  sessionExpiryTimer = window.setTimeout(() => void handleSessionExpiryDue(), Math.min(delay, maxTimerDelayMs));
+}
+
+function noteSessionExpiry(value) {
+  if (!state.authenticated) return;
+  const expiresAtMs = Date.parse(String(value ?? ""));
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs === sessionExpiresAtMs) return;
+  sessionExpiresAtMs = expiresAtMs;
+  // Warn 5 minutes ahead; shorter sessions (the server allows 5 minutes) get
+  // a quarter of their remaining time, but never less than a minute.
+  sessionExpiryWarningLeadMs = Math.min(
+    sessionExpiryWarningMaxLeadMs,
+    Math.max(sessionExpiryWarningMinLeadMs, (expiresAtMs - Date.now()) / 4)
+  );
+  hideSessionExpiryNotice();
+  scheduleSessionExpiryCheck();
+}
+
+function showSessionExpiryWarning() {
+  if (!state.authenticated || sessionExpiresAtMs === null) return;
+  sessionExpiryNoticeText = t("session.expiringSoon", { time: formatSessionExpiryTime(sessionExpiresAtMs) });
+  sessionExpiryWarningOpen = true;
+  setStatus(sessionExpiryNoticeText, false, {
+    dismissAfter: 0,
+    action: { label: t("session.extend"), onSelect: () => void extendAuthenticatedSession() }
+  });
+}
+
+function showSessionLifetimeLimitNotice() {
+  if (!state.authenticated || sessionExpiresAtMs === null) return;
+  sessionExpiryWarningOpen = false;
+  sessionExpiryNoticeText = t("session.lifetimeLimit", { time: formatSessionExpiryTime(sessionExpiresAtMs) });
+  setStatus(sessionExpiryNoticeText, false, { dismissAfter: 0 });
+}
+
+function extendAuthenticatedSession({ quiet = false } = {}) {
+  if (sessionExtendInFlight) return sessionExtendInFlight;
+  sessionExtendInFlight = (async () => {
+    try {
+      const data = await api("/api/auth/session/extend", { method: "POST", body: {} });
+      if (!state.authenticated) return;
+      noteSessionExpiry(data?.expiresAt);
+      if (data?.extended) {
+        hideSessionExpiryNotice();
+        if (!quiet) setStatus(t("session.extended"));
+      } else {
+        showSessionLifetimeLimitNotice();
+      }
+    } catch (error) {
+      if (!state.authenticated) return;
+      sessionExtendRetryAt = Date.now() + 30_000;
+      // A quiet attempt falls back to asking; an explicit one reports why.
+      if (quiet) showSessionExpiryWarning();
+      else setStatus(error?.message ?? t("errors.unknown"), true);
+    } finally {
+      sessionExtendInFlight = null;
+    }
+  })();
+  return sessionExtendInFlight;
+}
+
+async function handleSessionExpiryDue() {
+  sessionExpiryTimer = null;
+  if (!state.authenticated || sessionExpiresAtMs === null) return;
+  const dueExpiresAtMs = sessionExpiresAtMs;
+  // Another tab may already have extended the shared cookie; this request
+  // reports the current expiry and reschedules if so.
+  try {
+    await api("/api/auth/me");
+  } catch {
+    // A real sign-out is handled by api(); otherwise decide with what is known.
+  }
+  if (!state.authenticated || sessionExpiresAtMs !== dueExpiresAtMs) return;
+  if (sessionExpiryNoticeText) return;
+  if (Date.now() - lastUserActivityAt < sessionRecentActivityMs) void extendAuthenticatedSession({ quiet: true });
+  else showSessionExpiryWarning();
+}
+
+function noteUserActivity(event) {
+  lastUserActivityAt = Date.now();
+  // Working while the warning is up means the person is here: keep them signed
+  // in. Using the notice itself (including dismissing it) does not count.
+  if (
+    sessionExpiryWarningOpen
+    && Date.now() >= sessionExtendRetryAt
+    && !elements.status.contains(event.target)
+  ) {
+    void extendAuthenticatedSession({ quiet: true });
+  }
+}
+
+document.addEventListener("keydown", noteUserActivity, { capture: true, passive: true });
+document.addEventListener("pointerdown", noteUserActivity, { capture: true, passive: true });
+document.addEventListener("visibilitychange", () => {
+  // Background tabs run timers late; catch up as soon as the tab is shown.
+  if (document.visibilityState === "visible") scheduleSessionExpiryCheck();
+});
+
 elements.status.addEventListener("pointerenter", pauseStatusDismiss);
 elements.status.addEventListener("pointerleave", resumeStatusDismiss);
 elements.status.addEventListener("focusin", pauseStatusDismiss);
@@ -2082,6 +2221,8 @@ function syncWorkspaceShellInert() {
 
 function setAuthenticated(value) {
   state.authenticated = Boolean(value);
+  // Each sign-in starts fresh; its first authenticated response reports the expiry.
+  stopSessionExpiryMonitor();
 }
 
 // The stored preference may be "system"; the rendered theme is always light or dark.
@@ -2650,6 +2791,7 @@ async function api(path, options = {}) {
   // callback. Revalidate once more in this continuation before status or JSON use.
   assertAuthenticationScopeCurrent();
   if (response.status === 204) {
+    if (startedAuthenticated) noteSessionExpiry(response.headers.get(sessionExpiryHeaderName));
     onResponse?.(response);
     return null;
   }
@@ -2685,6 +2827,9 @@ async function api(path, options = {}) {
     });
   }
 
+  // Only after every auth-scope fence: a response from a replaced sign-in
+  // never sets this sign-in's expiry.
+  if (startedAuthenticated) noteSessionExpiry(response.headers.get(sessionExpiryHeaderName));
   onResponse?.(response);
   return data;
 }

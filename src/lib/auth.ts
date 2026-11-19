@@ -44,22 +44,49 @@ export function verifyPassword(password: string, passwordHash: string) {
   return bcrypt.compare(password, passwordHash);
 }
 
-export function signAuthToken(payload: AuthTokenPayload) {
+const authTokenLifetimeUnitMs = { s: 1_000, m: 60_000, h: 60 * 60_000, d: 24 * 60 * 60_000 } as const;
+
+// JWT_EXPIRES_IN is validated as <digits><s|m|h|d> by the environment schema.
+export function getAuthTokenLifetimeMs() {
+  const value = String(env.JWT_EXPIRES_IN);
+  const unit = value.at(-1) as keyof typeof authTokenLifetimeUnitMs;
+  return Number(value.slice(0, -1)) * authTokenLifetimeUnitMs[unit];
+}
+
+export function signAuthToken(payload: AuthTokenPayload, { expiresAt }: { expiresAt?: Date } = {}) {
   const options: SignOptions = {
     algorithm: "HS256",
     audience: authAudience,
-    issuer: authIssuer,
-    expiresIn: env.JWT_EXPIRES_IN as SignOptions["expiresIn"]
+    issuer: authIssuer
   };
+  // An extended session keeps its id but may be capped below the usual
+  // lifetime, so it carries an explicit expiry instead of a relative one.
+  const exp = expiresAt ? Math.floor(expiresAt.getTime() / 1000) : null;
+  if (exp === null) options.expiresIn = env.JWT_EXPIRES_IN as SignOptions["expiresIn"];
+  else if (!Number.isSafeInteger(exp) || exp * 1000 <= Date.now()) {
+    throw new ApiError(401, "INVALID_TOKEN", "Invalid authentication token");
+  }
   const sessionId = payload.sessionId ?? createId("ses");
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(sessionId)) {
     throw new ApiError(401, "INVALID_TOKEN", "Invalid authentication token");
   }
   return jwt.sign(
-    { ...payload, authVersion: normalizeAuthVersion(payload.authVersion), sessionId },
+    {
+      ...payload,
+      authVersion: normalizeAuthVersion(payload.authVersion),
+      sessionId,
+      ...(exp === null ? {} : { exp })
+    },
     env.JWT_SECRET as Secret,
     options
   );
+}
+
+export function getAuthTokenExpiresAt(token: string) {
+  const decoded = jwt.decode(token);
+  if (typeof decoded !== "object" || !decoded || typeof decoded.exp !== "number") return null;
+  const expiresAt = new Date(decoded.exp * 1000);
+  return Number.isFinite(expiresAt.getTime()) ? expiresAt : null;
 }
 
 export function verifyAuthToken(token: string): AuthTokenPayload {

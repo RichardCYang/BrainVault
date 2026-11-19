@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
 import { db } from "../lib/db.js";
-import { normalizeAuthVersion, verifyAuthToken } from "../lib/auth.js";
+import { getAuthTokenExpiresAt, normalizeAuthVersion, verifyAuthToken } from "../lib/auth.js";
 import { setPrivateNoStoreCacheControl } from "../lib/cache-control.js";
 import { ApiError } from "../lib/http.js";
 import { enforceCountryLoginPolicy } from "../lib/country-login-policy.js";
@@ -193,6 +193,14 @@ async function authenticateRequest(
     // Session revocation must apply uniformly to cookie and optional bearer credentials.
     const authSessionId = await ensureAuthSessionForRequest(token, payload, req);
     req.auth = { authVersion, workspaceGeneration };
+    req.auth.credentialSource = source;
+    const tokenExpiresAt = getAuthTokenExpiresAt(token);
+    if (tokenExpiresAt) {
+      req.auth.tokenExpiresAt = tokenExpiresAt;
+      // Lets the browser warn before the session ends (WCAG 2.2.1) and notice
+      // when another tab has already extended it.
+      res.setHeader("X-BrainVault-Session-Expires", tokenExpiresAt.toISOString());
+    }
     if (clientWorkspaceGeneration !== null) {
       // A browser request may have been intentionally queued before another tab
       // restored the workspace but dispatched only after the restore committed.

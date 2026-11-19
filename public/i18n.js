@@ -11184,6 +11184,59 @@ const dataLossFollowupTranslations = {
   }
 };
 
+// Sign-in expiry warning and extension (WCAG 2.2.1 Timing Adjustable).
+const sessionExpiryTranslations = {
+  "en": {
+    "session.expiringSoon": "For your security, your sign-in ends at {time}. Choose Stay signed in to keep working, or just keep typing. Unsaved text is kept either way.",
+    "session.extend": "Stay signed in",
+    "session.extended": "You'll stay signed in.",
+    "session.lifetimeLimit": "For your security, you'll need to sign in again at {time}. Unsaved text is kept and comes back after you sign in.",
+    "errors.SESSION_EXTENSION_UNSUPPORTED": "This sign-in can't be extended. Sign in again to continue."
+  },
+  "ja": {
+    "session.expiringSoon": "セキュリティのため、{time}にログインが終了します。作業を続けるには「ログインを維持」を選ぶか、そのまま入力を続けてください。未保存の内容はどちらの場合も保持されます。",
+    "session.extend": "ログインを維持",
+    "session.extended": "ログインを維持しました。",
+    "session.lifetimeLimit": "セキュリティのため、{time}にもう一度ログインする必要があります。未保存の内容は保持され、ログイン後に戻ります。",
+    "errors.SESSION_EXTENSION_UNSUPPORTED": "このログインは延長できません。続けるにはもう一度ログインしてください。"
+  },
+  "ko": {
+    "session.expiringSoon": "보안을 위해 {time}에 로그인이 끝납니다. 계속 작업하려면 '로그인 유지'를 누르거나 그대로 입력을 이어가세요. 저장되지 않은 내용은 어느 경우든 보관됩니다.",
+    "session.extend": "로그인 유지",
+    "session.extended": "로그인 상태를 유지합니다.",
+    "session.lifetimeLimit": "보안을 위해 {time}에 다시 로그인해야 합니다. 저장되지 않은 내용은 보관되며 다시 로그인하면 돌아옵니다.",
+    "errors.SESSION_EXTENSION_UNSUPPORTED": "이 로그인은 연장할 수 없습니다. 계속하려면 다시 로그인하세요."
+  },
+  "fr": {
+    "session.expiringSoon": "Pour votre sécurité, votre connexion prend fin à {time}. Choisissez Rester connecté pour continuer, ou continuez simplement à écrire. Le texte non enregistré est conservé dans tous les cas.",
+    "session.extend": "Rester connecté",
+    "session.extended": "Vous restez connecté.",
+    "session.lifetimeLimit": "Pour votre sécurité, vous devrez vous reconnecter à {time}. Le texte non enregistré est conservé et réapparaît après la connexion.",
+    "errors.SESSION_EXTENSION_UNSUPPORTED": "Cette connexion ne peut pas être prolongée. Reconnectez-vous pour continuer."
+  },
+  "de": {
+    "session.expiringSoon": "Aus Sicherheitsgründen endet deine Anmeldung um {time}. Wähle „Angemeldet bleiben“, um weiterzuarbeiten, oder schreib einfach weiter. Ungespeicherter Text bleibt in jedem Fall erhalten.",
+    "session.extend": "Angemeldet bleiben",
+    "session.extended": "Du bleibst angemeldet.",
+    "session.lifetimeLimit": "Aus Sicherheitsgründen musst du dich um {time} erneut anmelden. Ungespeicherter Text bleibt erhalten und ist nach der Anmeldung wieder da.",
+    "errors.SESSION_EXTENSION_UNSUPPORTED": "Diese Anmeldung kann nicht verlängert werden. Melde dich erneut an, um fortzufahren."
+  },
+  "es": {
+    "session.expiringSoon": "Por seguridad, tu sesión termina a las {time}. Elige Mantener la sesión para seguir trabajando o simplemente sigue escribiendo. El texto sin guardar se conserva en cualquier caso.",
+    "session.extend": "Mantener la sesión",
+    "session.extended": "Tu sesión seguirá iniciada.",
+    "session.lifetimeLimit": "Por seguridad, tendrás que volver a iniciar sesión a las {time}. El texto sin guardar se conserva y vuelve cuando inicies sesión.",
+    "errors.SESSION_EXTENSION_UNSUPPORTED": "Esta sesión no se puede extender. Vuelve a iniciar sesión para continuar."
+  },
+  "pt": {
+    "session.expiringSoon": "Por segurança, sua sessão termina às {time}. Escolha Manter conectado para continuar ou simplesmente continue digitando. O texto não salvo é mantido em qualquer caso.",
+    "session.extend": "Manter conectado",
+    "session.extended": "Você continuará conectado.",
+    "session.lifetimeLimit": "Por segurança, você precisará entrar novamente às {time}. O texto não salvo é mantido e volta depois que você entrar.",
+    "errors.SESSION_EXTENSION_UNSUPPORTED": "Esta sessão não pode ser estendida. Entre novamente para continuar."
+  }
+};
+
 for (const [language, entries] of [
   ...Object.entries(catalogCompletionTranslations),
   ...Object.entries(apiErrorAndRecoveryTranslations),
@@ -11192,7 +11245,8 @@ for (const [language, entries] of [
   ...Object.entries(dataLossDeepReviewTranslations),
   ...Object.entries(splitPasteTranslations),
   ...Object.entries(pageLimitTranslations),
-  ...Object.entries(dataLossFollowupTranslations)
+  ...Object.entries(dataLossFollowupTranslations),
+  ...Object.entries(sessionExpiryTranslations)
 ]) {
   const catalog = translationCatalogs[language];
   if (!catalog) continue;

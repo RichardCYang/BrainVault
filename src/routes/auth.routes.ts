@@ -4,7 +4,13 @@ import { z } from "zod";
 import { env } from "../config/env.js";
 import { db, transaction, type DbValue } from "../lib/db.js";
 import { createId } from "../lib/id.js";
-import { hashPassword, normalizeAuthVersion, signAuthToken, verifyPassword } from "../lib/auth.js";
+import {
+  getAuthTokenLifetimeMs,
+  hashPassword,
+  normalizeAuthVersion,
+  signAuthToken,
+  verifyPassword
+} from "../lib/auth.js";
 import { disconnectAuthSessionCollaborators, disconnectUserCollaborators } from "../lib/collaboration-server.js";
 import { ApiError } from "../lib/http.js";
 import { clearMfaCeremonyBinding, getOrCreateMfaCeremonyBinding } from "../lib/mfa-ceremony-cookie.js";
@@ -43,6 +49,7 @@ import { clearAuthSessionCookie, setAuthSessionCookie } from "../lib/session-coo
 import {
   assertCurrentAuthSession,
   assertCurrentAuthSessionBoundary,
+  extendAuthSession,
   listActiveAuthSessions,
   revokeAuthSession
 } from "../lib/auth-sessions.js";
@@ -631,6 +638,46 @@ authRouter.patch(
     }
   }
 );
+
+// Extends the signed-in session in place: same session id (so the device list
+// and per-session revocation keep working), a fresh expiry, and a new cookie.
+// The browser calls it when the person is active near expiry or chooses to
+// stay signed in from the expiry warning.
+authRouter.post("/session/extend", requireAuth, async (req, res, next) => {
+  try {
+    const currentUser = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
+    const currentExpiresAt = req.auth?.tokenExpiresAt;
+    if (req.auth?.credentialSource !== "cookie" || !currentExpiresAt) {
+      throw new ApiError(400, "SESSION_EXTENSION_UNSUPPORTED", "Only browser sessions can be extended");
+    }
+    const expiresAt = await transaction(async (client) => {
+      await assertCurrentAuthSession(currentUser.id, authScope, client);
+      return extendAuthSession(
+        currentUser.id,
+        authScope.sessionId,
+        currentExpiresAt,
+        getAuthTokenLifetimeMs(),
+        client
+      );
+    });
+
+    res.setHeader("Cache-Control", "private, no-store");
+    if (!expiresAt) {
+      res.json({ extended: false, expiresAt: currentExpiresAt.toISOString() });
+      return;
+    }
+    const token = signAuthToken(
+      { sub: currentUser.id, username: currentUser.username, authVersion: authScope.authVersion, sessionId: authScope.sessionId },
+      { expiresAt }
+    );
+    setAuthSessionCookie(res, token);
+    res.setHeader("X-BrainVault-Session-Expires", expiresAt.toISOString());
+    res.json({ extended: true, expiresAt: expiresAt.toISOString() });
+  } catch (error) {
+    next(error);
+  }
+});
 
 authRouter.get("/sessions", requireAuth, async (req, res, next) => {
   try {

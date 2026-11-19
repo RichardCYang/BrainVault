@@ -225,6 +225,55 @@ export async function isAuthSessionActive(
   return Boolean(row);
 }
 
+// Extending keeps a signed-in device working past one token lifetime, but a
+// session never outlives this many days from its first sign-in: after that
+// the person signs in again, so a lost or stolen cookie still ages out.
+export const maxAuthSessionLifetimeMs = 7 * 24 * 60 * 60_000;
+
+function toTimestampMs(value: string | Date) {
+  return (value instanceof Date ? value : new Date(value)).getTime();
+}
+
+// Call inside a transaction after assertCurrentAuthSession. Returns the new
+// expiry, or null when the session already reached its maximum lifetime.
+export async function extendAuthSession(
+  userId: string,
+  sessionId: string,
+  currentExpiresAt: Date,
+  tokenLifetimeMs: number,
+  client: DbClient
+) {
+  const row = await client.queryOne<{ created_at: string | Date }>(
+    `SELECT created_at
+     FROM user_auth_sessions
+     WHERE id = ?
+       AND user_id = ?
+       AND revoked_at IS NULL
+       AND expires_at > CURRENT_TIMESTAMP(3)
+     FOR UPDATE`,
+    [normalizeAuthSessionId(sessionId), userId]
+  );
+  if (!row) {
+    throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
+  }
+  const createdAtMs = toTimestampMs(row.created_at);
+  const capMs = Number.isFinite(createdAtMs) ? createdAtMs + maxAuthSessionLifetimeMs : Date.now();
+  // JWT expiry has whole-second precision; round down so the stored expiry
+  // never outlives the token that carries it.
+  const nextMs = Math.floor(Math.min(Date.now() + tokenLifetimeMs, capMs) / 1000) * 1000;
+  if (nextMs <= currentExpiresAt.getTime()) return null;
+
+  const expiresAt = new Date(nextMs);
+  await client.execute(
+    `UPDATE user_auth_sessions
+     SET expires_at = GREATEST(expires_at, ?)
+     WHERE id = ?
+       AND user_id = ?`,
+    [expiresAt, sessionId, userId]
+  );
+  return expiresAt;
+}
+
 export type AuthSessionScope = Readonly<{
   authVersion: number;
   sessionId: string;

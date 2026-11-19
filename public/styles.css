@@ -19670,6 +19670,15 @@ body.auth-mode {
   .status-dismiss {
     width: 2.5rem;
   }
+
+  /* A native checkbox cannot carry the invisible ::after hit area above, so on
+     touch screens it grows to 24px itself. The smaller margin keeps the cell
+     the same size (1rem + 2 × 0.65rem = 1.5rem + 2 × 0.4rem). */
+  .database-value-input[type="checkbox"] {
+    width: 1.5rem;
+    height: 1.5rem;
+    margin: 0.4rem;
+  }
 }
 
 /* Page toolbar: Edit/Done toggle and autosave indicator.
