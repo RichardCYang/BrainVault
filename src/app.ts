@@ -24,6 +24,7 @@ import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requireAuth } from "./middleware/auth.js";
 import { createHttpsEnforcementMiddleware } from "./middleware/https.js";
 import { setPrivateNoStoreCacheControl } from "./lib/cache-control.js";
+import { createStaticCompressionMiddleware } from "./lib/static-compression.js";
 import { createExpressTrustProxySetting, getClientIpAddressFromTrustedProxyRequest } from "./lib/reverse-proxy.js";
 import { canUserReadCustomIcon, customIconUploadRoot, getCustomIconFilePath } from "./lib/custom-icons.js";
 import { bookmarkFetchGuardHeader, bookmarkFetchGuardValue } from "./lib/bookmark-host-policy.js";
@@ -72,6 +73,16 @@ function collectPublicAssetPaths(rootDir: string) {
   };
   visit(rootDir, "/");
   return assetPaths;
+}
+
+// Vendor directories come from node_modules; a missing package must keep
+// failing only at request time (404), exactly as express.static does.
+function collectOptionalAssetPaths(rootDir: string) {
+  try {
+    return collectPublicAssetPaths(rootDir);
+  } catch {
+    return new Set<string>();
+  }
 }
 
 function isPublicAssetRateLimitExempt(req: Request, publicAssetPaths: ReadonlySet<string>) {
@@ -215,12 +226,21 @@ export function createApp() {
     });
   }
 
-  app.get("/vendor/yjs/yjs.mjs", (_req, res, next) => {
+  app.get("/vendor/yjs/yjs.mjs", createStaticCompressionMiddleware({
+    rootDir: path.join(browserModuleRoot, "yjs", "dist"),
+    assetPaths: new Set(),
+    aliases: { "/vendor/yjs/yjs.mjs": "/yjs.mjs" },
+    setHeaders: setBrowserModuleHeaders
+  }), (_req, res, next) => {
     sendBrowserModule(res, next, path.join(browserModuleRoot, "yjs", "dist", "yjs.mjs"));
   });
   // npm's lockfile pins and verifies the patched KaTeX release, including all
   // font files referenced by its stylesheet, without runtime CDN requests.
-  app.use("/vendor/katex/0.18.2", express.static(path.join(browserModuleRoot, "katex", "dist"), {
+  const katexDistDir = path.join(browserModuleRoot, "katex", "dist");
+  app.use("/vendor/katex/0.18.2", createStaticCompressionMiddleware({
+    rootDir: katexDistDir,
+    assetPaths: collectOptionalAssetPaths(katexDistDir)
+  }), express.static(katexDistDir, {
     dotfiles: "deny", index: false, redirect: false
   }));
   app.get("/vendor/yjs/isomorphic/browser.mjs", (_req, res, next) => {
@@ -290,6 +310,11 @@ export function createApp() {
       `export const AI_CHAT_ANSWER_MAX_LENGTH = ${env.AI_CHAT_ANSWER_MAX_LENGTH};\n`
     );
   });
+  app.use(createStaticCompressionMiddleware({
+    rootDir: publicDir,
+    assetPaths: publicAssetPaths,
+    aliases: { "/": "/index.html" }
+  }));
   app.use(express.static(publicDir, { index: false }));
   if (env.SERVE_INTERNAL_DOCS) {
     app.use(
