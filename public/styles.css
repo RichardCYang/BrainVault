@@ -161,11 +161,15 @@ select:focus-visible {
 .status {
   position: fixed;
   z-index: 80;
-  right: auto;
+  /* Centered by auto margins between both edges, not left: 50% plus a
+     transform: that left the toast only half the viewport to shrink-fit into,
+     so on a phone it wrapped into a tall column over the content. */
+  right: 0;
   bottom: max(1rem, env(safe-area-inset-bottom));
-  left: 50%;
+  left: 0;
+  width: fit-content;
   max-width: min(90vw, 38rem);
-  transform: translateX(-50%);
+  margin-inline: auto;
   color: var(--ink);
   pointer-events: none;
 }
@@ -19678,6 +19682,16 @@ body.auth-mode {
     width: 1.5rem;
     height: 1.5rem;
     margin: 0.4rem;
+  }
+
+  /* The group name is a one-line text field only 17px tall; give it a 24px
+     row to tap into. The color chip's invisible hit area grows to match. */
+  .kanban-column-title {
+    min-height: 1.5rem;
+  }
+
+  .kanban-column-color::after {
+    inset: -0.25rem;
   }
 }
 

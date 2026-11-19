@@ -2660,7 +2660,8 @@ async function reconcileCanonicalCreatedBlock(
   state.pendingFocusBlockId = committedBlock.id;
 
   try {
-    await openPage(pageId, { skipFlush });
+    // The page is already on screen; refresh it without a "Loading…" notice.
+    await openPage(pageId, { skipFlush, quiet: true });
   } catch (error) {
     const status = Number(error?.status ?? 0);
     const authenticationStillCurrent =
@@ -8440,9 +8441,18 @@ function canEditSelectedPage() {
   return canPersistSelectedPage() && !isPageInteractionLocked();
 }
 
+let blockListRebuildDepth = 0;
+
 function reportReadOnlyBlocked() {
   if (isCollaborativePage() && !isCollaborationReady()) {
     setStatus(t("sharing.syncRequired"), true);
+    return;
+  }
+  // In write mode the page is only held briefly while an earlier change is
+  // saved (for example the block an Enter just created). Saying "read-only"
+  // there is wrong and sends people looking for a mode switch.
+  if (canPersistSelectedPage()) {
+    setStatus(t("status.pageBusy"));
     return;
   }
   const canSwitchToWrite = canEditPage() && !isPageInteractionLocked() && !isPageModeMutationFenced();
@@ -8847,6 +8857,53 @@ function handleBeforeUnload(event) {
   event.returnValue = "";
 }
 
+// A save that failed (network drop, server restart) is tried again on its own,
+// sooner when the browser reports it is back online, so an edit nobody touches
+// again does not stay "Retry save" until someone notices the button. Recovered
+// draft conflicts need a person's choice and are never retried automatically.
+const failedSaveRetryInitialDelayMs = 5_000;
+const failedSaveRetryMaxDelayMs = 60_000;
+let failedSaveRetryTimer = null;
+let failedSaveRetryDelayMs = failedSaveRetryInitialDelayMs;
+let failedSaveRetryInFlight = false;
+
+function syncFailedSaveRetry(saveState) {
+  if (saveState === "saved") failedSaveRetryDelayMs = failedSaveRetryInitialDelayMs;
+  if (saveState !== "error") {
+    window.clearTimeout(failedSaveRetryTimer);
+    failedSaveRetryTimer = null;
+    return;
+  }
+  if (failedSaveRetryTimer !== null || failedSaveRetryInFlight) return;
+  const delay = failedSaveRetryDelayMs;
+  failedSaveRetryDelayMs = Math.min(failedSaveRetryMaxDelayMs, failedSaveRetryDelayMs * 2);
+  failedSaveRetryTimer = window.setTimeout(() => {
+    failedSaveRetryTimer = null;
+    void retryFailedPageSaves();
+  }, delay);
+}
+
+async function retryFailedPageSaves({ announce = false } = {}) {
+  if (failedSaveRetryInFlight) return;
+  const hasFailedSave = Boolean(elements.blockList.querySelector(".editor-block-row.save-error"))
+    || elements.pageTitle.classList.contains("save-error");
+  if (!hasFailedSave || hasUnresolvedDraftConflicts() || !canEditSelectedPage()) return;
+  // Offline: wait for the "online" event instead of failing again.
+  if (navigator.onLine === false) return;
+  window.clearTimeout(failedSaveRetryTimer);
+  failedSaveRetryTimer = null;
+  failedSaveRetryInFlight = true;
+  if (announce) setStatus(t("status.saveResuming"));
+  try {
+    await flushPendingPageEdits();
+  } catch {
+    // The save indicator still shows "Retry save"; the next attempt follows.
+  } finally {
+    failedSaveRetryInFlight = false;
+    syncBeforeUnloadProtection();
+  }
+}
+
 // The toolbar save control doubles as the autosave indicator: "Saved" when
 // everything reached the server, "Saving…" while edits are pending (clicking
 // saves now), and "Retry save" after a failure.
@@ -8854,6 +8911,7 @@ function syncPageSaveIndicator({ force = false, pending = hasPendingPageEdits() 
   const button = elements.savePageButton;
   const hasError = Boolean(elements.blockList.querySelector(".editor-block-row.save-error"));
   const saveState = hasError ? "error" : pending ? "saving" : "saved";
+  syncFailedSaveRetry(saveState);
   if (!force && button.dataset.saveState === saveState) return;
   button.dataset.saveState = saveState;
   const labelKey = saveState === "error" ? "page.saveRetry" : saveState === "saving" ? "page.saving" : "page.saved";
@@ -21163,7 +21221,15 @@ function renderSelectedPage() {
   }
   elements.blockCount.textContent = t("counts.blocks", { count: formatNumber(flatBlocks.length) });
 
-  elements.blockList.replaceChildren();
+  // Removing a focused field makes the browser fire blur/change on it while it
+  // is being taken out. Those events describe no new edit (see the change
+  // listener), so they are marked as part of this rebuild.
+  blockListRebuildDepth += 1;
+  try {
+    elements.blockList.replaceChildren();
+  } finally {
+    blockListRebuildDepth -= 1;
+  }
   if (!flatBlocks.length) {
     const empty = makeEmptyMessage(t(isPageReadOnly() ? "empty.readOnlyPage" : "empty.noBlocksWrite"));
     empty.classList.add("block-empty-message");
@@ -22630,7 +22696,7 @@ async function showCollection(
   );
 }
 
-async function openPage(pageId, { skipFlush = false, requestedPageMode = null } = {}) {
+async function openPage(pageId, { skipFlush = false, requestedPageMode = null, quiet = false } = {}) {
   const navigationGeneration = ++workspaceNavigationGeneration;
   cancelPendingPageRead();
   const shouldFlush = !skipFlush || state.pageEditLockDepth === 0;
@@ -22647,8 +22713,10 @@ async function openPage(pageId, { skipFlush = false, requestedPageMode = null } 
 
       // Keep the loading indicator tied to the operation rather than the generic
       // 2.4s toast timer. A stalled read must stay visibly pending until it opens,
-      // times out, or is superseded by another navigation.
-      setStatus(t("status.loadingDocument"), false, { dismissAfter: 0 });
+      // times out, or is superseded by another navigation. A quiet refresh of
+      // the page already on screen (after a block insertion) shows no notice.
+      const reloadsVisiblePage = quiet && preserveMode;
+      if (!reloadsVisiblePage) setStatus(t("status.loadingDocument"), false, { dismissAfter: 0 });
       let data;
       const requestController = new AbortController();
       pageNavigationRequestController = requestController;
@@ -26397,6 +26465,9 @@ elements.blockList.addEventListener("change", (event) => {
     toggleTodoFromReadMode(readModeTodo).catch((error) => setStatus(error.message, true));
     return;
   }
+  // Re-rendering the page removes a focused field, and the browser then fires
+  // "change" on it. That is not an edit to act on or to warn about.
+  if (blockListRebuildDepth > 0 || !event.target.isConnected) return;
   if (!requireWritablePage()) {
     const row = getBlockRow(event.target);
     if (row) restoreBlockRowFromDurableState(row);
@@ -27671,8 +27742,13 @@ window.addEventListener("online", () => {
     void drainRecoveryStorageFailure().catch(() => undefined);
     return;
   }
-  if (!pendingBlockOrderTask) return;
-  retryPendingBlockOrder().catch((error) => setStatus(error.message, true));
+  if (!pendingBlockOrderTask) {
+    void retryFailedPageSaves({ announce: true });
+    return;
+  }
+  retryPendingBlockOrder()
+    .then(() => retryFailedPageSaves({ announce: true }))
+    .catch((error) => setStatus(error.message, true));
 });
 
 function handleRecoveryStorageExternalChange(key) {

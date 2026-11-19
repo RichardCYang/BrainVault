@@ -11237,6 +11237,44 @@ const sessionExpiryTranslations = {
   }
 };
 
+const uxReviewTranslations = {
+  "en": {
+    "status.pageTransitionBusy": "Your previous change to this is still being sent. Try again when it finishes.",
+    "status.pageBusy": "Your last change is still being saved. Try again in a moment.",
+    "status.saveResuming": "Back online. Saving your changes…"
+  },
+  "ja": {
+    "status.pageTransitionBusy": "直前の変更をまだ送信中です。完了してからもう一度お試しください。",
+    "status.pageBusy": "直前の変更をまだ保存中です。少し待ってからもう一度お試しください。",
+    "status.saveResuming": "オンラインに戻りました。変更を保存しています…"
+  },
+  "ko": {
+    "status.pageTransitionBusy": "직전 변경 사항을 아직 전송하고 있습니다. 완료된 뒤 다시 시도하세요.",
+    "status.pageBusy": "직전 변경 사항을 아직 저장하고 있습니다. 잠시 후 다시 시도하세요.",
+    "status.saveResuming": "다시 연결되었습니다. 변경 사항을 저장하는 중…"
+  },
+  "fr": {
+    "status.pageTransitionBusy": "Votre modification précédente est encore en cours d’envoi. Réessayez une fois terminée.",
+    "status.pageBusy": "Votre dernière modification est encore en cours d’enregistrement. Réessayez dans un instant.",
+    "status.saveResuming": "De nouveau en ligne. Enregistrement de vos modifications…"
+  },
+  "de": {
+    "status.pageTransitionBusy": "Deine vorherige Änderung wird noch gesendet. Versuche es erneut, wenn sie abgeschlossen ist.",
+    "status.pageBusy": "Deine letzte Änderung wird noch gespeichert. Versuche es gleich noch einmal.",
+    "status.saveResuming": "Wieder online. Deine Änderungen werden gespeichert…"
+  },
+  "es": {
+    "status.pageTransitionBusy": "Tu cambio anterior todavía se está enviando. Inténtalo de nuevo cuando termine.",
+    "status.pageBusy": "Tu último cambio todavía se está guardando. Inténtalo de nuevo en un momento.",
+    "status.saveResuming": "De nuevo en línea. Guardando tus cambios…"
+  },
+  "pt": {
+    "status.pageTransitionBusy": "Sua alteração anterior ainda está sendo enviada. Tente novamente quando terminar.",
+    "status.pageBusy": "Sua última alteração ainda está sendo salva. Tente novamente em instantes.",
+    "status.saveResuming": "Conectado novamente. Salvando suas alterações…"
+  }
+};
+
 for (const [language, entries] of [
   ...Object.entries(catalogCompletionTranslations),
   ...Object.entries(apiErrorAndRecoveryTranslations),
@@ -11246,7 +11284,8 @@ for (const [language, entries] of [
   ...Object.entries(splitPasteTranslations),
   ...Object.entries(pageLimitTranslations),
   ...Object.entries(dataLossFollowupTranslations),
-  ...Object.entries(sessionExpiryTranslations)
+  ...Object.entries(sessionExpiryTranslations),
+  ...Object.entries(uxReviewTranslations)
 ]) {
   const catalog = translationCatalogs[language];
   if (!catalog) continue;
