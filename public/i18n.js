@@ -11369,9 +11369,48 @@ export function formatShortcutModifiers(text) {
   return typeof text === "string" ? text.replaceAll("Ctrl/⌘", primaryModifierLabel) : text;
 }
 
-export function t(key, variables = {}) {
+function resolveTranslationTemplate(key) {
   const value = getPath(translationCatalogs[currentLanguage], key) ?? getPath(translationCatalogs.en, key) ?? key;
-  if (typeof value !== "string") return key;
+  return typeof value === "string" ? value : null;
+}
+
+// Rendering calls t() thousands of times with the same keys. Catalogs are
+// complete once this module has loaded, so remember each key's resolved
+// template per language: templates without {placeholders} are stored fully
+// formatted; the rest keep the original substitute-then-format order.
+const translationLookupCache = new Map();
+const translationLookupCacheLimit = 8192;
+const translationPlaceholderPattern = /\{(\w+)\}/;
+
+function getCachedTranslation(key) {
+  let cache = translationLookupCache.get(currentLanguage);
+  if (!cache) {
+    cache = new Map();
+    translationLookupCache.set(currentLanguage, cache);
+  }
+  let entry = cache.get(key);
+  if (entry === undefined) {
+    const template = resolveTranslationTemplate(key);
+    if (template === null) entry = { text: key, template: null };
+    else if (translationPlaceholderPattern.test(template)) entry = { text: null, template };
+    else entry = { text: formatShortcutModifiers(template), template: null };
+    // Keys built from runtime data (error codes, ...) must not grow this forever.
+    if (cache.size >= translationLookupCacheLimit) cache.clear();
+    cache.set(key, entry);
+  }
+  return entry;
+}
+
+export function t(key, variables = {}) {
+  if (typeof key === "string") {
+    const entry = getCachedTranslation(key);
+    if (entry.text !== null) return entry.text;
+    return formatShortcutModifiers(
+      entry.template.replace(/\{(\w+)\}/g, (match, name) => (variables[name] === undefined ? match : String(variables[name])))
+    );
+  }
+  const value = resolveTranslationTemplate(key);
+  if (value === null) return key;
   return formatShortcutModifiers(
     value.replace(/\{(\w+)\}/g, (match, name) => (variables[name] === undefined ? match : String(variables[name])))
   );

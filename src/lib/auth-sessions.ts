@@ -90,26 +90,9 @@ export async function ensureAuthSessionForRequest(
   const ipAddress = getClientIpAddress(req);
   const parsed = parseUserAgent(req.header("user-agent"));
 
-  await client.execute(
-    `INSERT IGNORE INTO user_auth_sessions
-       (id, user_id, auth_version, ip_address, browser_name, browser_version, os_name, device_type, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      sessionId,
-      payload.sub,
-      payload.authVersion,
-      ipAddress,
-      parsed.browserName,
-      parsed.browserVersion,
-      parsed.osName,
-      parsed.deviceType,
-      issuedAt,
-      expiresAt
-    ]
-  );
-
-  const active = await client.queryOne<{ id: string }>(
-    `SELECT id
+  const findActiveSession = () => client.queryOne<{ id: string; needs_touch?: unknown }>(
+    `SELECT id,
+            (last_seen_at < DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 5 MINUTE)) AS needs_touch
      FROM user_auth_sessions
      WHERE id = ?
        AND user_id = ?
@@ -118,11 +101,43 @@ export async function ensureAuthSessionForRequest(
        AND expires_at > CURRENT_TIMESTAMP(3)`,
     [sessionId, payload.sub, payload.authVersion]
   );
+
+  // Every authenticated request lands here. The session row almost always
+  // exists already, so read it first and only fall back to INSERT IGNORE (a
+  // no-op for an existing id, revoked or not) when it is missing. The outcome
+  // for missing, revoked, expired and foreign rows is unchanged.
+  let active = await findActiveSession();
+  if (!active) {
+    await client.execute(
+      `INSERT IGNORE INTO user_auth_sessions
+         (id, user_id, auth_version, ip_address, browser_name, browser_version, os_name, device_type, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sessionId,
+        payload.sub,
+        payload.authVersion,
+        ipAddress,
+        parsed.browserName,
+        parsed.browserVersion,
+        parsed.osName,
+        parsed.deviceType,
+        issuedAt,
+        expiresAt
+      ]
+    );
+    active = await findActiveSession();
+  }
   if (!active) {
     throw new ApiError(401, "SESSION_REVOKED", "This authentication session is no longer valid");
   }
 
   // Avoid a write on every request while keeping the device list reasonably fresh.
+  // The database clock decided above whether the row is stale; only an explicit
+  // "not stale" answer skips the guarded UPDATE, which keeps its own condition.
+  const needsTouch = active.needs_touch;
+  if (needsTouch === 0 || needsTouch === 0n || needsTouch === false || needsTouch === "0") {
+    return sessionId;
+  }
   await client.execute(
     `UPDATE user_auth_sessions
      SET last_seen_at = CURRENT_TIMESTAMP(3),
