@@ -1261,6 +1261,13 @@ let statusRemainingDelay = null;
 let statusDismissPaused = false;
 // An undo offer must not be silently replaced by a routine notice.
 let statusActionVisible = false;
+// The offer on screen ({ text, action }), so an error can set it aside and
+// bring it back once the error is dismissed instead of discarding it.
+let statusVisibleOffer = null;
+let statusParkedOffer = null;
+// The latest routine notice that arrived while an offer was showing. It is
+// shown when the offer closes rather than being dropped unseen.
+let statusDeferredNotice = null;
 // Long enough to read a sentence, and paused while the pointer or keyboard
 // focus is on the toast. Errors stay until dismissed or replaced (WCAG 2.2.1).
 // Unsent comment text is kept per page for this signed-in session, so moving
@@ -1991,8 +1998,52 @@ function clearStatus() {
   // An emptied toast has no box, so a pending pointerleave may never arrive.
   statusDismissPaused = false;
   statusActionVisible = false;
+  statusVisibleOffer = null;
   elements.status.replaceChildren();
   elements.status.classList.remove("error");
+}
+
+function captureStatusScope() {
+  return { authenticated: state.authenticated, generation: authenticationSessionGeneration };
+}
+
+function isCurrentStatusScope(scope) {
+  return Boolean(scope)
+    && scope.authenticated === state.authenticated
+    && scope.generation === authenticationSessionGeneration;
+}
+
+function getVisibleStatusOfferRemainingDelay() {
+  if (statusDismissDeadline !== null) return Math.max(0, statusDismissDeadline - Date.now());
+  // Paused (pointer or focus on the toast), or an offer that never times out.
+  return statusRemainingDelay;
+}
+
+// Closes the toast the way a person or its timer does, then shows what was
+// waiting behind it: an offer an error had set aside, or a routine notice
+// that arrived while an offer was on screen.
+function dismissStatus() {
+  const wasError = elements.status.classList.contains("error");
+  const wasOffer = statusActionVisible;
+  const hadFocus = elements.status.contains(document.activeElement);
+  clearStatus();
+  if (wasError && statusParkedOffer) {
+    const parked = statusParkedOffer;
+    statusParkedOffer = null;
+    if (isCurrentStatusScope(parked.scope)) {
+      // Leave time to reach the button after reading the error.
+      const delay = parked.remainingDelay === null ? 0 : Math.max(parked.remainingDelay, 4000);
+      setStatus(parked.text, false, { dismissAfter: delay, action: parked.action });
+      // The dismiss button that had focus is gone; keep focus in the toast.
+      if (hadFocus) elements.status.querySelector(".status-action")?.focus();
+      return;
+    }
+  }
+  if ((wasOffer || wasError) && statusDeferredNotice) {
+    const notice = statusDeferredNotice;
+    statusDeferredNotice = null;
+    if (isCurrentStatusScope(notice.scope)) setStatus(notice.text, false, { dismissAfter: notice.dismissAfter });
+  }
 }
 
 function scheduleStatusDismiss(delay) {
@@ -2002,7 +2053,7 @@ function scheduleStatusDismiss(delay) {
   statusRemainingDelay = Number.isFinite(delay) && delay > 0 ? delay : null;
   if (statusRemainingDelay === null || statusDismissPaused) return;
   statusDismissDeadline = Date.now() + delay;
-  statusClearTimer = window.setTimeout(clearStatus, delay);
+  statusClearTimer = window.setTimeout(dismissStatus, delay);
 }
 
 function pauseStatusDismiss() {
@@ -2025,24 +2076,45 @@ function resumeStatusDismiss() {
 // Navigation success is already visible on screen, so it is not announced;
 // only a pending progress notice such as "Loading…" is cleared.
 function clearStatusIfShowing(message) {
+  const text = String(message ?? "").trim();
+  // A notice that is waiting, not showing, is just as stale.
+  if (statusParkedOffer?.text === text) statusParkedOffer = null;
+  if (statusDeferredNotice?.text === text) statusDeferredNotice = null;
   const current = elements.status.querySelector(".status-message")?.textContent ?? "";
-  if (current && current === String(message ?? "").trim()) clearStatus();
+  if (current && current === text) dismissStatus();
 }
 
 function setStatus(message, isError = false, { dismissAfter, action } = {}) {
   const text = String(message ?? "").trim();
   const hasAction = Boolean(action?.label) && typeof action.onSelect === "function";
-  // Routine notices wait behind an open undo offer; errors and new offers win.
-  if (statusActionVisible && text && !isError && !hasAction) return;
+  // Routine notices wait behind an open undo offer (or the error covering
+  // one) and appear once it closes.
+  if ((statusActionVisible || statusParkedOffer) && text && !isError && !hasAction) {
+    statusDeferredNotice = { text, dismissAfter, scope: captureStatusScope() };
+    return;
+  }
+  if (!text) {
+    window.clearTimeout(statusClearTimer);
+    statusClearTimer = null;
+    dismissStatus();
+    return;
+  }
+  // An error takes the toast, but the offer it covers comes back afterwards.
+  if (statusActionVisible && text && isError && statusVisibleOffer) {
+    statusParkedOffer = {
+      ...statusVisibleOffer,
+      remainingDelay: getVisibleStatusOfferRemainingDelay(),
+      scope: captureStatusScope()
+    };
+  } else if (hasAction) {
+    // A newer offer replaces any older one that was set aside.
+    statusParkedOffer = null;
+  }
 
   window.clearTimeout(statusClearTimer);
   statusClearTimer = null;
 
-  elements.status.classList.toggle("error", isError && Boolean(text));
-  if (!text) {
-    clearStatus();
-    return;
-  }
+  elements.status.classList.toggle("error", isError);
   // Errors interrupt assistive technology; routine notices wait their turn.
   // The politeness is set before the content changes so it applies to this message.
   elements.status.setAttribute("role", isError ? "alert" : "status");
@@ -2060,6 +2132,9 @@ function setStatus(message, isError = false, { dismissAfter, action } = {}) {
     actionButton.textContent = action.label;
     actionButton.addEventListener("click", () => {
       clearStatus();
+      // Whatever the action does reports its own outcome; an older notice
+      // shown after it would be out of date.
+      statusDeferredNotice = null;
       action.onSelect();
     }, { once: true });
     children.push(actionButton);
@@ -2071,10 +2146,11 @@ function setStatus(message, isError = false, { dismissAfter, action } = {}) {
   dismissButton.setAttribute("aria-label", t("status.dismiss"));
   dismissButton.title = t("status.dismiss");
   setUiIcon(dismissButton, "close");
-  dismissButton.addEventListener("click", clearStatus, { once: true });
+  dismissButton.addEventListener("click", dismissStatus, { once: true });
   children.push(dismissButton);
   elements.status.replaceChildren(...children);
   statusActionVisible = hasAction;
+  statusVisibleOffer = hasAction ? { text, action } : null;
 
   const delay = dismissAfter ?? (
     isError ? statusErrorDismissDelay : hasAction ? statusActionDismissDelay : statusDismissDelay
@@ -16520,6 +16596,15 @@ function mountBlockEditor(row, block) {
                 : block.type === "AI_CHAT"
                   ? createAiChatEditor(row, getBlockAiChatData(block), {
                       onDirty: () => scheduleBlockSave(row),
+                      onTurnRemoved: ({ restore }) => setStatus(t("aiChat.turnRemoved"), false, {
+                        action: {
+                          label: t("status.undo"),
+                          onSelect: () => {
+                            if (!requireWritablePage()) return;
+                            restore();
+                          }
+                        }
+                      }),
                       htmlCache: block.htmlCache ?? ""
                     })
                   : block.type === "VIDEO"

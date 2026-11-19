@@ -81,6 +81,7 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--bg);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -258,6 +259,7 @@ select:focus-visible {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -266,6 +268,7 @@ select:focus-visible {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   border-right: 1px solid rgba(169, 120, 37, 0.15);
   background: var(--sidebar);
@@ -279,6 +282,7 @@ select:focus-visible {
   --main-inline-padding: clamp(1.5rem, 5.2vw, 6.5rem);
   min-width: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: clip;
   background: linear-gradient(180deg, rgba(250, 243, 236, 0.5) 0, rgba(255, 255, 255, 0.92) 18rem, #ffffff 30rem);
   padding: 0 var(--main-inline-padding) 5rem;
@@ -3468,6 +3472,7 @@ body.is-kanban-column-dragging {
   display: grid;
   width: 14.6rem;
   max-height: calc(100vh - 1rem);
+  max-height: calc(100dvh - 1rem);
   overflow-y: auto;
   gap: 0.55rem;
   border: 1px solid var(--line-strong);
@@ -3888,6 +3893,7 @@ body.is-kanban-column-dragging {
 .page-version-history-dialog {
   width: min(68rem, calc(100vw - 2rem));
   height: min(48rem, calc(100vh - 2rem));
+  height: min(48rem, calc(100dvh - 2rem));
   max-width: none;
   max-height: none;
   margin: auto;
@@ -4367,6 +4373,7 @@ body.is-kanban-column-dragging {
   .page-version-history-dialog {
     width: calc(100vw - 1rem);
     height: calc(100vh - 1rem);
+    height: calc(100dvh - 1rem);
     border-radius: var(--radius-dialog);
   }
 
@@ -4764,6 +4771,7 @@ body.is-kanban-column-dragging {
 .block-move-dialog {
   width: min(34rem, calc(100vw - 2rem));
   max-height: min(40rem, calc(100vh - 2rem));
+  max-height: min(40rem, calc(100dvh - 2rem));
   overflow: auto;
   border: 0;
   border-radius: var(--radius-dialog);
@@ -4956,6 +4964,7 @@ html[data-theme="dark"] .block-move-dialog {
 .app-dialog {
   width: min(28rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   overflow: auto;
   border: 0;
   border-radius: var(--radius-dialog);
@@ -5088,6 +5097,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   z-index: 60;
   width: min(20rem, calc(100vw - 2rem));
   max-height: min(24rem, calc(100vh - 2rem));
+  max-height: min(24rem, calc(100dvh - 2rem));
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -6829,6 +6839,7 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
   right: 0;
   width: min(38rem, calc(100vw - 2.25rem));
   max-height: min(29rem, calc(100vh - 8rem));
+  max-height: min(29rem, calc(100dvh - 8rem));
   overflow: auto;
   border: 1px solid var(--database-line-strong);
   border-radius: var(--radius-md);
@@ -10147,6 +10158,7 @@ body.search-dialog-open {
   grid-template-rows: auto minmax(0, 1fr);
   width: min(27rem, calc(100vw - 1.5rem));
   height: min(35rem, calc(100vh - 1.5rem));
+  height: min(35rem, calc(100dvh - 1.5rem));
   overflow: hidden;
   border: 1px solid rgba(153, 111, 43, 0.2);
   border-radius: var(--radius-dialog);
@@ -10468,11 +10480,12 @@ body.search-dialog-open {
   margin: 0;
   border-bottom: 1px solid var(--line);
   padding: 0.05rem 0.8rem 0.55rem;
-  scrollbar-width: none;
+  /* A visible (thin) scrollbar tells mouse users more categories are off to the side. */
+  scrollbar-width: thin;
 }
 
 .emoji-category-list::-webkit-scrollbar {
-  display: none;
+  height: 6px;
 }
 
 .emoji-category-button {
@@ -10814,6 +10827,7 @@ body.search-dialog-open {
     bottom: 0.5rem;
     width: auto;
     height: min(37rem, calc(100vh - 1rem));
+    height: min(37rem, calc(100dvh - 1rem));
     border-radius: var(--radius-lg);
     transform: none;
   }
@@ -17338,6 +17352,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
 .page-cover-dialog {
   width: min(58rem, calc(100vw - 2rem));
   max-height: min(48rem, calc(100vh - 2rem));
+  max-height: min(48rem, calc(100dvh - 2rem));
   overflow: auto;
   border: 0;
   border-radius: var(--radius-dialog);

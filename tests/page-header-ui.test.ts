@@ -51,10 +51,23 @@ describe("Page view header and actions menu", () => {
 
   it("auto-dismisses page-open status messages and keeps the toast out of the header area", () => {
     expect(client).toContain("let statusClearTimer = null");
-    expect(client).toContain("statusClearTimer = window.setTimeout(clearStatus, delay)");
+    expect(client).toContain("statusClearTimer = window.setTimeout(dismissStatus, delay)");
     expect(client).toContain("const statusDismissDelay = 4000");
     expect(styles).toMatch(/\.status\s*\{[\s\S]*?bottom:\s*max\(1rem, env\(safe-area-inset-bottom\)\);/);
     expect(styles).not.toMatch(/\.status\s*\{[\s\S]*?top:\s*0\.85rem;/);
+  });
+
+  it("brings an undo offer back after an error covers it and keeps notices that arrive meanwhile", () => {
+    // An error parks the visible offer instead of discarding it.
+    expect(client).toMatch(/if \(statusActionVisible && text && isError && statusVisibleOffer\) \{\s*statusParkedOffer = \{/);
+    // Dismissing the error (button, timer or a cleared message) restores it.
+    expect(client).toContain('dismissButton.addEventListener("click", dismissStatus, { once: true });');
+    expect(client).toMatch(/if \(wasError && statusParkedOffer\) \{[\s\S]*?setStatus\(parked\.text, false, \{ dismissAfter: delay, action: parked\.action \}\);/);
+    // Only within the same signed-in session.
+    expect(client).toContain("if (isCurrentStatusScope(parked.scope))");
+    // Routine notices wait behind an offer and are shown afterwards, not dropped.
+    expect(client).toMatch(/if \(\(statusActionVisible \|\| statusParkedOffer\) && text && !isError && !hasAction\) \{\s*statusDeferredNotice = /);
+    expect(client).not.toContain("if (statusActionVisible && text && !isError && !hasAction) return;");
   });
 
   it("includes Korean labels for the new page header controls", () => {

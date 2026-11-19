@@ -1821,7 +1821,12 @@ function syncTurnControls(editor) {
   syncEditorPagination(editor);
 }
 
-function createTurnEditor(editor, row, turnData, { onDirty } = {}) {
+function turnHasContent(turn) {
+  return [".ai-chat-question-input", ".ai-chat-answer-input"]
+    .some((selector) => (turn.querySelector(selector)?.value ?? "").trim() !== "");
+}
+
+function createTurnEditor(editor, row, turnData, { onDirty, onTurnRemoved } = {}) {
   const turn = document.createElement("section");
   turn.className = "ai-chat-turn";
 
@@ -1835,10 +1840,39 @@ function createTurnEditor(editor, row, turnData, { onDirty } = {}) {
   removeButton.dataset.action = "remove-ai-chat-turn";
   setUiIcon(removeButton, "close");
   removeButton.addEventListener("click", () => {
-    if (editor.querySelectorAll(".ai-chat-turn").length <= 1) return;
+    const conversation = turn.parentElement;
+    const turns = [...editor.querySelectorAll(".ai-chat-turn")];
+    if (turns.length <= 1 || !conversation) return;
+    const index = turns.indexOf(turn);
+    const hadContent = turnHasContent(turn);
     turn.remove();
     syncTurnControls(editor);
+    syncEditorPreview(editor);
     onDirty?.(row);
+    // The pressed button left the page with its turn. Move focus to the turn
+    // that took its place (or the one before it) rather than dropping it on
+    // the page body, and not onto another remove button a repeated key could hit.
+    const remaining = [...editor.querySelectorAll(".ai-chat-turn")];
+    const neighbor = remaining[Math.min(index, remaining.length - 1)];
+    (neighbor?.querySelector(".ai-chat-question-input") ?? editor.querySelector(".ai-chat-add-turn"))
+      ?.focus({ preventScroll: true });
+    // Other structured blocks ask before removing an item; here the removal
+    // is offered back instead, since a question and answer is quick to lose.
+    if (!hadContent) return;
+    onTurnRemoved?.({
+      restore() {
+        if (!editor.isConnected || turn.isConnected || !conversation.isConnected) return false;
+        const current = conversation.querySelectorAll(".ai-chat-turn");
+        if (current.length >= aiChatLimits.turns) return false;
+        conversation.insertBefore(turn, current[index] ?? null);
+        editor.dataset.aiPage = String(index);
+        syncTurnControls(editor);
+        syncEditorPreview(editor);
+        onDirty?.(row);
+        turn.querySelector(".ai-chat-question-input")?.focus({ preventScroll: true });
+        return true;
+      }
+    });
   });
   turnHeader.append(turnLabel, removeButton);
 
@@ -1918,7 +1952,7 @@ function createTurnEditor(editor, row, turnData, { onDirty } = {}) {
   return turn;
 }
 
-export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {}) {
+export function createAiChatEditor(row, value, { onDirty, onTurnRemoved, htmlCache = "" } = {}) {
   const data = normalizeAiChatData(value);
   const editor = document.createElement("section");
   editor.className = "ai-chat-block-editor";
@@ -2039,7 +2073,7 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
   const conversation = document.createElement("div");
   conversation.className = "ai-chat-conversation";
   data.turns.forEach((turnData) => {
-    conversation.append(createTurnEditor(editor, row, turnData, { onDirty }));
+    conversation.append(createTurnEditor(editor, row, turnData, { onDirty, onTurnRemoved }));
   });
   conversationViewport.append(conversation);
 
@@ -2065,7 +2099,7 @@ export function createAiChatEditor(row, value, { onDirty, htmlCache = "" } = {})
     if (conversation.querySelectorAll(".ai-chat-turn").length >= aiChatLimits.turns) return;
     const firstTurnTimeInput = conversation.querySelector(".ai-chat-turn .ai-chat-time-input");
     const inheritedAnsweredAt = firstTurnTimeInput?.value ?? "";
-    const turn = createTurnEditor(editor, row, createAiChatFollowUpTurnData(inheritedAnsweredAt), { onDirty });
+    const turn = createTurnEditor(editor, row, createAiChatFollowUpTurnData(inheritedAnsweredAt), { onDirty, onTurnRemoved });
     conversation.append(turn);
     editor.dataset.aiPage = String(conversation.querySelectorAll(".ai-chat-turn").length - 1);
     syncTurnControls(editor);

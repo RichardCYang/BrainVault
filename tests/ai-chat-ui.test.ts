@@ -664,4 +664,14 @@ describe("AI conversation block", () => {
     expect(i18n).toContain('addTurn: "+ 다음 질문·답변 추가"');
     expect(i18n).toContain('answerPlaceholder: "AI 답변을 붙여넣거나 입력하세요…"');
   });
+
+  it("offers an undo for a removed turn with content and keeps keyboard focus in the block", () => {
+    expect(moduleSource).toContain("const hadContent = turnHasContent(turn);");
+    expect(moduleSource).toMatch(/neighbor\?\.querySelector\("\.ai-chat-question-input"\) \?\? editor\.querySelector\("\.ai-chat-add-turn"\)/);
+    expect(moduleSource).toMatch(/onTurnRemoved\?\.\(\{\s*restore\(\) \{/);
+    expect(moduleSource).toContain("conversation.insertBefore(turn, current[index] ?? null);");
+    expect(client).toMatch(/onTurnRemoved: \(\{ restore \}\) => setStatus\(t\("aiChat\.turnRemoved"\)/);
+    expect(i18n).toContain('turnRemoved: "질문·답변 쌍을 삭제했습니다."');
+    expect(i18n).toContain('turnRemoved: "Question and answer pair removed."');
+  });
 });
