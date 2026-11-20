@@ -20,10 +20,12 @@ import {
   restoreSafetySnapshotSkipHeader,
   wantsRestoreWithoutSafetySnapshot
 } from "../lib/workspace-snapshots.js";
+import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
+import { transaction } from "../lib/db.js";
 import { createId } from "../lib/id.js";
 import { ApiError } from "../lib/http.js";
 import { toPublicUser } from "../lib/mappers.js";
-import { requireAuth, requireRequestAuthScope, requireSameOriginCookieRequest } from "../middleware/auth.js";
+import { requireRecentAuthentication, requireAuth, requireRequestAuthScope, requireSameOriginCookieRequest } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
   finishDataExportProcessing,
@@ -100,6 +102,7 @@ async function admitBackupRestore(req: Request, _res: Response, next: NextFuncti
 
 dataRouter.get(
   "/export",
+  requireRecentAuthentication,
   requireSameOriginCookieRequest,
   dataExportRateLimit,
   dataExportConcurrencyLimit,
@@ -110,6 +113,7 @@ dataRouter.get(
   exportDeadline.unref?.();
   try {
     const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
     const plan = await prepareUserDataBackup(user.id);
     if (res.destroyed) {
       await rm(plan.operationRoot, { recursive: true, force: true });
@@ -119,19 +123,31 @@ dataRouter.get(
     const safeUsername = plan.account.username.replace(/[^a-zA-Z0-9._-]/g, "_");
     const filename = `BrainVault-${safeUsername}-${date}.zip`;
 
-    res.status(200);
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Content-Length", plan.archiveSize.toString());
-    res.setHeader("Cache-Control", "private, no-store, no-transform");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    // Oldest version history entries left out so the backup fits its limits
-    // (current content is always complete); the browser tells the person.
-    if (plan.historyEntriesOmitted > 0) {
-      res.setHeader("X-Backup-History-Entries-Omitted", String(plan.historyEntriesOmitted));
-    }
-    res.strictContentLength = true;
-    await writeUserDataBackup(plan, res);
+    let nextCheck = 0;
+    let remainingBytes = 0;
+    await writeUserDataBackup(plan, res, async (bytes) => {
+      if (res.destroyed) throw new Error("Export connection closed");
+      if (remainingBytes < bytes || performance.now() >= nextCheck) {
+        await transaction((client) => assertCurrentAuthSessionBoundary(user.id, authScope, client));
+        if (!res.headersSent && nextCheck === 0) {
+          res.status(200);
+          res.setHeader("Content-Type", "application/zip");
+          res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+          res.setHeader("Content-Length", plan.archiveSize.toString());
+          res.setHeader("Cache-Control", "private, no-store, no-transform");
+          res.setHeader("X-Content-Type-Options", "nosniff");
+          // Oldest version history entries left out so the backup fits its limits
+          // (current content is always complete); the browser tells the person.
+          if (plan.historyEntriesOmitted > 0) {
+            res.setHeader("X-Backup-History-Entries-Omitted", String(plan.historyEntriesOmitted));
+          }
+          res.strictContentLength = true;
+        }
+        nextCheck = performance.now() + 1000;
+        remainingBytes = 1024 * 1024;
+      }
+      remainingBytes -= bytes;
+    });
     res.end();
   } catch (error) {
     if (res.headersSent) {
@@ -148,6 +164,7 @@ dataRouter.get(
 
 dataRouter.post(
   "/import",
+  requireRecentAuthentication,
   dataImportRateLimit,
   enforceBackupUploadRequestSize,
   dataImportConcurrencyLimit,

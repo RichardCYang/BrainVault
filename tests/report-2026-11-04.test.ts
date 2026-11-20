@@ -27,7 +27,7 @@ vi.mock("../src/lib/auth-sessions.js", () => ({ assertCurrentAuthSession: databa
 
 import { ApiError } from "../src/lib/http.js";
 import { errorHandler } from "../src/middleware/error.js";
-import { parseBackupManifest, readUserDataBackupManifest, importUserDataBackup } from "../src/lib/data-transfer.js";
+import { parseBackupManifest, readUserDataBackupManifest, importUserDataBackup, prepareUserDataBackup, writeUserDataBackup } from "../src/lib/data-transfer.js";
 import { deleteWorkspaceSnapshot } from "../src/lib/workspace-snapshots.js";
 import { attachmentUploadRoot, getAttachmentFilePath, moveAttachmentFile } from "../src/lib/attachments.js";
 import { syncPath } from "../src/lib/storage-sync.js";
@@ -66,18 +66,65 @@ beforeEach(() => {
   database.auth.mockReset();
 });
 
-async function zipManifest(value: unknown) {
+async function zipManifest(value: unknown, sections: Record<string, unknown> = {}) {
   const directory = await temporaryDirectory();
   const zipPath = path.join(directory, "backup.zip");
   const data = Buffer.from(JSON.stringify(value));
   const output = createWriteStream(zipPath);
   const writer = new ZipWriter(output);
   await writer.add({ name: "brainvault-backup.json", size: BigInt(data.length), crc32: crc32(data), source: { kind: "buffer", data } });
+  for (const [name, rows] of Object.entries(sections)) {
+    const data = Buffer.from(JSON.stringify(rows));
+    await writer.add({ name, size: BigInt(data.length), crc32: crc32(data), source: { kind: "buffer", data } });
+  }
   await writer.finalize();
   output.end();
   await once(output, "finish");
   return zipPath;
 }
+
+describe("extended sharing and tag shards", () => {
+  const path = "data-shards/tags/000001.json";
+  const tag = { id: "tag_example", name: "example", created_at: "2026-11-01 10:00:00.000000" };
+  it("round-trips a workspace exceeding the old tag export ceiling through the ZIP writer and reader", async () => {
+    const account = { ...manifest().account, ...manifest().source, id: "usr_report", default_page_mode: "read" };
+    const tags = Array.from({ length: 20_001 }, (_, index) => ({ ...tag, id: "tag_" + index, name: "Name " + index }));
+    database.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes("attachment_generation") ? { attachment_generation: 1 } : account);
+    database.query.mockImplementation(async (sql: string) => sql.includes("FROM tags t") ? tags : []);
+    try {
+      const directory = await temporaryDirectory();
+      const zipPath = directory + "/tags.zip";
+      const plan = await prepareUserDataBackup(account.id);
+      const output = createWriteStream(zipPath);
+      try {
+        await writeUserDataBackup(plan, output);
+        output.end();
+        await once(output, "finish");
+      } finally { output.destroy(); }
+      const restored = await readUserDataBackupManifest(zipPath);
+      expect(restored.version).toBe(8);
+      expect(restored.data.tags).toEqual(tags);
+    } finally { database.query.mockReset(); }
+  });
+  it("loads v8 tag rows and preserves v7 inline tags", async () => {
+    const extended = { ...manifest(8), shards: [{ section: "tags", path, rows: 1 }] };
+    const restored = await readUserDataBackupManifest(await zipManifest(extended, { [path]: [tag] }));
+    expect(restored.data.tags).toEqual([tag]);
+    const legacy = manifest(7);
+    const inline = { ...legacy, data: { ...legacy.data, tags: [tag] }, shards: [] };
+    expect((await readUserDataBackupManifest(await zipManifest(inline))).data.tags).toEqual([tag]);
+    expect(() => parseBackupManifest({ ...extended, version: 7 })).toThrow();
+  });
+
+  it("requires a stable collaborator ID on every sharded page grant", async () => {
+    const path = "data-shards/pageShares/000001.json";
+    const value = { ...manifest(8), shards: [{ section: "pageShares", path, rows: 1 }] };
+    const row = { page_id: "pag_example", permission: "EDIT", shared_username: "reader", created_at: tag.created_at };
+    await expect(readUserDataBackupManifest(await zipManifest(value, { [path]: [row] })))
+      .rejects.toThrow("data-shards/pageShares/000001.json is invalid");
+  });
+});
 
 describe("BV-2026-01 backup validation", () => {
   it.each([1, 2, 3, 4, 5, 6])("preserves supported backup version %i", async (version) => {

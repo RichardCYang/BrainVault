@@ -12,7 +12,7 @@ import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
 import { isCurrentAiChatHtmlCache } from "../lib/ai-chat-cache.js";
-import { admitPageProjection, assertPagesFitSharedDocument, assertStoredPageResourceBudget, assertPageResponseBudget, assertPageRenderBudget } from "../lib/page-resource-limits.js";
+import { mapPageBlocks, admitPageProjection, assertPagesFitSharedDocument, assertStoredPageResourceBudget, assertPageResponseBudget, assertPageRenderBudget } from "../lib/page-resource-limits.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
@@ -71,7 +71,7 @@ import {
   toPageVersionActor,
   type PageVersionRow
 } from "../lib/page-version-history.js";
-import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
+import { requireRecentAuthentication, requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import { getValidatedQuery, validate } from "../middleware/validate.js";
 import { buildBlockTree } from "../utils/blockTree.js";
 import { displayLabelSchema, idParamSchema, requireUser, routeIdSchema, safeVersionSchema } from "../utils/schemas.js";
@@ -1829,6 +1829,7 @@ pageRouter.get(
 
 pageRouter.delete(
   "/:pageId/versions",
+  requireRecentAuthentication,
   validate({ params: idParamSchema, body: pageVersionResetSchema }),
   async (req, res, next) => {
     try {
@@ -1844,8 +1845,7 @@ pageRouter.delete(
         expectedRevision
       });
       const reset = await transaction(async (client) => {
-        // Workspace export/restore and attachment cleanup lock the owner before pages.
-        // Keep the same order before inserting the owner-referencing receipt.
+        // Match the owner-before-page lock order used by restores and attachment cleanup.
         const lockedOwner = await client.queryOne<{ id: string }>(
           "SELECT id FROM users WHERE id = ? FOR UPDATE",
           [user.id]
@@ -2010,6 +2010,7 @@ pageRouter.get(
 
 pageRouter.get(
   "/:pageId/deletion-snapshot",
+  admitPageProjection,
   validate({ params: idParamSchema }),
   async (req, res, next) => {
     try {
@@ -2403,6 +2404,8 @@ pageRouter.patch("/:pageId", admitPageProjection, validate({ params: idParamSche
 pageRouter.delete(
   "/:pageId",
   validate({ params: idParamSchema, query: deletePageQuerySchema, body: deletePageBodySchema }),
+  (req, res, next) => getValidatedQuery<z.infer<typeof deletePageQuerySchema>>(req).permanent
+    ? requireRecentAuthentication(req, res, next) : next(),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
@@ -2854,21 +2857,20 @@ pageRouter.get("/:pageId/render", admitPageProjection, validate({ params: idPara
       );
 
       let renderedBytes = 0;
-      return rows
-        .map((block) => {
-          // AI chat citation rendering is version-sensitive. Only use html_cache
-          // when it bears the current renderer marker; legacy caches regenerate
-          // safely under the AI rendering budget, while current ones are reused
-          // after their type-scoped sanitizer is reapplied at the read boundary.
-          const blockHtml = block.type === "CALLOUT" || (block.type === "AI_CHAT" && !isCurrentAiChatHtmlCache(block.html_cache)) || block.html_cache === null
-            ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
-            : sanitizeRenderedBlockHtml(block.type, block.html_cache);
-          const section = `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;
-          renderedBytes += Buffer.byteLength(section, "utf8") + 1;
-          assertPageRenderBudget(renderedBytes);
-          return section;
-        })
-        .join("\n");
+      const sections = await mapPageBlocks(rows, (block) => {
+        // AI chat citation rendering is version-sensitive. Only use html_cache
+        // when it bears the current renderer marker; legacy caches regenerate
+        // safely under the AI rendering budget, while current ones are reused
+        // after their type-scoped sanitizer is reapplied at the read boundary.
+        const blockHtml = block.type === "CALLOUT" || (block.type === "AI_CHAT" && !isCurrentAiChatHtmlCache(block.html_cache)) || block.html_cache === null
+          ? renderBlockHtml(block.type, block.markdown, Boolean(block.checked), block.metadata)
+          : sanitizeRenderedBlockHtml(block.type, block.html_cache);
+        const section = `<section data-block-id="${escapeHtmlAttribute(block.id)}" data-block-type="${escapeHtmlAttribute(block.type)}">${blockHtml}</section>`;
+        renderedBytes += Buffer.byteLength(section, "utf8") + 1;
+        assertPageRenderBudget(renderedBytes);
+        return section;
+      });
+      return sections.join("\n");
     });
 
     res.setHeader("Cache-Control", "private, no-store");

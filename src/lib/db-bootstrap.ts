@@ -43,7 +43,7 @@ async function ensureDatabase() {
           `ALTER USER ${account} IDENTIFIED BY ${quoteString(target.password)}`
         );
         await bootstrapPool.query(
-          `GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES ` +
+          `GRANT SELECT, INSERT, UPDATE, DELETE ` +
           `ON ${quoteIdentifier(target.database!)}.* TO ${account}`
         );
       }

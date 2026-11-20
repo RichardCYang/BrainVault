@@ -248,6 +248,8 @@ export async function ensureAttachmentDirectories() {
   await mkdir(attachmentTempDir, { recursive: true });
 }
 
+export const activeAttachmentTempNames = new Set<string>();
+
 export async function cleanupStaleAttachmentTempFiles(nowMs = Date.now()) {
   await ensureAttachmentDirectories();
   let removed = 0;
@@ -256,6 +258,7 @@ export async function cleanupStaleAttachmentTempFiles(nowMs = Date.now()) {
     const filePath = path.join(attachmentTempDir, entry.name);
     const info = await lstat(filePath).catch(() => null);
     if (!info || nowMs - info.mtimeMs < env.ATTACHMENT_TEMP_MAX_AGE_MS) continue;
+    if (activeAttachmentTempNames.has(entry.name)) continue;
     await rm(filePath, { force: true });
     removed += 1;
   }

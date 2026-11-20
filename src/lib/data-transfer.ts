@@ -130,9 +130,11 @@ const iconPublicationBackupVersion = 6;
 const shardedBackupVersion = 7;
 const backupVersion = shardedBackupVersion;
 const maxManifestBytes = env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024;
-const shardedSections = ["blocks", "pageTags", "pageComments", "pageVersions", "customIconPublications"] as const;
+const baseShardedSections = ["blocks", "pageTags", "pageComments", "pageVersions", "customIconPublications"] as const;
+const extendedShardVersion = 8;
+const shardedSections = [...baseShardedSections, "tags", "pageShares", "collectionShares"] as const;
 type ShardedSection = (typeof shardedSections)[number];
-const shardPathPattern = /^data-shards\/(blocks|pageTags|pageComments|pageVersions|customIconPublications)\/\d{6}\.json$/;
+const shardPathPattern = /^data-shards\/(blocks|pageTags|pageComments|pageVersions|customIconPublications|tags|pageShares|collectionShares)\/\d{6}\.json$/;
 
 /** Total backup JSON one export or restore may hold; see computeBackupDataBudgetBytes. */
 export function backupDataBudgetBytes() {
@@ -452,6 +454,9 @@ const shardSchema = z.object({
 }).strict();
 
 const shardRowSchemas = {
+  tags: tagSchema,
+  pageShares: pageShareSchema.required({ shared_user_id: true }),
+  collectionShares: collectionShareSchema.required({ updated_at: true }),
   blocks: blockSchema,
   pageTags: pageTagSchema,
   pageComments: pageCommentSchema,
@@ -468,7 +473,8 @@ const manifestSchema = z.object({
     z.literal(completeWorkspaceBackupVersion),
     z.literal(explicitWorkspaceBackupVersion),
     z.literal(iconPublicationBackupVersion),
-    z.literal(shardedBackupVersion)
+    z.literal(shardedBackupVersion),
+    z.literal(extendedShardVersion)
   ]),
   exportedAt: exportedAtTimestampSchema,
   source: z.object({ userId: idSchema, username: z.string().min(1).max(50) }).strict(),
@@ -534,21 +540,22 @@ const manifestSchema = z.object({
   };
   if (manifest.version >= shardedBackupVersion) {
     if (!manifest.shards) {
-      addIssue({ code: z.ZodIssueCode.custom, path: ["shards"], message: "Version 7 backups must declare their data shards" });
+      addIssue({ code: z.ZodIssueCode.custom, path: ["shards"], message: "Sharded backups must declare their data shards" });
     }
     // Sharded sections live only in their shards, never also in the manifest.
-    for (const section of shardedSections) {
+    const sections: readonly ShardedSection[] = manifest.version >= extendedShardVersion ? shardedSections : baseShardedSections;
+    for (const section of sections) {
       const rows = section === "customIconPublications" ? manifest.customIconPublications : manifest.data[section];
       if (rows && rows.length) {
         addIssue({
           code: z.ZodIssueCode.custom, path: ["data", section],
-          message: "Version 7 backups keep this section in shards"
+          message: "This section must be stored in shards"
         });
       }
     }
     const paths = new Set<string>();
     for (const shard of manifest.shards ?? []) {
-      if (paths.has(shard.path) || !shard.path.startsWith(`data-shards/${shard.section}/`)) {
+      if (!sections.includes(shard.section) || paths.has(shard.path) || !shard.path.startsWith(`data-shards/${shard.section}/`)) {
         addIssue({ code: z.ZodIssueCode.custom, path: ["shards"], message: "Shard paths must be unique and match their section" });
       }
       paths.add(shard.path);
@@ -782,7 +789,8 @@ async function loadBackupShards(
     throw dataRestoreMemoryBudgetError(requiredBytes, dataBudget);
   }
   let totalBytes = manifestBytes;
-  const collected = new Map<ShardedSection, ShardRows>(shardedSections.map((section) => [section, []]));
+  const sections = manifest.version >= extendedShardVersion ? shardedSections : baseShardedSections;
+  const collected = new Map<ShardedSection, ShardRows>(sections.map((section) => [section, []]));
   for (const shard of manifest.shards ?? []) {
     const entry = entryByName.get(shard.path);
     if (!entry) invalidBackup(`${shard.path} is missing`);
@@ -809,13 +817,19 @@ async function loadBackupShards(
 }
 
 /**
- * Splits a complete manifest into a version 7 root manifest and its shards.
+ * Splits a complete manifest into a compatible root manifest and its shards.
  * Rows keep their order; a shard holds whole rows up to the target size.
  */
 function shardBackupManifest(manifest: BrainVaultBackup) {
   const shards: Array<BackupShard & { buffer: Buffer }> = [];
-  const root: BrainVaultBackup = { ...manifest, data: { ...manifest.data }, version: shardedBackupVersion };
-  for (const section of shardedSections) {
+  // Use v7 wherever possible so older installations can still read ordinary exports.
+  const extended = manifest.data.tags.length > dataTransferResourceLimits.maxTags
+    || (manifest.data.pageShares?.length ?? 0) > dataTransferResourceLimits.maxPageShares
+    || (manifest.data.collectionShares?.length ?? 0) > dataTransferResourceLimits.maxPageShares;
+  const root: BrainVaultBackup = {
+    ...manifest, data: { ...manifest.data }, version: extended ? extendedShardVersion : shardedBackupVersion
+  };
+  for (const section of extended ? shardedSections : baseShardedSections) {
     const rows = getShardedSectionRows(manifest, section);
     let parts: string[] = [];
     let partBytes = 2;
@@ -2193,9 +2207,6 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
       });
       const attachmentBlocks = blocks.filter((item) => item.type === "ATTACHMENT");
       assertExportCount("pages", pages.length, dataTransferResourceLimits.maxPages);
-      assertExportCount("tags", tags.length, dataTransferResourceLimits.maxTags);
-      assertExportCount("page sharing grants", pageShares.length, dataTransferResourceLimits.maxPageShares);
-      assertExportCount("collection sharing grants", collectionShares.length, dataTransferResourceLimits.maxPageShares);
       assertExportCount("collapsed navigation pages", navigationCollapsedPageIds.length, dataTransferResourceLimits.maxPages);
       assertExportCount("ordered navigation pages", navigationPageOrder.length, dataTransferResourceLimits.maxPages);
       assertExportCount("attachments", attachmentBlocks.length, dataTransferResourceLimits.maxAttachments);
@@ -2618,12 +2629,13 @@ export async function prepareUserDataBackup(userId: string, options: BackupPrepa
 
 export async function writeUserDataBackup(
   plan: Awaited<ReturnType<typeof prepareUserDataBackup>>,
-  output: Writable
+  output: Writable,
+  checkDelivery?: (bytes: number) => Promise<void>
 ) {
   const { account, manifest, manifestBuffer, attachmentFiles, retainedAttachmentFiles, pageCoverFiles, customIconFiles } = plan;
   const shardFiles = plan.shardFiles ?? [];
   try {
-    const writer = new ZipWriter(output);
+    const writer = new ZipWriter(output, checkDelivery);
     await writer.add({
       name: manifestName,
       size: BigInt(manifestBuffer.length),

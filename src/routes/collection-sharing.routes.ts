@@ -15,7 +15,7 @@ import {
   collaborationShareAccountRateLimit,
   collaborationShareIpRateLimit
 } from "../middleware/auth-rate-limit.js";
-import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
+import { requireRecentAuthentication, requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { requireUser, routeIdSchema, usernameSchema } from "../utils/schemas.js";
 import { toPublicUserFanout } from "../lib/mappers.js";
@@ -560,6 +560,7 @@ collectionSharingRouter.get(
 
 collectionSharingRouter.post(
   "/collections/:collectionId/shares",
+  requireRecentAuthentication,
   collaborationShareAccountRateLimit,
   collaborationShareIpRateLimit,
   validate({ params: collectionIdParamsSchema, body: createCollectionShareSchema }),
@@ -712,6 +713,7 @@ collectionSharingRouter.post(
 
 collectionSharingRouter.patch(
   "/collections/:collectionId/shares/:userId",
+  requireRecentAuthentication,
   validate({ params: collectionShareParamsSchema, body: updateCollectionShareSchema }),
   async (req, res, next) => {
     try {

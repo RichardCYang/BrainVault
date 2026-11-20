@@ -219,6 +219,7 @@ function findChromium() {
   return null;
 }
 
+if (process.getuid?.() === 0) throw new Error("Run preview:capture as a non-root user with the Chromium sandbox enabled.");
 await mkdir(outputDirectory, { recursive: true });
 const chromiumPath = findChromium();
 if (!chromiumPath) {
@@ -341,7 +342,6 @@ try {
     `--user-data-dir=${browserProfilePath}`,
     "about:blank"
   ];
-  if (typeof process.getuid === "function" && process.getuid() === 0) args.unshift("--no-sandbox");
 
   browser = spawn(chromiumPath, args, { stdio: "ignore" });
   const browserExit = new Promise((resolve) => browser.once("exit", resolve));

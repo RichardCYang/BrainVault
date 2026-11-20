@@ -121,7 +121,8 @@ test("an ended session keeps unsent comments for the same account only", () => {
   const reset = functionSource(app, "resetAuthenticationSessionState", "setAccountMessage");
   assert.match(reset, /clearCommentDrafts = false/);
   assert.match(reset, /if \(clearCommentDrafts\) clearPageCommentDrafts\(\);\s*else retainPageCommentDraftsAcrossSignIn\(\);/);
-  assert.match(functionSource(app, "logout", "sortByRecent"), /resetAuthenticationSessionState\(\{ clearCommentDrafts: true \}\)/);
+  assert.match(functionSource(app, "logout", "sortByRecent"), /await finishExplicitLogout\(cleanup\)/);
+  assert.match(functionSource(app, "finishExplicitLogout", "logout"), /resetAuthenticationSessionState\(\{ clearCommentDrafts: true \}\)/);
   assert.match(functionSource(app, "completeAuthenticatedLogin", "logout"), /adoptPageCommentDraftsForUser\(data\.user\?\.id \?\? null\)/);
   const stash = functionSource(app, "stashPageCommentDraft", "clearPageCommentDrafts");
   assert.match(stash, /if \(pageCommentDraftOwnerId !== state\.user\.id\) \{\s*pageCommentDrafts\.clear\(\);/);

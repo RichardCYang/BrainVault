@@ -1,3 +1,4 @@
+import { env } from "../config/env.js";
 import { db, type DbClient } from "./db.js";
 import {
   isCountryPolicyLocalNetworkIp,
@@ -235,7 +236,7 @@ export async function checkCountryLoginAccess(
   // only the explicit local ranges used by a host/LAN, while keeping CGNAT,
   // link-local, documentation, reserved, malformed, and unknown addresses on
   // the normal fail-closed country-policy path.
-  if (isCountryPolicyLocalNetworkIp(resolution.ipAddress)) {
+  if (env.COUNTRY_POLICY_ALLOW_LOCAL_NETWORK && isCountryPolicyLocalNetworkIp(resolution.ipAddress)) {
     return {
       allowed: true,
       policy,
@@ -331,7 +332,7 @@ export async function assertPolicyAllowsCurrentLocation(
 ) {
   if (mode === "OFF") return resolveCountryLoginLocation(ipAddress);
   const resolution = await resolveCountryLoginLocation(ipAddress);
-  if (isCountryPolicyLocalNetworkIp(resolution.ipAddress)) return resolution;
+  if (env.COUNTRY_POLICY_ALLOW_LOCAL_NETWORK && isCountryPolicyLocalNetworkIp(resolution.ipAddress)) return resolution;
 
   const decision = evaluateResolvedCountryPolicy({ mode, countries: [...countries] }, resolution);
   if (!decision.allowed) {

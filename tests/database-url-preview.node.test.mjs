@@ -109,7 +109,7 @@ test("read mode swaps the URL input for a title/favicon link while write mode ke
 test("database favicon delivery is compatible with the existing restrictive image CSP", () => {
   assert.match(serverAppSource, /imgSrc:\s*\[[\s\S]*?"data:"/);
   assert.match(databaseClientSource, /databaseUrlPreviewFaviconDataPattern = \/\^data:image\\\//);
-  assert.match(bookmarkSource, /return mimeType \? `data:\$\{mimeType\};base64,/);
+  assert.match(bookmarkSource, /return `data:\$\{mimeType\};base64,/);
 });
 
 test("read mode reuses the existing secured bookmark preview API without changing save serialization", () => {

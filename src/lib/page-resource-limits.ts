@@ -137,6 +137,24 @@ export function assertPageRenderBudget(bytes: number) {
   }
 }
 
+// Share the event loop between block projections, including pages restored without HTML caches.
+export async function mapPageBlocks<T, R>(rows: readonly T[], project: (row: T) => R): Promise<R[]> {
+  const result: R[] = [];
+  let sliceStart = performance.now();
+  let cpuMs = 0;
+  for (const row of rows) {
+    result.push(project(row));
+    const elapsed = performance.now() - sliceStart;
+    if (elapsed >= 12) {
+      cpuMs += elapsed;
+      if (cpuMs > 15_000) throw new ApiError(413, "PAGE_RENDER_LIMIT_EXCEEDED", "Page rendering exceeded its processing budget.");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      sliceStart = performance.now();
+    }
+  }
+  return result;
+}
+
 // Retain admission through processing AND response delivery. An early socket
 // close must not admit more work while the abandoned request is still fetching
 // or rendering its page. All admitted routes finish with a JSON/error response.

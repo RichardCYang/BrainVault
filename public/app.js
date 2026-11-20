@@ -14,6 +14,7 @@ import {
   t
 } from "./i18n.js";
 import { ApiReadTimeoutError, fetchApiResponseText } from "./api-read-transport.js";
+import { schedulePreviewRender, waitForPreviewRendering } from "./preview-render-queue.js";
 import { renderServerBlockHtml } from "./rendered-html-sanitizer.js";
 import {
   codeLanguageOptions,
@@ -305,6 +306,7 @@ const accountSecurityOperationGuards = Object.freeze({
   countryPolicy: createAccountAvatarOperationGuard(),
   mfaStatus: createAccountAvatarOperationGuard(),
   password: createAccountAvatarOperationGuard(),
+  passwordUnlock: createAccountAvatarOperationGuard(),
   totpSetup: createAccountAvatarOperationGuard(),
   totpVerify: createAccountAvatarOperationGuard(),
   totpDisable: createAccountAvatarOperationGuard(),
@@ -315,6 +317,7 @@ let workspacePageListLoadGeneration = 0;
 let pageNavigationRequestController = null;
 let authenticationSessionGeneration = 0;
 let sharePageRequestGeneration = 0;
+let shareListMutationGeneration = 0;
 let sharePageNavigationGeneration = null;
 let shareCollectionRequestGeneration = 0;
 let shareCollectionNavigationGeneration = null;
@@ -467,6 +470,8 @@ const state = {
   applyingCollaborationSnapshot: false,
   sharePageOpen: false,
   sharePageEntries: [],
+  sharePageCursor: null,
+  sharePageTotal: 0,
   shareCollectionOpen: false,
   shareCollectionId: null,
   shareCollectionEntries: [],
@@ -1388,6 +1393,7 @@ const elements = {
   accountNewPassword: $("#account-new-password"),
   accountConfirmPassword: $("#account-confirm-password"),
   accountPasswordSave: $("#account-password-save"),
+  accountUnlockPassword: $("#account-unlock-password"),
   accountDataExport: $("#account-data-export"),
   accountDataInput: $("#account-data-input"),
   accountDataFileName: $("#account-data-file-name"),
@@ -4038,6 +4044,7 @@ function resetAccountSecurityOperationState({ clearSensitiveState = false } = {}
   }
 
   elements.accountPasswordSave.disabled = false;
+  elements.accountUnlockPassword.disabled = false;
   elements.accountTotpSetup.disabled = false;
   elements.accountTotpVerify.disabled = false;
   elements.accountTotpDisable.disabled = false;
@@ -4237,14 +4244,16 @@ async function revokeActiveSession(sessionId) {
     renderActiveSessions();
     setAccountMessage();
     try {
+      const scope = captureAuthenticatedSessionScope();
+      const cleanup = session.isCurrent ? await confirmLogoutRecovery(scope) : null;
+      if ((session.isCurrent && !cleanup) || !isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) return;
       const data = await api(`/api/auth/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
-      if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) return;
       if (data?.currentSession) {
-        // Ending this session from the session list is signing out on purpose.
-        resetAuthenticationSessionState({ clearCommentDrafts: true });
-        setStatus(t("status.loggedOut"));
+        // A confirmed logout still applies if the settings panel was closed in flight.
+        if (isCurrentAuthenticatedSessionScope(scope)) await finishExplicitLogout(cleanup ?? (async () => false));
         return;
       }
+      if (!isCurrentAccountSecurityOperation(accountSecurityOperationGuards.activeSessions, operation)) return;
       state.activeSessions.sessions = state.activeSessions.sessions.filter((item) => item.id !== session.id);
       state.activeSessions.loaded = true;
       setAccountMessage(t("account.activeSessionLoggedOut"));
@@ -5867,15 +5876,57 @@ async function completeAuthenticatedLogin(data) {
   }
 }
 
-async function logout() {
-  return withPageEditLock(async () => {
-    try {
-      const headers = new Headers();
-      await fetch("/api/auth/logout", { method: "POST", credentials: "include", headers });
-    } finally {
-      resetAuthenticationSessionState({ clearCommentDrafts: true });
-      setStatus(t("status.loggedOut"));
+async function confirmLogoutRecovery(scope) {
+  const accountId = state.user?.id;
+  const accountSuffix = encodeURIComponent(accountId) + ":";
+  const prefixes = [pageDraftStoragePrefix + accountSuffix, collaborationRecoveryStoragePrefix + ":" + accountSuffix];
+  let reliable = Boolean(indexedDbRecoveryStorage);
+  try { await indexedDbRecoveryStorage?.refresh(); } catch { reliable = false; }
+  if (!isCurrentAuthenticatedSessionScope(scope)) return null;
+  const drafts = pageDraftStore.inspectUserDrafts(accountId);
+  const collaboration = collaborationRecoveryStore.inspectAccountRecords(accountId);
+  reliable &&= drafts.reliable && collaboration.reliable && !drafts.unreadableKeys.length && !collaboration.unreadableKeys.length;
+  reliable &&= !indexedDbRecoveryStorage.hasLegacyRecoveryCopies(prefixes);
+  if (!reliable || drafts.records.length || collaboration.records.length) {
+    const confirmed = await showConfirmDialog({
+      message: t(reliable ? "account.logoutRemoveDrafts" : "account.logoutStorageUnavailable"),
+      confirmLabel: t("dialog.signOut"), danger: true
+    });
+    if (!confirmed || !isCurrentAuthenticatedSessionScope(scope)) return null;
+  }
+  // Only erase the exact records the person confirmed. A peer tab can save a
+  // newer generation while the logout request is waiting for the server.
+  return async () => {
+    for (const record of drafts.records) await pageDraftStore.removePageIfUnchangedDurably(record);
+    for (const record of collaboration.records) {
+      await collaborationRecoveryStore.removeDurably(accountId, record.pageId, record.sourceId, record.documentEpoch, record.generation);
     }
+    await indexedDbRecoveryStorage?.refresh();
+    const remaining = pageDraftStore.inspectUserDrafts(accountId);
+    const peers = collaborationRecoveryStore.inspectAccountRecords(accountId);
+    return reliable && remaining.reliable && peers.reliable && !remaining.records.length && !peers.records.length
+      && !remaining.unreadableKeys.length && !peers.unreadableKeys.length && !indexedDbRecoveryStorage.hasLegacyRecoveryCopies(prefixes);
+  };
+}
+
+async function finishExplicitLogout(cleanup) {
+  resetAuthenticationSessionState({ clearCommentDrafts: true });
+  const generation = authenticationSessionGeneration;
+  const cleared = await cleanup().catch(() => false);
+  if (authenticationSessionGeneration === generation) {
+    setStatus(t(cleared ? "status.loggedOut" : "account.logoutDraftsRemain"), !cleared);
+  }
+}
+
+async function logout() {
+  const scope = captureAuthenticatedSessionScope();
+  return withPageEditLock(async () => {
+    if (!isCurrentAuthenticatedSessionScope(scope)) return;
+    const cleanup = await confirmLogoutRecovery(scope);
+    if (!cleanup || !isCurrentAuthenticatedSessionScope(scope)) return;
+    const response = await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    if (!response.ok && response.status !== 401) throw new Error(t("account.logoutFailed"));
+    if (isCurrentAuthenticatedSessionScope(scope)) await finishExplicitLogout(cleanup);
   });
 }
 
@@ -12607,7 +12658,7 @@ function getCollaborationStatusLabel(status = state.collaborationStatus) {
 }
 
 function getPresenceDisplayName(client) {
-  return client?.user?.name?.trim() || client?.user?.username || t("sharing.editor");
+  return client?.user ? collaborationIdentityLabel(client.user) : t("sharing.editor");
 }
 
 function getRemoteCollaborationPresence() {
@@ -13178,6 +13229,11 @@ function isCurrentPageCommentsContext(pageId, navigationGeneration = workspaceNa
   );
 }
 
+function collaborationIdentityLabel(user) {
+  const handle = "@" + (user?.username || "?");
+  return user?.name?.trim() ? user.name.trim() + " (" + handle + ")" : handle;
+}
+
 function renderPageCommentAvatar(container, user) {
   container.replaceChildren();
   if (user?.avatarData) {
@@ -13206,7 +13262,7 @@ function renderPageCommentItem(comment) {
   header.className = "page-comment-header";
   const author = document.createElement("span");
   author.className = "page-comment-author";
-  author.textContent = comment.author?.name?.trim() || `@${comment.author?.username ?? "?"}`;
+  author.textContent = collaborationIdentityLabel(comment.author);
   const time = document.createElement("time");
   time.className = "page-comment-time";
   time.dateTime = comment.createdAt ?? "";
@@ -13766,8 +13822,8 @@ function setSharePageMessage(message = "", isError = false) {
 
 function renderSharePageList() {
   elements.sharePageList.replaceChildren();
-  elements.sharePageCount.textContent = t("sharing.count", { count: state.sharePageEntries.length });
-  if (!state.sharePageEntries.length) {
+  elements.sharePageCount.textContent = t("sharing.count", { count: state.sharePageTotal });
+  if (!state.sharePageEntries.length && !state.sharePageCursor) {
     const empty = document.createElement("li");
     empty.className = "share-page-empty";
     empty.textContent = t("sharing.none");
@@ -13808,6 +13864,20 @@ function renderSharePageList() {
     item.append(avatar, copy, remove);
     elements.sharePageList.append(item);
   }
+  if (state.sharePageCursor) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary compact";
+    button.textContent = t("home.showMoreRecent", { count: Math.min(50, Math.max(1, state.sharePageTotal - state.sharePageEntries.length)) });
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      void loadPageShares(state.selectedPage.id, sharePageRequestGeneration, state.sharePageCursor)
+        .finally(() => { button.disabled = false; });
+    });
+    const item = document.createElement("li");
+    item.append(button);
+    elements.sharePageList.append(item);
+  }
 }
 
 function isCurrentSharePageRequest(requestGeneration, pageId) {
@@ -13821,13 +13891,22 @@ function isCurrentSharePageRequest(requestGeneration, pageId) {
   );
 }
 
-async function loadPageShares(pageId, requestGeneration) {
+async function loadPageShares(pageId, requestGeneration, cursor = null) {
   if (!isCurrentSharePageRequest(requestGeneration, pageId)) return;
+  const mutationGeneration = shareListMutationGeneration;
   setSharePageMessage(t("sharing.loading"));
   try {
-    const data = await api(`/api/pages/${encodeURIComponent(pageId)}/shares`);
+    const data = cursor
+      ? await api(`/api/pages/${encodeURIComponent(pageId)}/shares?cursor=${encodeURIComponent(cursor)}`)
+      : await api(`/api/pages/${encodeURIComponent(pageId)}/shares`);
     if (!isCurrentSharePageRequest(requestGeneration, pageId)) return;
-    state.sharePageEntries = data.shares ?? [];
+    if (cursor !== state.sharePageCursor) return;
+    if (mutationGeneration !== shareListMutationGeneration) return loadPageShares(pageId, requestGeneration, cursor);
+    const entries = new Map((cursor ? state.sharePageEntries : []).map((share) => [share.user.id, share]));
+    for (const share of data.shares ?? []) entries.set(share.user.id, share);
+    state.sharePageEntries = [...entries.values()];
+    state.sharePageTotal = data.count ?? entries.size;
+    state.sharePageCursor = data.nextCursor ?? null;
     renderSharePageList();
     setSharePageMessage();
   } catch (error) {
@@ -13852,6 +13931,8 @@ async function openSharePageDialog() {
   sharePageNavigationGeneration = navigationGeneration;
   state.sharePageOpen = true;
   state.sharePageEntries = [];
+  state.sharePageCursor = null;
+  state.sharePageTotal = 0;
   const canCreateDirectShare = Boolean(state.selectedPage && isPageOwner(state.selectedPage));
   elements.sharePageForm.classList.toggle("hidden", !canCreateDirectShare);
   elements.sharePageLayer.classList.remove("hidden");
@@ -13874,6 +13955,8 @@ function closeSharePageDialog({ restoreFocus = true } = {}) {
   if (!state.sharePageOpen) return;
   state.sharePageOpen = false;
   state.sharePageEntries = [];
+  state.sharePageCursor = null;
+  state.sharePageTotal = 0;
   elements.sharePageLayer.classList.add("hidden");
   elements.sharePageLayer.setAttribute("aria-hidden", "true");
   syncWorkspaceShellInert();
@@ -15895,9 +15978,13 @@ function createTableEditor(row, tableValue) {
   return editor;
 }
 
+const renderedMathSources = new WeakMap();
 function renderLatexInto(element, latex, displayMode = false) {
   if (!element) return;
   const source = String(latex ?? "").trim();
+  const previous = renderedMathSources.get(element);
+  if (previous?.source === source && previous.displayMode === displayMode) return;
+  renderedMathSources.set(element, { source, displayMode });
   element.dataset.latex = source;
   element.dataset.mathDisplay = String(displayMode);
   element.classList.toggle("is-empty", !source);
@@ -15908,23 +15995,29 @@ function renderLatexInto(element, latex, displayMode = false) {
   }
 
   const katex = globalThis.katex;
-  if (!katex?.render) {
+  if (!katex?.render || source.length > 8192) {
     element.textContent = source;
     return;
   }
 
-  try {
-    katex.render(source, element, {
-      displayMode,
-      throwOnError: false,
-      strict: "warn",
-      trust: false,
-      output: "htmlAndMathml"
-    });
-  } catch (error) {
-    console.warn("KaTeX rendering failed", error);
-    element.textContent = source;
-  }
+  element.textContent = source;
+  schedulePreviewRender(element, () => {
+    if (renderedMathSources.get(element)?.source !== source) return;
+    try {
+      katex.render(source, element, {
+        maxExpand: 300,
+        maxSize: 20,
+        displayMode,
+        throwOnError: false,
+        strict: "warn",
+        trust: false,
+        output: "htmlAndMathml"
+      });
+    } catch (error) {
+      console.warn("KaTeX rendering failed", error);
+      element.textContent = source;
+    }
+  });
 }
 
 function hydrateMathExpressions(root = document) {
@@ -20926,6 +21019,7 @@ async function exportCurrentPageToPdf() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     elements.blockList.querySelectorAll("textarea").forEach(autoGrowTextarea);
     hydrateMathExpressions(elements.pageView);
+    await waitForPreviewRendering();
     await hydrateMermaidPreviews(elements.pageView, { eager: true });
     hydrateAccordionIcons(elements.pageView);
     restoreToggleDetails = expandToggleDetailsForPdf();
@@ -23760,6 +23854,23 @@ elements.accountProfileForm.addEventListener("submit", async (event) => {
   }
 });
 
+elements.accountUnlockPassword.addEventListener("click", async () => {
+  const target = getAccountAvatarTargetKey(state.user);
+  if (!target) return;
+  const guard = accountSecurityOperationGuards.passwordUnlock;
+  const operation = guard.begin(target);
+  const current = () => isCurrentAccountSecurityOperation(guard, operation);
+  elements.accountUnlockPassword.disabled = true;
+  try {
+    await api("/api/auth/login-lockout/reset", { method: "POST", body: {}, beforeFetch: current });
+    if (current()) setAccountMessage(t("account.passwordUnlocked"));
+  } catch (error) {
+    if (current()) setAccountMessage(error.message, true);
+  } finally {
+    if (current()) elements.accountUnlockPassword.disabled = false;
+  }
+});
+
 elements.accountPasswordForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const targetKey = getAccountAvatarTargetKey(state.user);
@@ -24346,6 +24457,7 @@ let logoutConfirming = false;
 // to undo, so it asks first instead of acting on a single tap next to the tabs.
 async function requestLogout() {
   if (logoutConfirming) return;
+  const scope = captureAuthenticatedSessionScope();
   const hasUnsavedSettings = state.accountSettingsOpen && hasUnsavedAccountSettingsChanges();
   const hasUnsentComment = !hasUnsavedSettings && hasUnsentPageCommentDraft();
   const discardsWork = hasUnsavedSettings || hasUnsentComment;
@@ -24363,7 +24475,7 @@ async function requestLogout() {
   } finally {
     logoutConfirming = false;
   }
-  if (!confirmed) return;
+  if (!confirmed || !isCurrentAuthenticatedSessionScope(scope)) return;
   await logout();
 }
 
@@ -24856,7 +24968,10 @@ elements.sharePageForm.addEventListener("submit", async (event) => {
         beforeFetch: isShareMutationCurrent
       });
       if (data === skippedApiRequest || !isShareMutationCurrent()) return null;
+      shareListMutationGeneration += 1;
+      state.sharePageEntries = state.sharePageEntries.filter((share) => share.user.id !== data.share.user.id);
       state.sharePageEntries.push(data.share);
+      state.sharePageTotal = data.count;
       elements.sharePageForm.reset();
       renderSharePageList();
       await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
@@ -24901,7 +25016,7 @@ elements.sharePageList.addEventListener("click", async (event) => {
       if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
       if (!isShareMutationCurrent()) return null;
       assertNoPendingLocalCollaborationRecovery(pageId);
-      if (state.sharePageEntries.length === 1) {
+      if (state.sharePageTotal === 1) {
         if (state.collaborationSession) await destroyPageCollaboration({ flush: false });
         if (!isCurrentAuthenticatedSessionScope(authenticationScope)) return null;
         if (!isShareMutationCurrent()) return null;
@@ -24918,7 +25033,9 @@ elements.sharePageList.addEventListener("click", async (event) => {
         }
       );
       if (data === skippedApiRequest || !isShareMutationCurrent()) return null;
+      shareListMutationGeneration += 1;
       state.sharePageEntries = state.sharePageEntries.filter((share) => share.user?.id !== userId);
+      state.sharePageTotal = data.count;
       renderSharePageList();
       await setSelectedPageShareCount(Number(data.count ?? state.sharePageEntries.length));
       if (!isShareMutationCurrent()) return null;

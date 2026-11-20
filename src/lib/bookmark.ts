@@ -1,4 +1,5 @@
 import { joinSummaryPrefix } from "./summary-prefix.js";
+import { assertImageDimensionsWithinLimit } from "./image-dimensions.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import dns from "node:dns";
 import http from "node:http";
@@ -1070,7 +1071,13 @@ function detectDatabaseFaviconMimeType(bytes: Buffer) {
 
 export function createDatabaseFaviconDataUrl(bytes: Buffer) {
   const mimeType = detectDatabaseFaviconMimeType(bytes);
-  return mimeType ? `data:${mimeType};base64,${bytes.toString("base64")}` : "";
+  if (!mimeType) return "";
+  try {
+    assertImageDimensionsWithinLimit(mimeType, bytes);
+  } catch {
+    return "";
+  }
+  return `data:${mimeType};base64,${bytes.toString("base64")}`;
 }
 
 export function parseDatabaseUrlDocumentMetadata(html: string, pageUrl: string | URL): DatabaseUrlDocumentMetadata {

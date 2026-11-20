@@ -19,7 +19,7 @@ export type DbClient = {
 };
 
 const databaseConfig = parseDatabaseUrl(env.DATABASE_URL, { requireDatabase: true });
-const strictTransactionalSqlMode =
+export const strictTransactionalSqlMode =
   "SET SESSION sql_mode = IF(" +
   "FIND_IN_SET('STRICT_TRANS_TABLES', @@SESSION.sql_mode) > 0 " +
   "OR FIND_IN_SET('STRICT_ALL_TABLES', @@SESSION.sql_mode) > 0, " +
@@ -68,7 +68,7 @@ export function createDedicatedDbConnection() {
   });
 }
 
-function createClient(target: Pool | PoolConnection): DbClient {
+export function createClient(target: Pool | PoolConnection): DbClient {
   async function runQuery<T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
     params: readonly DbValue[] = []
@@ -124,8 +124,8 @@ export class TransactionCommitOutcomeUnknownError extends Error {
   }
 }
 
-export async function transaction<Result>(fn: (client: DbClient) => Promise<Result>) {
-  const conn = await pool.getConnection();
+export async function transaction<Result>(fn: (client: DbClient) => Promise<Result>, source = pool) {
+  const conn = await source.getConnection();
   let commitStarted = false;
 
   try {

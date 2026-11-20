@@ -185,8 +185,34 @@ function icoDimensions(bytes: Buffer): Dimensions {
   return largest;
 }
 
+function gifDimensions(bytes: Buffer) {
+  if (bytes.length < 13 || !["GIF87a", "GIF89a"].includes(bytes.toString("ascii", 0, 6))) invalid();
+  const width = bytes.readUInt16LE(6), height = bytes.readUInt16LE(8);
+  bounded(width, height);
+  const paletteBytes = (flags: number) => flags & 0x80 ? 3 * (2 << (flags & 7)) : 0;
+  let offset = 13 + paletteBytes(bytes[10]);
+  let frames = 0;
+  while (offset < bytes.length) {
+    const kind = bytes[offset++];
+    if (kind === 0x3b && frames) return;
+    if (kind === 0x2c) {
+      if (offset + 9 > bytes.length) invalid();
+      const frame = bounded(bytes.readUInt16LE(offset + 4), bytes.readUInt16LE(offset + 6));
+      if (bytes.readUInt16LE(offset) + frame.width > width || bytes.readUInt16LE(offset + 2) + frame.height > height) invalid();
+      bounded(width, height, ++frames);
+      offset += 9 + paletteBytes(bytes[offset + 8]) + 1;
+    } else if (kind === 0x21) {
+      offset++; // Extension label, followed by length-prefixed sub-blocks.
+    } else invalid();
+    while (offset < bytes.length && bytes[offset]) offset += 1 + bytes[offset];
+    offset++;
+  }
+  invalid();
+}
+
 export function assertImageDimensionsWithinLimit(mimeType: string, bytes: Buffer): void {
   if (mimeType === "image/png") pngDimensions(bytes);
+  else if (mimeType === "image/gif") gifDimensions(bytes);
   else if (mimeType === "image/jpeg") jpegDimensions(bytes);
   else if (mimeType === "image/webp") webpDimensions(bytes);
   else if (mimeType === "image/vnd.microsoft.icon") icoDimensions(bytes);

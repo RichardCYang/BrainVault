@@ -21,9 +21,9 @@ test("share list binds owner authorization and owner-scoped share rows to one da
   assert.match(route, /const rows = await transaction\(async \(client\) => \{/);
   assert.match(route, /const access = await getPageAccess\(pageId, user\.id, client\)/);
   assert.match(route, /assertPageCanAdminister\(access\)/);
-  assert.ok(route.indexOf("assertDirectPageShareOwner(access,") < route.indexOf("return getShareRows("));
+  assert.ok(route.indexOf("assertDirectPageShareOwner(access,") < route.indexOf("await getShareRows("));
   assert.match(route, /assertDirectPageShareOwner\(access,/);
-  assert.match(route, /return getShareRows\(pageId, access\.page\.owner_id, client\)/);
+  assert.match(route, /await getShareRows\(pageId, access\.page\.owner_id, client, cursor\)/);
   assert.doesNotMatch(route, /getPageAccess\(pageId, user\.id\);/);
   assert.doesNotMatch(route, /const rows = await getShareRows\(pageId\);/);
 
@@ -33,7 +33,7 @@ test("share list binds owner authorization and owner-scoped share rows to one da
     "function toSharePayload"
   );
   assert.match(helper, /INNER JOIN pages p ON p\.id = ps\.page_id AND p\.owner_id = \?/);
-  assert.match(helper, /\[ownerId, pageId\]/);
+  assert.match(helper, /\[ownerId, pageId, cursor, sharesPerPage \+ 1\]/);
 
   const postRoute = section(
     routes,
@@ -41,8 +41,7 @@ test("share list binds owner authorization and owner-scoped share rows to one da
     'collaborationRouter.delete(\n  "/pages/:pageId/shares/:userId",'
   );
   assert.match(postRoute, /const shareResult = await transaction\(async \(client\) => \{/);
-  assert.match(postRoute, /const rows = await getShareRows\(pageId, workspaceOwnerId, client\)/);
-  assert.match(postRoute, /return \{ created, count: rows\.length \};/);
+  assert.match(postRoute, /return \{ created, count: await countDirectShares\(pageId, client\) \};/);
   assert.doesNotMatch(postRoute, /await getShareRows\(pageId\);/);
 });
 

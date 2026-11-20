@@ -11246,36 +11246,85 @@ const sessionExpiryTranslations = {
 
 const uxReviewTranslations = {
   "en": {
+    "account.logoutRemoveDrafts": "Sign out and delete the unsaved recovery copies for this account on this browser, including drafts from other tabs? Cancel to keep them.",
+    "account.logoutStorageUnavailable": "Sign out and delete this account’s verified drafts from all tabs in this browser? Older or unreadable copies may remain on this device.",
+    "account.logoutDraftsRemain": "Signed out. Some recovery copies may remain on this device.",
+    "account.logoutFailed": "Could not confirm sign-out. Try again.",
+    "errors.RECENT_LOGIN_REQUIRED": "Sign in again to perform this action.",
+    "account.unlockPassword": "Unlock password sign-in",
+    "account.passwordUnlocked": "The password sign-in lock and failed attempts for this account have been cleared.",
     "status.pageTransitionBusy": "Your previous change to this is still being sent. Try again when it finishes.",
     "status.pageBusy": "Your last change is still being saved. Try again in a moment.",
     "status.saveResuming": "Back online. Saving your changes…"
   },
   "ja": {
+    "account.logoutRemoveDrafts": "ログアウトして、このブラウザに残るこのアカウントの未保存の復元データを削除しますか？ 他のタブの下書きも含まれます。保持するにはキャンセルしてください。",
+    "account.logoutStorageUnavailable": "ログアウトして、このブラウザの全タブで確認できたこのアカウントの下書きを削除しますか？ 古いコピーや読み取れないコピーは端末に残る場合があります。",
+    "account.logoutDraftsRemain": "ログアウトしました。一部の下書きが端末に残っている可能性があります。",
+    "account.logoutFailed": "ログアウトを確認できませんでした。もう一度お試しください。",
+    "errors.RECENT_LOGIN_REQUIRED": "この操作を行うには再度ログインしてください。",
+    "account.unlockPassword": "パスワードログインのロックを解除",
+    "account.passwordUnlocked": "このアカウントのパスワードログインのロックと失敗回数をリセットしました。",
     "status.pageTransitionBusy": "直前の変更をまだ送信中です。完了してからもう一度お試しください。",
     "status.pageBusy": "直前の変更をまだ保存中です。少し待ってからもう一度お試しください。",
     "status.saveResuming": "オンラインに戻りました。変更を保存しています…"
   },
   "ko": {
+    "account.logoutRemoveDrafts": "로그아웃하고 이 브라우저에 남은 이 계정의 미저장 복구본을 삭제할까요? 다른 탭의 초안도 포함됩니다. 보관하려면 취소하세요.",
+    "account.logoutStorageUnavailable": "로그아웃하고 이 브라우저의 모든 탭에서 확인된 이 계정의 초안을 삭제할까요? 이전 버전의 복사본이나 읽을 수 없는 초안은 기기에 남을 수 있습니다.",
+    "account.logoutDraftsRemain": "로그아웃했습니다. 이 기기에 일부 복구본이 남아 있을 수 있습니다.",
+    "account.logoutFailed": "로그아웃을 확인하지 못했습니다. 다시 시도하세요.",
+    "errors.RECENT_LOGIN_REQUIRED": "이 작업을 수행하려면 다시 로그인하세요.",
+    "account.unlockPassword": "비밀번호 로그인 잠금 해제",
+    "account.passwordUnlocked": "이 계정의 비밀번호 로그인 잠금을 해제하고 실패 횟수를 초기화했습니다.",
     "status.pageTransitionBusy": "직전 변경 사항을 아직 전송하고 있습니다. 완료된 뒤 다시 시도하세요.",
     "status.pageBusy": "직전 변경 사항을 아직 저장하고 있습니다. 잠시 후 다시 시도하세요.",
     "status.saveResuming": "다시 연결되었습니다. 변경 사항을 저장하는 중…"
   },
   "fr": {
+    "account.logoutRemoveDrafts": "Se déconnecter et supprimer les brouillons non enregistrés de ce compte dans ce navigateur, y compris ceux des autres onglets ? Annulez pour les conserver.",
+    "account.logoutStorageUnavailable": "Se déconnecter et supprimer les brouillons vérifiés de ce compte dans tous les onglets de ce navigateur ? Des copies anciennes ou illisibles peuvent rester sur cet appareil.",
+    "account.logoutDraftsRemain": "Déconnexion effectuée. Des brouillons peuvent rester sur cet appareil.",
+    "account.logoutFailed": "Impossible de confirmer la déconnexion. Réessayez.",
+    "errors.RECENT_LOGIN_REQUIRED": "Reconnectez-vous pour effectuer cette action.",
+    "account.unlockPassword": "Débloquer la connexion par mot de passe",
+    "account.passwordUnlocked": "Le verrouillage et les tentatives de connexion échouées de ce compte ont été réinitialisés.",
     "status.pageTransitionBusy": "Votre modification précédente est encore en cours d’envoi. Réessayez une fois terminée.",
     "status.pageBusy": "Votre dernière modification est encore en cours d’enregistrement. Réessayez dans un instant.",
     "status.saveResuming": "De nouveau en ligne. Enregistrement de vos modifications…"
   },
   "de": {
+    "account.logoutRemoveDrafts": "Abmelden und die ungesicherten Entwürfe dieses Kontos in diesem Browser löschen, einschließlich anderer Tabs? Zum Behalten abbrechen.",
+    "account.logoutStorageUnavailable": "Abmelden und die bestätigten Entwürfe dieses Kontos in allen Tabs dieses Browsers löschen? Ältere oder unlesbare Kopien können auf diesem Gerät verbleiben.",
+    "account.logoutDraftsRemain": "Abgemeldet. Einige Entwürfe können auf diesem Gerät verbleiben.",
+    "account.logoutFailed": "Abmeldung konnte nicht bestätigt werden. Bitte erneut versuchen.",
+    "errors.RECENT_LOGIN_REQUIRED": "Für diese Aktion erneut anmelden.",
+    "account.unlockPassword": "Passwortanmeldung entsperren",
+    "account.passwordUnlocked": "Die Anmeldesperre und die fehlgeschlagenen Versuche für dieses Konto wurden zurückgesetzt.",
     "status.pageTransitionBusy": "Deine vorherige Änderung wird noch gesendet. Versuche es erneut, wenn sie abgeschlossen ist.",
     "status.pageBusy": "Deine letzte Änderung wird noch gespeichert. Versuche es gleich noch einmal.",
     "status.saveResuming": "Wieder online. Deine Änderungen werden gespeichert…"
   },
   "es": {
+    "account.logoutRemoveDrafts": "¿Cerrar sesión y borrar los borradores sin guardar de esta cuenta en este navegador, incluidos los de otras pestañas? Cancela para conservarlos.",
+    "account.logoutStorageUnavailable": "¿Cerrar sesión y borrar los borradores verificados de esta cuenta en todas las pestañas de este navegador? Las copias antiguas o ilegibles pueden quedar en este dispositivo.",
+    "account.logoutDraftsRemain": "Sesión cerrada. Pueden quedar borradores en este dispositivo.",
+    "account.logoutFailed": "No se pudo confirmar el cierre de sesión. Inténtalo de nuevo.",
+    "errors.RECENT_LOGIN_REQUIRED": "Vuelve a iniciar sesión para realizar esta acción.",
+    "account.unlockPassword": "Desbloquear el acceso con contraseña",
+    "account.passwordUnlocked": "Se han restablecido el bloqueo y los intentos fallidos de inicio de sesión de esta cuenta.",
     "status.pageTransitionBusy": "Tu cambio anterior todavía se está enviando. Inténtalo de nuevo cuando termine.",
     "status.pageBusy": "Tu último cambio todavía se está guardando. Inténtalo de nuevo en un momento.",
     "status.saveResuming": "De nuevo en línea. Guardando tus cambios…"
   },
   "pt": {
+    "account.logoutRemoveDrafts": "Sair e excluir os rascunhos não salvos desta conta neste navegador, inclusive de outras abas? Cancele para mantê-los.",
+    "account.logoutStorageUnavailable": "Sair e excluir os rascunhos verificados desta conta em todas as abas deste navegador? Cópias antigas ou ilegíveis podem permanecer neste dispositivo.",
+    "account.logoutDraftsRemain": "Sessão encerrada. Alguns rascunhos podem permanecer neste dispositivo.",
+    "account.logoutFailed": "Não foi possível confirmar o encerramento da sessão. Tente novamente.",
+    "errors.RECENT_LOGIN_REQUIRED": "Entre novamente para realizar esta ação.",
+    "account.unlockPassword": "Desbloquear o acesso com senha",
+    "account.passwordUnlocked": "O bloqueio e as tentativas de entrada malsucedidas desta conta foram redefinidos.",
     "status.pageTransitionBusy": "Sua alteração anterior ainda está sendo enviada. Tente novamente quando terminar.",
     "status.pageBusy": "Sua última alteração ainda está sendo salva. Tente novamente em instantes.",
     "status.saveResuming": "Conectado novamente. Salvando suas alterações…"

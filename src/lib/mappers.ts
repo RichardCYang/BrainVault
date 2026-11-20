@@ -4,7 +4,7 @@ import { renderBlockHtml, sanitizeRenderedBlockHtml } from "./markdown.js";
 import { isCurrentAiChatHtmlCache } from "./ai-chat-cache.js";
 import { validateStoredBlockMetadata } from "./structured-metadata-integrity.js";
 import { boundedPublicProfileImage } from "./public-profile-summary.js";
-import { addPageBlockUsage, emptyPageResourceUsage, assertPageResponseBudget } from "./page-resource-limits.js";
+import { mapPageBlocks, addPageBlockUsage, emptyPageResourceUsage, assertPageResponseBudget } from "./page-resource-limits.js";
 
 const storedCustomPageCoverSentinel = "custom-image:stored";
 
@@ -118,9 +118,9 @@ export function toTag(row: TagRow) {
   };
 }
 
-export function toBlocksWithinPageBudget(rows: BlockRow[]) {
+export async function toBlocksWithinPageBudget(rows: BlockRow[]) {
   const usage = emptyPageResourceUsage();
-  const blocks = rows.map((row) => {
+  const blocks = await mapPageBlocks(rows, (row) => {
     const block = toBlock(row);
     // Re-rendering a legacy/missing cache can expand beyond its stored size.
     // Check incrementally so we never retain an unbounded mapped block array.

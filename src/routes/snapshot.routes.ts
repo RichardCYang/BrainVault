@@ -11,7 +11,7 @@ import {
 import { getWorkspaceBackupCapacity } from "../lib/data-transfer.js";
 import { toPublicUser } from "../lib/mappers.js";
 import { requireRestoreOperationId } from "../lib/data-restore-operation.js";
-import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
+import { requireRecentAuthentication, requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   beginDataImportProcessing,
   finishDataExportProcessing,
@@ -59,6 +59,7 @@ snapshotRouter.get<SnapshotRouteParams>("/:snapshotId/diff", dataExportRateLimit
 
 snapshotRouter.post<SnapshotRouteParams>(
   "/:snapshotId/restore",
+  requireRecentAuthentication,
   dataImportRateLimit,
   dataImportConcurrencyLimit,
   async (req, res) => {

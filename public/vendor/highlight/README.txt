@@ -1,9 +1,9 @@
 BrainVault syntax highlighting assets
 =====================================
 
-- highlight.min.js: Highlight.js v11.0.1 browser bundle (upstream git 1cf31f015d),
+- highlight.min.js: Highlight.js v11.12.0 browser bundle (npm @highlightjs/cdn-assets),
   distributed under BSD-3-Clause.
-  SHA-256: a19aac4db093f71ecafab16a8a0b7b6f733407588ea501b4208e11dea7dce43f
+  SHA-256: 8ab71eb09c51f501e5e25157d9cff100e46cc29bcbfc744d0b746d451fca7f53
 - atom-one-light.min.css: Highlight.js Atom One Light theme.
 - brainvault-languages.js: BrainVault supplemental language definitions for
   selector languages not present in the common browser bundle.

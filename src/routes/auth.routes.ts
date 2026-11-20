@@ -668,7 +668,8 @@ authRouter.post("/session/extend", requireAuth, async (req, res, next) => {
       return;
     }
     const token = signAuthToken(
-      { sub: currentUser.id, username: currentUser.username, authVersion: authScope.authVersion, sessionId: authScope.sessionId },
+      { sub: currentUser.id, username: currentUser.username, authVersion: authScope.authVersion, sessionId: authScope.sessionId,
+        authenticatedAt: req.auth?.authenticatedAt ?? 0 },
       { expiresAt }
     );
     setAuthSessionCookie(res, token);

@@ -243,6 +243,19 @@ test("uses strict durability for every recovery write transaction", async () => 
   storage.close();
 });
 
+test("logout detects only the selected account's retained legacy copies", async () => {
+  const prefix = "brainvault.pageDraft.v2:";
+  const key = prefix + "alice:page:tab";
+  const legacy = new MemoryStorage([[key, "draft"]]);
+  const storage = await createIndexedDbRecoveryStorage(new FakeIndexedDb(), legacy, { migrationPrefixes: [prefix] });
+  try {
+    assert.equal(storage.hasLegacyRecoveryCopies([prefix + "alice:"]), true);
+    assert.equal(storage.hasLegacyRecoveryCopies([prefix + "al:"]), false);
+    await storage.compareAndRemove(key, value => value === "draft");
+    assert.equal(storage.hasLegacyRecoveryCopies([prefix + "alice:"]), true);
+  } finally { storage.close(); }
+});
+
 test("flush drains recovery writes queued while the barrier is in flight", async () => {
   const indexedDb = new FakeIndexedDb();
   const storage = await createIndexedDbRecoveryStorage(indexedDb, new MemoryStorage(), {

@@ -17,6 +17,7 @@ import { assertBlockParentChangesDepth, assertHierarchyDepth, maxBlockHierarchyD
 import {
   attachmentFileExists,
   attachmentTempDir,
+  activeAttachmentTempNames,
   createAttachmentFileHash,
   ensureAttachmentDirectories,
   getAttachmentFilePath,
@@ -467,6 +468,7 @@ const attachmentUploadLimits = {
   fieldArrayIndexLimit: 0
 };
 
+const processingAttachmentUploads = new WeakSet<Request>();
 const attachmentUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, callback) => {
@@ -474,7 +476,15 @@ const attachmentUpload = multer({
         .then(() => callback(null, attachmentTempDir))
         .catch((error) => callback(error, attachmentTempDir));
     },
-    filename: (_req, _file, callback) => callback(null, createId("upload"))
+    filename: (req, _file, callback) => {
+      if (req.res?.destroyed) return callback(new Error("Upload connection closed"), "");
+      const name = createId("upload");
+      activeAttachmentTempNames.add(name);
+      req.res?.once("close", () => {
+        if (!processingAttachmentUploads.has(req)) activeAttachmentTempNames.delete(name);
+      });
+      callback(null, name);
+    }
   }),
   limits: attachmentUploadLimits,
   preservePath: false,
@@ -980,6 +990,7 @@ blockRouter.post(
   attachmentUploadConcurrencyLimit,
   attachmentUpload.single("file"),
   async (req, res, next) => {
+    processingAttachmentUploads.add(req);
     let cleanupPath = req.file?.path ?? null;
     let movedPath: string | null = null;
     let movedAttachmentGeneration: number | null = null;
@@ -1248,6 +1259,8 @@ blockRouter.post(
       }
       next(error);
     } finally {
+      if (req.file) activeAttachmentTempNames.delete(req.file.filename);
+      processingAttachmentUploads.delete(req);
       releaseAttachmentUpload?.();
     }
   }
@@ -2475,7 +2488,7 @@ blockRouter.post(
         return { rows, pageContentVersion, pageUpdatedAt };
       });
 
-      res.json({ blocks: toBlocksWithinPageBudget(result.rows), pageContentVersion: result.pageContentVersion, pageUpdatedAt: result.pageUpdatedAt });
+      res.json({ blocks: await toBlocksWithinPageBudget(result.rows), pageContentVersion: result.pageContentVersion, pageUpdatedAt: result.pageUpdatedAt });
     } catch (error) {
       next(error);
     }

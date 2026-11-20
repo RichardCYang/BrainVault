@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db, transaction, type DbClient } from "../lib/db.js";
 import { admitPageProjection, assertPagesFitSharedDocument, assertStoredPageResourceBudget, addPageBlockUsage, emptyPageResourceUsage } from "../lib/page-resource-limits.js";
 import { assertCurrentAuthSessionBoundary } from "../lib/auth-sessions.js";
-import { requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
+import { requireRecentAuthentication, requireAuth, requireRequestAuthScope } from "../middleware/auth.js";
 import {
   collaborationSessionPageRateLimit,
   collaborationShareAccountRateLimit,
@@ -464,7 +464,15 @@ function assertDirectPageShareOwner(access: Pick<PageAccess, "role" | "scope">, 
   }
 }
 
-async function getShareRows(pageId: string, ownerId: string, client: DbClient = db) {
+async function countDirectShares(pageId: string, client: DbClient) {
+  const row = await client.queryOne<{ total: number }>(
+    "SELECT COUNT(*) AS total FROM page_shares WHERE page_id = ? AND permission = 'EDIT'", [pageId]
+  );
+  return Number(row?.total ?? 0);
+}
+
+const sharesPerPage = 50;
+async function getShareRows(pageId: string, ownerId: string, client: DbClient, cursor: string) {
   return client.query<ShareUserRow>(
     `SELECT ${publicProfileSummaryProjection("u")},
             ps.permission, ps.created_at AS shared_at, ps.generation AS share_generation
@@ -472,8 +480,9 @@ async function getShareRows(pageId: string, ownerId: string, client: DbClient = 
      INNER JOIN pages p ON p.id = ps.page_id AND p.owner_id = ?
      INNER JOIN users u ON u.id = ps.user_id
      WHERE ps.page_id = ? AND ps.permission = 'EDIT'
-     ORDER BY ps.created_at ASC, u.username ASC`,
-    [ownerId, pageId]
+       AND ps.user_id > ?
+     ORDER BY ps.user_id ASC LIMIT ?`,
+    [ownerId, pageId, cursor, sharesPerPage + 1]
   );
 }
 
@@ -1066,7 +1075,7 @@ collaborationRouter.post(
 
 collaborationRouter.get(
   "/pages/:pageId/shares",
-  validate({ params: idParamSchema }),
+  validate({ params: idParamSchema, query: z.object({ cursor: routeIdSchema.optional() }) }),
   async (req, res, next) => {
     try {
       const user = requireUser(req.user);
@@ -1080,10 +1089,18 @@ collaborationRouter.get(
         assertPageCanAdminister(access);
         assertDirectPageShareOwner(access, "Direct page shares can only be viewed by the workspace owner");
         assertShareablePage(access.page, { allowArchived: true });
-        return getShareRows(pageId, access.page.owner_id, client);
+        const cursor = getValidatedQuery<{ cursor?: string }>(req).cursor ?? "";
+        const rows = await getShareRows(pageId, access.page.owner_id, client, cursor);
+        const hasMore = rows.length > sharesPerPage;
+        if (hasMore) rows.pop();
+        return {
+          shares: rows.map(toSharePayload),
+          nextCursor: hasMore ? rows.at(-1)!.id : null,
+          count: cursor || hasMore ? await countDirectShares(pageId, client) : rows.length
+        };
       });
       res.setHeader("Cache-Control", "private, no-store");
-      res.json({ shares: rows.map(toSharePayload), count: rows.length });
+      res.json(rows);
     } catch (error) {
       next(error);
     }
@@ -1092,6 +1109,7 @@ collaborationRouter.get(
 
 collaborationRouter.post(
   "/pages/:pageId/shares",
+  requireRecentAuthentication,
   collaborationShareAccountRateLimit,
   collaborationShareIpRateLimit,
   validate({ params: idParamSchema, body: shareUserSchema }),
@@ -1207,8 +1225,7 @@ collaborationRouter.post(
           [pageId, target.id]
         );
         if (!created) throw new ApiError(500, "PAGE_SHARE_FAILED", "The page share was not created");
-        const rows = await getShareRows(pageId, workspaceOwnerId, client);
-        return { created, count: rows.length };
+        return { created, count: await countDirectShares(pageId, client) };
       });
 
       if (previousDocumentEpoch) {
@@ -1605,7 +1622,7 @@ collaborationRouter.post(
         collaboration: toCollaborationPayload(session.access),
         document: {
           title: session.access.page.title,
-          blocks: toBlocksWithinPageBudget(session.documentBlocks)
+          blocks: await toBlocksWithinPageBudget(session.documentBlocks)
         }
       });
     } catch (error) {
@@ -2270,7 +2287,7 @@ collaborationRouter.put(
         pageVersion: Number(result.page.edit_version ?? 1),
         pageContentVersion: Number(result.page.content_version ?? 1),
         pageUpdatedAt: result.page.updated_at,
-        blocks: toBlocksWithinPageBudget(result.blocks)
+        blocks: await toBlocksWithinPageBudget(result.blocks)
       });
     } catch (error) {
       try {

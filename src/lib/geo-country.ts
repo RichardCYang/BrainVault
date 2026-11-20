@@ -1,5 +1,6 @@
 import net from "node:net";
 const countryApiBaseUrl = (process.env.GEOIP_PROVIDER_URL?.trim() || "https://api.country.is").replace(/\/+$/, "");
+if (new URL(countryApiBaseUrl).protocol !== "https:") throw new Error("GEOIP_PROVIDER_URL must use HTTPS");
 const countryApiTimeoutMs = 2_000;
 const countryApiBatchSize = 100;
 const countryApiInfoMaxBytes = 64 * 1024;
@@ -126,6 +127,7 @@ async function readLimitedJson(response: Response, maxBytes: number): Promise<un
 async function fetchCountryApi(pathname: string, init?: RequestInit) {
   return fetch(`${countryApiBaseUrl}${pathname}`, {
     ...init,
+    redirect: "error",
     headers: {
       accept: "application/json",
       ...init?.headers

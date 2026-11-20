@@ -532,7 +532,7 @@ assert.ok(!collaborationSource.includes("isLoopback("), "WebSocket origins must 
 const bootstrapSource = contains("src/lib/db-bootstrap.ts", [
   "databaseUserHosts",
   "ALTER USER",
-  "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES",
+  "GRANT SELECT, INSERT, UPDATE, DELETE",
   "DROP USER IF EXISTS"
 ]);
 assert.ok(!bootstrapSource.includes("GRANT ALL PRIVILEGES"), "Application DB accounts must not receive ALL PRIVILEGES");
@@ -621,6 +621,11 @@ assert.match(
   /imgSrc:\s*\[[^\]]*"'self'"[^\]]*"data:"[^\]]*"blob:"[^\]]*"https:\/\/cdn\.jsdelivr\.net\/gh\/jdecked\/twemoji@17\.0\.3\/assets\/svg\/"[^\]]*\]/
 );
 assert.doesNotMatch(appCspSource, /imgSrc:\s*\[[^\]]*(?:"http:"|"https:")/);
+assert.deepEqual(
+  readFileSync(new URL("../public/vendor/highlight/highlight.min.js", import.meta.url)),
+  readFileSync(new URL("../node_modules/@highlightjs/cdn-assets/highlight.min.js", import.meta.url)),
+  "The shipped Highlight.js bundle must match the audited, locked dependency"
+);
 const markdownImageSource = contains("src/lib/markdown.ts", [
   "normalizeRenderedImageSource",
   'allowedSchemesByTag: { img: ["data"] }',
@@ -631,7 +636,7 @@ contains("public/app.js", [
   "function getRenderableImageSource",
   "url.origin !== window.location.origin",
   "const imageSource = getRenderableImageSource(item?.faviconUrl, { allowData: false })",
-  "const coverSource = getRenderableImageSource(page?.coverUrl, {",
+  "const coverSource = getPageCoverDisplaySource(getRenderableImageSource(page?.coverUrl, {",
   "allowedApplicationApiPath: page?.id ? `/api/pages/${encodeURIComponent(page.id)}/cover` : \"\""
 ]);
 

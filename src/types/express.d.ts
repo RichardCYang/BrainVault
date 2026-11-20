@@ -6,6 +6,7 @@ declare global {
         workspaceGeneration: number;
         sessionId?: string;
         credentialSource?: "bearer" | "cookie";
+        authenticatedAt?: number;
         tokenExpiresAt?: Date;
       };
       user?: {

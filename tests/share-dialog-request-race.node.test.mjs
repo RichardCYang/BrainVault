@@ -15,7 +15,7 @@ test("share dialog results remain bound to the page and dialog generation that r
   assert.match(source, /state\.selectedPage\?\.id === pageId/);
   assert.match(source, /api\(`\/api\/pages\/\$\{encodeURIComponent\(pageId\)\}\/shares`\)/);
   assert.match(source, /await flushPendingPageEdits\(\);[\s\S]*?state\.selectedPage\?\.id !== pageId/);
-  assert.match(source, /const data = await api[\s\S]*?if \(!isCurrentSharePageRequest\(requestGeneration, pageId\)\) return;[\s\S]*?state\.sharePageEntries/);
+  assert.match(source, /const data = cursor[\s\S]*?if \(!isCurrentSharePageRequest\(requestGeneration, pageId\)\) return;[\s\S]*?state\.sharePageEntries/);
   assert.match(source, /function closeSharePageDialog[\s\S]*?sharePageRequestGeneration \+= 1;/);
   assert.match(source, /state\.sharePageEntries = \[\];/);
 });

@@ -882,6 +882,19 @@ export async function createIndexedDbRecoveryStorage(
   }
 
   const api = {
+    hasLegacyRecoveryCopies(accountPrefixes) {
+      const matches = (key) => accountPrefixes.some((prefix) => key.startsWith(prefix));
+      const snapshot = inspectStorageKeys(legacyStorage);
+      if (!snapshot.reliable || snapshot.keys.some(matches)) return true;
+      // In browsers without Web Crypto, an old migration receipt contains
+      // the original text. It must still prevent resurrection by older tabs.
+      for (const markers of [legacyMigrationMarkers, legacyLineageMarkers]) {
+        for (const [key, fingerprint] of markers) {
+          if (matches(key) && fingerprint.startsWith("exact:")) return true;
+        }
+      }
+      return false;
+    },
     get length() {
       return records.size;
     },

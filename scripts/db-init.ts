@@ -57,7 +57,7 @@ async function main() {
           `ALTER USER ${account} IDENTIFIED BY ${quoteString(target.password)}`
         );
         await adminPool.query(
-          `GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES ` +
+          `GRANT SELECT, INSERT, UPDATE, DELETE ` +
           `ON ${quoteIdentifier(target.database!)}.* TO ${account}`
         );
       }

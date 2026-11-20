@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { db, transaction, type DbClient } from "./db.js";
+import mariadb, { type Pool } from "mariadb";
+import { env } from "../config/env.js";
+import { parseDatabaseUrl, databaseOptionsWithSchema } from "./database-url.js";
+import { createClient, db, strictTransactionalSqlMode, transaction, type DbClient } from "./db.js";
 
 const migrationsDir = path.resolve(process.cwd(), "migrations");
 const baselineMigration = "001_init.sql";
@@ -41,53 +44,53 @@ async function executeSqlFile(client: DbClient, filename: string) {
   }
 }
 
-async function getAppliedMigrations() {
-  const rows = await db.query<{ id: string }>("SELECT id FROM schema_migrations");
+async function getAppliedMigrations(client: DbClient) {
+  const rows = await client.query<{ id: string }>("SELECT id FROM schema_migrations");
   return new Set(rows.map((row) => row.id));
 }
 
 
-async function tableExists(tableName: string) {
-  const row = await db.queryOne<{ count: number }>(
+async function tableExists(client: DbClient, tableName: string) {
+  const row = await client.queryOne<{ count: number }>(
     "SELECT COUNT(*) AS count FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
     [tableName]
   );
   return Number(row?.count ?? 0) > 0;
 }
 
-async function columnExists(tableName: string, columnName: string) {
-  const row = await db.queryOne<{ count: number }>(
+async function columnExists(client: DbClient, tableName: string, columnName: string) {
+  const row = await client.queryOne<{ count: number }>(
     "SELECT COUNT(*) AS count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
     [tableName, columnName]
   );
   return Number(row?.count ?? 0) > 0;
 }
 
-async function reconcileUserIdentifierColumn() {
-  if (!(await tableExists("users"))) {
+async function reconcileUserIdentifierColumn(client: DbClient) {
+  if (!(await tableExists(client, "users"))) {
     return;
   }
 
-  if (!(await columnExists("users", "username"))) {
-    await db.execute("ALTER TABLE users ADD COLUMN username VARCHAR(50)");
+  if (!(await columnExists(client, "users", "username"))) {
+    await client.execute("ALTER TABLE users ADD COLUMN username VARCHAR(50)");
   }
 
-  if (await columnExists("users", "email")) {
-    await db.execute(
+  if (await columnExists(client, "users", "email")) {
+    await client.execute(
       "UPDATE users SET username = 'demo' WHERE username IS NULL AND email = 'demo@brainvault.local'"
     );
 
     // Legacy BrainVault versions used users.email as a required login field.
     // Current versions authenticate with username, so keep old data readable but
     // make the old column nullable to avoid ER_NO_DEFAULT_FOR_FIELD on signup.
-    await db.execute("ALTER TABLE users MODIFY COLUMN email VARCHAR(255) NULL DEFAULT NULL");
+    await client.execute("ALTER TABLE users MODIFY COLUMN email VARCHAR(255) NULL DEFAULT NULL");
   }
 
-  await db.execute(
+  await client.execute(
     "UPDATE users SET username = LOWER(CONCAT('user_', REPLACE(SUBSTRING(id, 1, 12), '-', ''))) WHERE username IS NULL"
   );
-  await db.execute("ALTER TABLE users MODIFY username VARCHAR(50) NOT NULL");
-  await db.execute("ALTER TABLE users ADD UNIQUE INDEX IF NOT EXISTS uq_users_username (username)");
+  await client.execute("ALTER TABLE users MODIFY username VARCHAR(50) NOT NULL");
+  await client.execute("ALTER TABLE users ADD UNIQUE INDEX IF NOT EXISTS uq_users_username (username)");
 }
 
 export type MigrationSummary = {
@@ -96,27 +99,40 @@ export type MigrationSummary = {
   skipped: string[];
 };
 
-async function reconcileBaselineSchema() {
+async function reconcileBaselineSchema(database: DbClient, source?: Pool) {
   const baselinePath = path.join(migrationsDir, baselineMigration);
   if (!fs.existsSync(baselinePath)) {
-    await ensureMigrationTable();
+    await ensureMigrationTable(database);
     return false;
   }
 
   await transaction(async (client) => {
     await executeSqlFile(client, baselineMigration);
     await client.execute("INSERT IGNORE INTO schema_migrations (id) VALUES (?)", [baselineMigration]);
-  });
+  }, source);
 
   return true;
 }
 
 export async function ensureSchema(): Promise<MigrationSummary> {
-  const baselineReconciled = await reconcileBaselineSchema();
-  await ensureMigrationTable();
-  await reconcileUserIdentifierColumn();
+  if (!env.MARIADB_ADMIN_URL) return migrate(db);
+  const runtime = parseDatabaseUrl(env.DATABASE_URL, { requireDatabase: true });
+  const admin = parseDatabaseUrl(env.MARIADB_ADMIN_URL, { requireDatabase: false });
+  const pool = mariadb.createPool({
+    ...databaseOptionsWithSchema({ ...admin, database: runtime.database }),
+    connectionLimit: 1, bigIntAsNumber: true, checkNumberRange: true,
+    initSql: strictTransactionalSqlMode
+  });
+  try { return await migrate(createClient(pool), pool); }
+  finally { await pool.end(); }
+}
 
-  const applied = await getAppliedMigrations();
+async function migrate(database: DbClient, source?: Pool): Promise<MigrationSummary> {
+  const baselineReconciled = await reconcileBaselineSchema(database, source);
+  await ensureMigrationTable(database);
+  await reconcileUserIdentifierColumn(database);
+
+  const applied = await getAppliedMigrations(database);
   const files = listMigrationFiles();
   const appliedNow: string[] = [];
   const skipped: string[] = [];
@@ -130,7 +146,7 @@ export async function ensureSchema(): Promise<MigrationSummary> {
     await transaction(async (client) => {
       await executeSqlFile(client, file);
       await client.execute("INSERT IGNORE INTO schema_migrations (id) VALUES (?)", [file]);
-    });
+    }, source);
 
     appliedNow.push(file);
   }

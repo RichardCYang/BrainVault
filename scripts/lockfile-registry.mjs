@@ -45,7 +45,7 @@ function collectForeignRegistryUrls(lockfile) {
     }
 
     const host = parsed.hostname.toLowerCase();
-    if (!allowedHosts.has(host)) {
+    if (parsed.protocol !== 'https:' || !allowedHosts.has(host)) {
       violations.push({ location, resolved, host, metadata });
     }
   }

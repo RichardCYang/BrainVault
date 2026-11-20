@@ -69,6 +69,8 @@ async function start() {
     if (dataTransferCleanupInFlight) return;
     dataTransferCleanupInFlight = cleanupStaleDataTransferTempFiles()
       .catch(() => undefined)
+      .then(() => cleanupStaleAttachmentTempFiles())
+      .catch(() => undefined)
       .finally(() => { dataTransferCleanupInFlight = null; });
   }, Math.min(env.ATTACHMENT_TEMP_MAX_AGE_MS, 10 * 60_000));
   dataTransferCleanupTimer.unref?.();

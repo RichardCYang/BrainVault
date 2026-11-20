@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
@@ -121,7 +122,13 @@ async function main() {
   databaseUrl.password = password;
 
   const updatedContents = updateDatabaseUrl(baseContents, databaseUrl.toString());
-  fs.writeFileSync(envPath, updatedContents, "utf8");
+  const temporaryPath = `${envPath}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, updatedContents, { encoding: "utf8", flag: "wx", mode: 0o600, flush: true });
+    fs.renameSync(temporaryPath, envPath);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
+  }
 
   const action = existingEnv === undefined ? "Created" : "Updated";
   const databaseName = databaseUrl.pathname.replace(/^\//, "") || "(no database selected)";

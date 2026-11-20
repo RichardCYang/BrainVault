@@ -238,10 +238,10 @@ describe("REPORT.md aggregate page resource boundary", () => {
     expect(state.query.mock.calls.some(([sql]) => sql.includes("SELECT * FROM blocks"))).toBe(false);
   });
 
-  it("bounds generated caches when their stored representation was small", () => {
+  it("bounds generated caches when their stored representation was small", async () => {
     const rows = Array.from({ length: 5 }, (_, index) => ({ ...block(`blk_${index}`),
       html_cache: `<p>${"a".repeat(2 * 1024 * 1024)}</p>` }));
-    expect(() => toBlocksWithinPageBudget(rows)).toThrowError(expect.objectContaining({ code: "PAGE_HTML_CACHE_LIMIT_EXCEEDED" }));
+    await expect(toBlocksWithinPageBudget(rows)).rejects.toThrowError(expect.objectContaining({ code: "PAGE_HTML_CACHE_LIMIT_EXCEEDED" }));
   });
 
   it("counts JSON escaping before aggregate serialization, and caps rendered output", () => {

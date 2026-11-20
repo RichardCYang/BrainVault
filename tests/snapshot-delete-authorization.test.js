@@ -17,6 +17,7 @@ vi.mock("../src/lib/db.js", () => ({
 }));
 vi.mock("../src/middleware/auth.js", () => ({
   requireAuth: (req, _res, next) => { req.user = { id: state.actor }; next(); },
+  requireRecentAuthentication: (_req, _res, next) => next(),
   requireRequestAuthScope: () => ({ authVersion: 1, workspaceGeneration: 1, sessionId: "fixture" })
 }));
 vi.mock("../src/lib/auth-sessions.js", () => ({ assertCurrentAuthSessionBoundary: state.auth }));

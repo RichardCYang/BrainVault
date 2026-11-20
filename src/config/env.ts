@@ -45,6 +45,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().trim().min(1, "DATABASE_URL must be configured"),
   MARIADB_ADMIN_URL: z.string().trim().min(1).optional(),
   DB_USER_HOSTS: z.string().trim().min(1).default("localhost,127.0.0.1,::1"),
+  COUNTRY_POLICY_ALLOW_LOCAL_NETWORK: enabledByDefault,
   LOGIN_HISTORY_GEOIP_ENABLED: disabledByDefault,
   AUTO_BOOTSTRAP_DATABASE: enabledByDefault,
   DATABASE_CONNECTION_LIMIT: z.coerce.number().int().min(1).max(50).default(10),

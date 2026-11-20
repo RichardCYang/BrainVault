@@ -16,6 +16,7 @@ export type AuthTokenPayload = {
   username: string;
   authVersion: number;
   sessionId?: string;
+  authenticatedAt?: number;
 };
 
 export function normalizeAuthVersion(value: unknown) {
@@ -73,6 +74,7 @@ export function signAuthToken(payload: AuthTokenPayload, { expiresAt }: { expire
   return jwt.sign(
     {
       ...payload,
+      authenticatedAt: payload.authenticatedAt ?? Math.floor(Date.now() / 1000),
       authVersion: normalizeAuthVersion(payload.authVersion),
       sessionId,
       ...(exp === null ? {} : { exp })
@@ -104,6 +106,7 @@ export function verifyAuthToken(token: string): AuthTokenPayload {
       throw new ApiError(401, "INVALID_TOKEN", "Invalid authentication token");
     }
     return {
+      authenticatedAt: Number.isSafeInteger(decoded.authenticatedAt) ? decoded.authenticatedAt : 0,
       sub: String(decoded.sub),
       username: String(decoded.username),
       authVersion: normalizeAuthVersion(decoded.authVersion),

@@ -124,6 +124,12 @@ describe("database URL document metadata", () => {
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlR0y8AAAAASUVORK5CYII=",
       "base64"
     );
+    const oversizedHeader = Buffer.from(png);
+    oversizedHeader.writeUInt32BE(5000, 16);
+    oversizedHeader.writeUInt32BE(5000, 20);
+    expect(createDatabaseFaviconDataUrl(oversizedHeader)).toBe("");
+    const gif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64");
+    expect(createDatabaseFaviconDataUrl(gif)).toBe(`data:image/gif;base64,${gif.toString("base64")}`);
     expect(createDatabaseFaviconDataUrl(png)).toBe(`data:image/png;base64,${png.toString("base64")}`);
     expect(createDatabaseFaviconDataUrl(Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>"))).toBe("");
     expect(createDatabaseFaviconDataUrl(Buffer.alloc(databaseUrlPreviewFaviconMaxBytes + 1, 0))).toBe("");

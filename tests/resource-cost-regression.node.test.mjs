@@ -61,13 +61,13 @@ test("CRC consumes only the view, does not mutate buffers, and accepts SharedArr
   }
 });
 
-async function archive(module, data, source = { kind: "buffer", data }, overrides = {}) {
+async function archive(module, data, source = { kind: "buffer", data }, overrides = {}, checkDelivery) {
   const chunks = [];
   const output = new Writable({ highWaterMark: 64, write(chunk, _encoding, callback) {
     chunks.push(Buffer.from(chunk));
     setImmediate(callback);
   } });
-  const writer = new module.ZipWriter(output);
+  const writer = new module.ZipWriter(output, checkDelivery);
   await writer.add({ name: "자료/한글😀.bin", size: BigInt(data.length), crc32: zip.baseline.crc32(data),
     sha256: createHash("sha256").update(data).digest("hex"), source,
     modifiedAt: new Date("2026-09-01T12:34:56Z"), ...overrides });
@@ -85,7 +85,15 @@ test("ZIP output is byte-identical for buffer/file sources, under real writable 
     const path = join(directory, "source.bin");
     await writeFile(path, data);
     for (const source of [{ kind: "buffer", data }, { kind: "file", path }]) {
-      assert.deepEqual(await archive(zip.current, data, source), await archive(zip.baseline, data, source));
+      const expected = await archive(zip.baseline, data, source);
+      assert.deepEqual(await archive(zip.current, data, source), expected);
+      let checkedBytes = 0;
+      const guarded = await archive(zip.current, data, source, {}, async (length) => {
+        assert.ok(length > 0 && length <= 256 * 1024);
+        checkedBytes += length;
+      });
+      assert.deepEqual(guarded, expected);
+      assert.equal(checkedBytes, expected.length);
     }
     assert.deepEqual(await archive(zip.current, Buffer.alloc(0)), await archive(zip.baseline, Buffer.alloc(0)));
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -127,10 +135,10 @@ test("native ZIP CRC interoperates with directory reads, extraction, and corrupt
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("ZIP reader/writer guards remain unchanged outside CRC and the intentional nullable entry-read limit", () => {
+test("ZIP entry validation is preserved with guarded delivery and nullable entry-read limits", () => {
   const normalizeTail = (source) => {
-    const tail = source.slice(source.indexOf("export function crc32(data"));
-    return tail.replace(
+    const tail = source.slice(source.indexOf("export function crc32(data")).replace(/\r\n/g, "\n");
+    return tail.replace(/  private readonly output: Writable;[\s\S]*?(?=  async add\(entry: ZipWriteEntry\))/u, "").replace(
       /export async function readZipEntryBuffer\(filePath: string, entry: ZipReadEntry, maxBytes: number(?: \| null)?\) \{[\s\S]*?(?=  if \(entry\.uncompressedSize === 0n\))/u,
       "export async function readZipEntryBuffer(filePath: string, entry: ZipReadEntry, maxBytes: ENTRY_LIMIT) {\n"
     );

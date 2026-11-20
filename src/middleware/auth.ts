@@ -194,6 +194,7 @@ async function authenticateRequest(
     const authSessionId = await ensureAuthSessionForRequest(token, payload, req);
     req.auth = { authVersion, workspaceGeneration };
     req.auth.credentialSource = source;
+    req.auth.authenticatedAt = payload.authenticatedAt;
     const tokenExpiresAt = getAuthTokenExpiresAt(token);
     if (tokenExpiresAt) {
       req.auth.tokenExpiresAt = tokenExpiresAt;
@@ -223,6 +224,15 @@ async function authenticateRequest(
     ) clearAuthSessionCookie(res);
     next(error);
   }
+}
+
+export function requireRecentAuthentication(req: Request, _res: Response, next: NextFunction) {
+  const age = Date.now() / 1000 - (req.auth?.authenticatedAt ?? 0);
+  if (age < 0 || age > 15 * 60 || !Number.isFinite(age)) {
+    next(new ApiError(403, "RECENT_LOGIN_REQUIRED", "Sign in again to perform this action. Your current session is still active."));
+    return;
+  }
+  next();
 }
 
 export function requireRequestAuthScope(req: Request) {

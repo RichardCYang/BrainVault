@@ -156,12 +156,24 @@ export class ZipWriter {
   private readonly entries: CentralEntry[] = [];
   private readonly output: Writable;
 
-  constructor(output: Writable) {
+  private readonly checkDelivery?: (bytes: number) => Promise<void>;
+
+  constructor(output: Writable, checkDelivery?: (bytes: number) => Promise<void>) {
+    this.checkDelivery = checkDelivery;
     this.output = output;
   }
 
   private async write(data: Buffer) {
-    await writeBuffer(this.output, data);
+    if (this.checkDelivery) {
+      const chunkSize = 256 * 1024;
+      for (let offset = 0; offset < data.length; offset += chunkSize) {
+        const chunk = data.subarray(offset, offset + chunkSize);
+        await this.checkDelivery(chunk.length);
+        await writeBuffer(this.output, chunk);
+      }
+    } else {
+      await writeBuffer(this.output, data);
+    }
     this.offset += BigInt(data.length);
   }
 

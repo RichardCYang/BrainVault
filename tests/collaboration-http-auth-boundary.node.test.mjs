@@ -42,7 +42,7 @@ test("HTTP collaboration mutations capture and revalidate the authenticated sess
   );
   assert.match(
     route,
-    /import \{ requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js";/
+    /import \{ requireRecentAuthentication, requireAuth, requireRequestAuthScope \} from "\.\.\/middleware\/auth\.js";/
   );
 
   for (const mutation of [shareCreate, shareDelete, sessionCreate, snapshot]) {

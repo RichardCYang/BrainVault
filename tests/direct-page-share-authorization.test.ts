@@ -68,7 +68,7 @@ beforeEach(() => {
     }
     if (sql.includes("FROM users") && sql.includes("WHERE id IN")) return users.filter((user) => params.includes(user.id));
     if (isDirectShareList(sql)) {
-      expect(params).toEqual([owner.id, page.id]);
+      expect(params).toEqual([owner.id, page.id, "", 51]);
       return directSharePresent ? [{ ...editor, permission: "EDIT", shared_at: owner.created_at, share_generation: privateGeneration }] : [];
     }
     if (sql.includes("FROM collection_shares cs") && sql.includes("INNER JOIN users u")) {

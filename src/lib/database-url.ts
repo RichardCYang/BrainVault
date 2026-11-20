@@ -71,6 +71,7 @@ export function assertSecureDatabaseTransport(
   { production, name = "DATABASE_URL" }: { production: boolean; name?: string }
 ) {
   const parsed = parseDatabaseUrl(rawUrl, { requireDatabase: false });
+  if (name === "MARIADB_ADMIN_URL" && !parsed.password.trim()) throw new Error("MARIADB_ADMIN_URL requires a password");
   if (production && !isLoopbackDatabaseHost(parsed.host) && !parsed.tls) {
     throw new Error(`${name} must enable TLS with ?ssl=true for a remote database host in production`);
   }

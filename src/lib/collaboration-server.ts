@@ -1,3 +1,4 @@
+import { routeIdSchema } from "../utils/schemas.js";
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
@@ -115,7 +116,7 @@ const awarenessSelectionSchema = z.object({
 }).strict();
 
 const awarenessStateSchema = z.object({
-  blockId: z.string().max(64).nullable(),
+  blockId: routeIdSchema.nullable(),
   field: z.string().max(32).nullable(),
   control: z.string().max(32).nullable(),
   selection: awarenessSelectionSchema.nullable()
@@ -141,6 +142,8 @@ type ClientContext = {
   documentEpoch: string;
   synced: boolean;
   awareness: AwarenessState;
+  awarenessWindowStartedAt: number;
+  awarenessCount: number;
   rateWindowStartedAt: number;
   frameCount: number;
   byteCount: number;
@@ -745,6 +748,8 @@ export class PageCollaborationHub {
         documentEpoch: payload.documentEpoch,
         synced: false,
         awareness: { blockId: null, field: null, control: null, selection: null },
+        awarenessWindowStartedAt: 0,
+        awarenessCount: 0,
         rateWindowStartedAt: Date.now(),
         frameCount: 0,
         byteCount: 0,
@@ -1263,7 +1268,19 @@ export class PageCollaborationHub {
       return;
     }
     if (!client.synced) return;
+    const now = performance.now();
+    if (now - client.awarenessWindowStartedAt >= 1000) {
+      client.awarenessWindowStartedAt = now;
+      client.awarenessCount = 0;
+    }
+    // The editor debounces caret updates for 80 ms. Bound short bursts before
+    // authorization and per-recipient fan-out without querying the DB for each caret.
+    if (++client.awarenessCount > 20) {
+      client.socket.close(1008, "Too many presence updates");
+      return;
+    }
     if (!await this.revalidateClientPageAccess(room, client)) return;
+    if (JSON.stringify(client.awareness) === JSON.stringify(result.data.state)) return;
     client.awareness = result.data.state;
     this.broadcastPresenceUpdate(room, client);
   }

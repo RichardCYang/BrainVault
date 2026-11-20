@@ -1,4 +1,5 @@
 import { BLOCK_MARKDOWN_MAX_LENGTH } from "./editor-content-limits.js";
+import { schedulePreviewRender } from "./preview-render-queue.js";
 import { t } from "./i18n.js";
 
 const languageDefinitions = [
@@ -254,9 +255,11 @@ function createHighlightedCodeElement(source, definition) {
   pre.className = "rendered-code-pre";
   const code = document.createElement("code");
   code.className = `hljs language-${definition.grammar}`;
-  const highlighted = highlightSource(source, definition);
-  if (highlighted === null) code.textContent = source;
-  else code.innerHTML = highlighted;
+  code.textContent = source;
+  if (definition.grammar !== "plaintext") schedulePreviewRender(code, () => {
+    const highlighted = highlightSource(source, definition);
+    if (highlighted !== null) code.innerHTML = highlighted;
+  });
   pre.append(code);
   return pre;
 }
@@ -374,15 +377,18 @@ export function hydrateHighlightedCodeBlocks(root = document) {
       (isLua
         ? attemptedLuaSourceLength + source.length <= highlightResourceLimits.maxLuaHydrationSourceLength
         : attemptedSourceLength + source.length <= highlightResourceLimits.maxHydrationSourceLength);
-    let highlighted = null;
+    code.classList.add("hljs", `language-${definition.grammar}`);
     if (withinHydrationBudget) {
       attemptedBlocks += 1;
       if (isLua) attemptedLuaSourceLength += source.length;
       else attemptedSourceLength += source.length;
-      highlighted = highlightSource(source, definition);
+      const render = () => {
+        const highlighted = highlightSource(source, definition);
+        if (highlighted !== null) code.innerHTML = highlighted;
+      };
+      if (typeof requestAnimationFrame === "function") schedulePreviewRender(code, render);
+      else render();
     }
-    code.classList.add("hljs", `language-${definition.grammar}`);
-    if (highlighted !== null) code.innerHTML = highlighted;
   }
 
   hydrateAiAnswerCodeCopyButtons(root);
