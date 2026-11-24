@@ -9,7 +9,7 @@
   --ink: #2b2724;
   --ink-strong: #15120f;
   --muted: #6f6861;
-  --muted-light: #8a837b;
+  --muted-light: #736c66;
   --line: #e9e4de;
   --line-strong: #d8d1c8;
   --accent: #e2a33a;
@@ -40,7 +40,26 @@
   --weight-semibold: 600;
   --weight-bold: 700;
   --weight-heavy: 800;
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+  --text-title: 1.125rem;
+  /* Layer scale for elements that stack above the page. Component-local stacking
+     (row toolbars, drop indicators, drag states) keeps small literal values. */
+  --z-content-overlay: 50;
+  --z-sticky: 60;
+  --z-app-header: 70;
+  --z-popover: 80;
+  --z-toast: 90;
+  --z-sidebar-control: 95;
+  --z-drawer-backdrop: 100;
+  --z-drawer: 110;
+  --z-modal: 500;
+  --z-modal-popover: 600;
+  --z-tooltip: 700;
+  --z-skip-link: 1000;
+  /* No web font is shipped (the CSP blocks font CDNs), so use the platform UI
+     font with explicit Korean and Japanese faces instead of an uninstalled Inter.
+     system-ui is avoided: on CJK-locale Windows it renders Latin text in the
+     locale font instead of Segoe UI. */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", "Hiragino Sans", "Yu Gothic UI", "Noto Sans KR", "Noto Sans JP", sans-serif;
 }
 
 * {
@@ -182,7 +201,7 @@ select:focus-visible {
 
 .status {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-toast);
   /* Centered by auto margins between both edges, not left: 50% plus a
      transform: that left the toast only half the viewport to shrink-fit into,
      so on a phone it wrapped into a tall column over the content. */
@@ -1125,7 +1144,7 @@ textarea {
 
 .page-view-header {
   position: sticky;
-  z-index: 65;
+  z-index: var(--z-sticky);
   top: 0;
   display: flex;
   min-width: 0;
@@ -3366,7 +3385,7 @@ body.is-kanban-column-dragging {
 }
 
 .kanban-card.is-style-menu-open {
-  z-index: 130;
+  z-index: var(--z-popover);
 }
 
 .kanban-card.is-dragging {
@@ -3468,7 +3487,7 @@ body.is-kanban-column-dragging {
 
 .kanban-card-style-panel {
   position: fixed;
-  z-index: 120;
+  z-index: var(--z-popover);
   display: grid;
   width: 14.6rem;
   max-height: calc(100vh - 1rem);
@@ -3745,7 +3764,7 @@ body.is-kanban-column-dragging {
 
 .block-context-menu {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-popover);
   display: grid;
   /* Grows to fit a label beside its shortcut instead of wrapping the label. */
   width: max-content;
@@ -3766,7 +3785,7 @@ body.is-kanban-column-dragging {
 
 .navigation-context-menu {
   position: fixed;
-  z-index: 85;
+  z-index: var(--z-popover);
   display: grid;
   width: 11.5rem;
   gap: 0.12rem;
@@ -3784,7 +3803,7 @@ body.is-kanban-column-dragging {
 
 .page-actions-menu {
   position: fixed;
-  z-index: 90;
+  z-index: var(--z-popover);
   display: grid;
   width: min(19rem, calc(100vw - 20px));
   gap: 0.12rem;
@@ -3936,7 +3955,7 @@ body.is-kanban-column-dragging {
 }
 
 .page-version-history-kicker {
-  color: #936404;
+  color: var(--accent-text);
   font-size: var(--text-xs);
   font-weight: var(--weight-heavy);
   letter-spacing: 0.08em;
@@ -4452,7 +4471,7 @@ body.is-kanban-column-dragging {
   display: grid;
   place-items: center;
   width: 1.2rem;
-  color: #68615a;
+  color: var(--muted);
   font-weight: var(--weight-heavy);
 }
 
@@ -4814,7 +4833,7 @@ body.is-kanban-column-dragging {
 
 .block-move-dialog-header h2 {
   color: var(--ink-strong);
-  font-size: 1.2rem;
+  font-size: var(--text-title);
 }
 
 .block-move-dialog-header p:last-child {
@@ -4988,7 +5007,7 @@ html[data-theme="dark"] .block-move-dialog {
 .app-dialog-title {
   margin: 0;
   color: var(--ink-strong);
-  font-size: 1.1rem;
+  font-size: var(--text-title);
 }
 
 .app-dialog-message {
@@ -5094,7 +5113,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
 
 .slash-menu {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-popover);
   width: min(20rem, calc(100vw - 2rem));
   max-height: min(24rem, calc(100vh - 2rem));
   max-height: min(24rem, calc(100dvh - 2rem));
@@ -5195,7 +5214,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
 
 .inline-toolbar {
   position: fixed;
-  z-index: 70;
+  z-index: var(--z-popover);
   display: flex;
   align-items: center;
   gap: 0.1rem;
@@ -5216,9 +5235,10 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   bottom: -0.35rem;
   width: 0.62rem;
   height: 0.62rem;
-  border-right: 1px solid rgba(169, 120, 37, 0.18);
-  border-bottom: 1px solid rgba(169, 120, 37, 0.18);
-  background: #faf4ed;
+  border-right: 1px solid;
+  border-bottom: 1px solid;
+  border-color: inherit;
+  background: inherit;
   transform: translateX(-50%) rotate(45deg);
 }
 
@@ -5230,7 +5250,7 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: #765214;
+  color: var(--accent-text);
   padding: 0 0.4rem;
   font-size: var(--text-xs);
   font-weight: var(--weight-bold);
@@ -5239,8 +5259,8 @@ html[data-theme="dark"] button.app-dialog-danger:hover {
 .inline-toolbar button:hover,
 .inline-toolbar button:focus-visible,
 .inline-toolbar button[aria-pressed="true"] {
-  background: #f2eae2;
-  color: #614208;
+  background: var(--accent-soft-strong);
+  color: var(--ink-strong);
 }
 
 .alignment-icon {
@@ -5723,7 +5743,7 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
 
   .app-mode .sidebar {
     position: fixed;
-    z-index: 110;
+    z-index: var(--z-drawer);
     top: 0;
     bottom: 0;
     left: 0;
@@ -5774,7 +5794,7 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
 
   .mobile-app-header {
     position: sticky;
-    z-index: 70;
+    z-index: var(--z-app-header);
     top: 0;
     display: flex;
     align-items: center;
@@ -5855,7 +5875,7 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
 
   .mobile-sidebar-backdrop {
     position: fixed;
-    z-index: 100;
+    z-index: var(--z-drawer-backdrop);
     inset: 0;
     display: block;
     width: 100%;
@@ -6834,7 +6854,7 @@ html[data-theme="dark"] span[style*="#448361" i] { color: #74c296 !important; }
 .database-toolbar-popover,
 .database-property-list {
   position: absolute;
-  z-index: 80;
+  z-index: var(--z-popover);
   top: calc(100% + 0.42rem);
   right: 0;
   width: min(38rem, calc(100vw - 2.25rem));
@@ -9636,7 +9656,7 @@ body.search-dialog-open {
 
 .account-settings-layer {
   position: fixed;
-  z-index: 500;
+  z-index: var(--z-modal);
   inset: 0;
   display: grid;
   place-items: center;
@@ -9699,7 +9719,7 @@ body.search-dialog-open {
 .account-settings-header h2 {
   margin: 0;
   color: var(--ink-strong);
-  font-size: 1.12rem;
+  font-size: var(--text-title);
   letter-spacing: -0.025em;
 }
 
@@ -10144,7 +10164,7 @@ body.search-dialog-open {
 .emoji-picker-layer {
   position: fixed;
   inset: 0;
-  z-index: 1600;
+  z-index: var(--z-modal-popover);
   background: rgba(27, 30, 34, 0.07);
 }
 
@@ -10383,7 +10403,7 @@ body.search-dialog-open {
 }
 
 .emoji-search-label input::placeholder {
-  color: #afa79f;
+  color: var(--muted-light);
 }
 
 .emoji-search-label input:focus {
@@ -11585,7 +11605,7 @@ body.search-dialog-open {
   }
 
   .app-mode .account-settings-kicker {
-    color: var(--chrome-accent);
+    color: var(--chrome-accent-strong);
   }
 
   .app-mode .account-settings-close {
@@ -12174,7 +12194,7 @@ body.search-dialog-open {
   .app-mode .sidebar-footer-label {
     display: block;
     margin: 0.2rem 0.5rem 0.28rem;
-    color: #99938e;
+    color: var(--muted-light);
     font-size: var(--text-xs);
     font-weight: var(--weight-bold);
     letter-spacing: 0.065em;
@@ -12245,14 +12265,14 @@ body.search-dialog-open {
   }
 
   .app-mode .count-pill {
-    color: #99938d;
+    color: var(--muted-light);
     font-size: var(--text-xs);
   }
 
   .app-mode .sidebar-add-button,
   .app-mode .navigation-more-button {
     border-radius: var(--radius-sm);
-    color: #95908a;
+    color: var(--muted-light);
   }
 
   .app-mode .sidebar-add-button:hover {
@@ -12306,7 +12326,7 @@ body.search-dialog-open {
   }
 
   .app-mode .doc-caret {
-    color: #a39d96;
+    color: var(--muted-light);
   }
 
   .app-mode .doc-icon {
@@ -12530,7 +12550,7 @@ body.search-dialog-open {
   gap: 0.8rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: rgba(247, 251, 253, 0.74);
+  background: var(--panel-soft);
   padding: 0.72rem 0.8rem;
 }
 
@@ -12573,7 +12593,7 @@ body.search-dialog-open {
 }
 
 .login-history-table th {
-  background: rgba(248, 243, 239, 0.72);
+  background: var(--panel-soft);
   color: var(--muted);
   font-size: var(--text-xs);
   font-weight: var(--weight-heavy);
@@ -12646,7 +12666,7 @@ body.search-dialog-open {
   margin-top: 1rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: rgba(247, 251, 253, 0.74);
+  background: var(--panel-soft);
   padding: 1rem;
 }
 
@@ -12803,7 +12823,7 @@ body.search-dialog-open {
   gap: 0.42rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: rgba(247, 251, 253, 0.74);
+  background: var(--panel-soft);
   padding: 0.8rem;
 }
 
@@ -14088,7 +14108,7 @@ button.danger {
 
 .rendered-ai-chat-link-tooltip {
   position: fixed;
-  z-index: 1270;
+  z-index: var(--z-tooltip);
   width: max-content;
   max-width: min(24rem, calc(100vw - 1rem));
   border: 1px solid var(--line);
@@ -14872,7 +14892,7 @@ body.pdf-export-mode .rendered-ai-chat-pagination {
 
 .remote-collaboration-caret {
   position: fixed;
-  z-index: 1280;
+  z-index: var(--z-content-overlay);
   display: block;
   width: 2px;
   min-height: 12px;
@@ -14938,7 +14958,7 @@ body.pdf-export-mode .remote-collaboration-caret {
 
 .share-page-layer {
   position: fixed;
-  z-index: 1320;
+  z-index: var(--z-modal);
   inset: 0;
   display: grid;
   place-items: center;
@@ -16115,7 +16135,7 @@ html[data-theme="dark"] {
   --ink: #dedbd4;
   --ink-strong: #f5f3ee;
   --muted: #a29e96;
-  --muted-light: #8a867f;
+  --muted-light: #99958e;
   --line: #2d2e35;
   --line-strong: #3a3b43;
   --accent: #e2a33a;
@@ -16184,7 +16204,7 @@ html[data-theme="dark"] textarea::placeholder {
     --chrome-sidebar-raised: rgba(38, 39, 46, 0.9);
     --chrome-text: #e9e6e0;
     --chrome-text-soft: #b0aca4;
-    --chrome-text-faint: #8f8b84;
+    --chrome-text-faint: #99958e;
     --chrome-line: #2d2e35;
     --chrome-line-strong: #3a3b43;
     --chrome-accent: #e2a33a;
@@ -17099,7 +17119,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
     --workspace-sidebar-active: rgba(226, 163, 58, 0.16);
     --workspace-sidebar-line: rgba(255, 240, 220, 0.08);
     --workspace-sidebar-text: #c9c5bd;
-    --workspace-sidebar-muted: #8f8b84;
+    --workspace-sidebar-muted: #99958e;
   }
 
   html[data-theme="dark"] .app-mode .sidebar {
@@ -17393,7 +17413,7 @@ html[data-theme="dark"] .rendered-gantt-status--blocked { background: #513529; c
 
 .page-cover-dialog-header h2 {
   color: var(--ink-strong);
-  font-size: 1.25rem;
+  font-size: var(--text-title);
 }
 
 .page-cover-dialog-header p:last-child {
@@ -17678,7 +17698,7 @@ html[data-theme="dark"] .page-cover-custom-row {
     border-radius: var(--radius-sm);
     background: #f2f0ff;
     box-shadow: 0 1px 1px rgba(55, 53, 47, 0.06);
-    font-size: 10px;
+    font-size: 0.625rem;
   }
 
   .app-mode .user-identity {
@@ -17701,7 +17721,7 @@ html[data-theme="dark"] .page-cover-custom-row {
   .app-mode .account-settings-chevron {
     width: 12px;
     height: 12px;
-    color: #aaa9a5;
+    color: var(--muted-light);
     stroke-width: 1.6;
     opacity: 1;
   }
@@ -18016,7 +18036,7 @@ html[data-theme="dark"] .page-cover-custom-row {
     --sidebar-reference-active: #2b2c33;
     --sidebar-reference-text: #c9c5bd;
     --sidebar-reference-text-strong: #f0eee9;
-    --sidebar-reference-muted: #8f8b84;
+    --sidebar-reference-muted: #99958e;
     --sidebar-reference-icon: #8f8b84;
     --sidebar-reference-line: #2d2e35;
   }
@@ -18198,17 +18218,9 @@ body.is-navigation-dragging {
    Improves keyboard bypass, text/icon contrast, and compact sidebar target
    sizing without changing application behavior, persistence, or data flows.
    ========================================================================== */
-:root {
-  --muted-light: #736c66;
-}
-
-html[data-theme="dark"] {
-  --muted-light: #99958e;
-}
-
 .skip-link {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-skip-link);
   top: max(0.75rem, env(safe-area-inset-top));
   left: max(0.75rem, env(safe-area-inset-left));
   transform: translateY(calc(-100% - 1.5rem));
@@ -18240,7 +18252,7 @@ html[data-theme="dark"] {
   }
 
   html[data-theme="dark"] body.app-mode {
-    --chrome-text-faint: #8f8b84;
+    --chrome-text-faint: #99958e;
     --sidebar-reference-muted: #9b978f;
     --sidebar-reference-icon: #9b978f;
   }
@@ -19131,7 +19143,7 @@ html[data-theme="dark"] {
 
   body.app-mode .desktop-sidebar-toggle {
     position: fixed;
-    z-index: 96;
+    z-index: calc(var(--z-sidebar-control) + 1);
     top: max(10px, env(safe-area-inset-top));
     left: calc(var(--desktop-sidebar-width) + 10px);
     display: grid;
@@ -19199,7 +19211,7 @@ html[data-theme="dark"] {
 @media (min-width: 761px) {
   body.app-mode:not(.desktop-sidebar-collapsed) .sidebar-resize-handle {
     position: fixed;
-    z-index: 95;
+    z-index: var(--z-sidebar-control);
     top: 0;
     bottom: 0;
     left: calc(var(--desktop-sidebar-width) - 3px);
@@ -19286,6 +19298,82 @@ html[data-theme="dark"] {
 
   .collection-share-form-row input {
     flex-basis: 100%;
+  }
+}
+
+/* ==========================================================================
+   Keyboard focus, forced colors, and increased contrast
+   These controls shared one rule for :hover and :focus-visible that removed
+   the outline, so keyboard focus had no indicator or only a faint tint
+   (WCAG 2.4.7). Mouse hover is unchanged; only keyboard focus gains a ring.
+   ========================================================================== */
+:is(
+  .kanban-card-icon-button,
+  .gantt-action-button,
+  .gantt-bar,
+  .ai-chat-add-turn,
+  .ai-chat-page-button,
+  .rendered-ai-chat-page,
+  .rendered-ai-chat-link-tooltip-title,
+  .rendered-ai-chat-link-tooltip-nav,
+  .timetable-action-button
+):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Edge add buttons sit flush against table borders, so the ring goes inside. */
+.table-edge-add:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+/* The selected collection row is darker than the sidebar, so its page count
+   uses the row's text tone to stay above 4.5:1. */
+.app-mode .collection-title-row.active .count-pill {
+  color: var(--sidebar-reference-text, var(--muted));
+}
+
+/* Forced-colors mode drops box-shadow, which several focus styles rely on. */
+@media (forced-colors: active) {
+  :focus-visible,
+  input:focus,
+  textarea:focus,
+  select:focus {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root,
+  body.app-mode {
+    --muted: #57514b;
+    --muted-light: #57514b;
+    --line: #b9b0a5;
+    --line-strong: #8f857a;
+    --chrome-text-soft: #57514b;
+    --chrome-text-faint: #57514b;
+    --chrome-line: #b9b0a5;
+    --chrome-line-strong: #8f857a;
+    --sidebar-reference-muted: #57514b;
+    --sidebar-reference-icon: #57514b;
+  }
+
+  html[data-theme="dark"],
+  html[data-theme="dark"] body.app-mode {
+    --muted: #c4c0b8;
+    --muted-light: #c4c0b8;
+    --line: #55565f;
+    --line-strong: #6e6f79;
+    --chrome-text-soft: #c4c0b8;
+    --chrome-text-faint: #c4c0b8;
+    --chrome-line: #55565f;
+    --chrome-line-strong: #6e6f79;
+    --workspace-sidebar-muted: #c4c0b8;
+    --sidebar-reference-muted: #c4c0b8;
+    --sidebar-reference-icon: #c4c0b8;
   }
 }
 
