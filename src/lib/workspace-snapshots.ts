@@ -32,9 +32,15 @@ const maxAutomaticSnapshotStorageBytes = BigInt(env.SNAPSHOT_AUTO_TOTAL_MAX_MB) 
 // Keep room for a new safety copy for each kind before post-success pruning.
 // Failed operations and delegated deletes must also stop at this hard limit.
 const maxAutomaticSnapshotCount = 2 * (automaticSnapshotRecentHardMaxCount + 1);
-const activeSnapshotOwners = new Set<string>();
-const automaticSnapshotRateStore = new BoundedRateLimitStore();
-automaticSnapshotRateStore.init({ windowMs: env.DATA_EXPORT_WINDOW_MS });
+const activeSnapshotOwners = {
+  standard: new Set<string>(),
+  ownerSafety: new Set<string>()
+};
+const automaticSnapshotRateStores = {
+  owner: new BoundedRateLimitStore(),
+  delegate: new BoundedRateLimitStore()
+};
+for (const store of Object.values(automaticSnapshotRateStores)) store.init({ windowMs: env.DATA_EXPORT_WINDOW_MS });
 
 async function assertSnapshotCapacity(userId: string, client: DbClient, kind: SnapshotKind, additionalBytes = 0n, delegated = false) {
   // Call only after assertCurrentAuthSessionBoundary has locked the users row.
@@ -50,7 +56,11 @@ async function assertSnapshotCapacity(userId: string, client: DbClient, kind: Sn
     throw new ApiError(409, "SNAPSHOT_LIMIT_REACHED", "Delete an existing snapshot before creating another one");
   }
   const maxBytes = kind === "MANUAL" ? maxSnapshotStorageBytes : maxAutomaticSnapshotStorageBytes;
-  const remainingBytes = (delegated ? maxBytes * 3n / 4n : maxBytes) - BigInt(usage?.total_bytes ?? 0);
+  // Preserve room for a full-size owner archive even when the configured
+  // per-archive limit is larger than a quarter of the automatic budget.
+  const ownerReserve = maxBytes / 4n > maxSnapshotArchiveBytes ? maxBytes / 4n : maxSnapshotArchiveBytes;
+  const delegatedMaxBytes = maxBytes - ownerReserve;
+  const remainingBytes = (delegated ? delegatedMaxBytes : maxBytes) - BigInt(usage?.total_bytes ?? 0);
   if (remainingBytes <= 0n || additionalBytes > remainingBytes) {
     throw new ApiError(409, "SNAPSHOT_STORAGE_LIMIT_REACHED", "Delete an existing snapshot to free snapshot storage");
   }
@@ -290,17 +300,19 @@ export async function createWorkspaceSnapshot(
   }
   // Hold admission until the actual writer settles, including after an HTTP
   // disconnect. Different delegates cannot stage the same owner's files at once.
-  if (activeSnapshotOwners.has(userId)) {
+  const delegated = Boolean(actor && actor.userId !== userId);
+  const activeOwners = kind === "MANUAL" || delegated ? activeSnapshotOwners.standard : activeSnapshotOwners.ownerSafety;
+  if (activeOwners.has(userId) || (delegated && activeSnapshotOwners.ownerSafety.has(userId))) {
     throw new ApiError(429, "DATA_EXPORT_IN_PROGRESS", "Another snapshot is already active for this workspace");
   }
-  if (activeSnapshotOwners.size >= env.DATA_EXPORT_MAX_CONCURRENT) {
+  if (activeOwners.size > 0) {
     throw new ApiError(503, "DATA_EXPORT_BUSY", "The server is already creating the maximum number of snapshots");
   }
-  activeSnapshotOwners.add(userId);
+  activeOwners.add(userId);
   try {
     return await createAdmittedWorkspaceSnapshot(userId, authScope, kind, actor);
   } finally {
-    activeSnapshotOwners.delete(userId);
+    activeOwners.delete(userId);
   }
 }
 
@@ -322,7 +334,9 @@ async function createAdmittedWorkspaceSnapshot(
   // Charge the actor only after authorization, and only for work that actually
   // creates an automatic archive. Plain deletes and receipt replays stay cheap.
   if (kind !== "MANUAL") {
-    const rate = await automaticSnapshotRateStore.increment(actor?.userId ?? userId);
+    const isDelegated = actor && actor.userId !== userId;
+    const store = isDelegated ? automaticSnapshotRateStores.delegate : automaticSnapshotRateStores.owner;
+    const rate = await store.increment(isDelegated ? actor.userId : userId);
     if (rate.totalHits > env.DATA_EXPORT_MAX) {
       throw new ApiError(429, "DATA_EXPORT_RATE_LIMITED", "Too many safety snapshot requests. Try again later.");
     }

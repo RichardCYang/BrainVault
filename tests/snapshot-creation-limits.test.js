@@ -221,24 +221,24 @@ describe("snapshot report authorization and automatic capacity", () => {
     expect(mocks.prepare).toHaveBeenCalledTimes(2);
   });
 
-  it("bounds concurrent snapshot writers across workspaces", async () => {
-    const pending = [];
-    const release = [];
+  it("reserves owner safety capacity while a manual snapshot is active", async () => {
+    let release;
+    let entered;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    const started = new Promise((resolve) => { entered = resolve; });
     const prepare = mocks.prepare.getMockImplementation();
+    mocks.prepare.mockImplementationOnce(async (...args) => { entered(); await waiting; return prepare(...args); });
+    const manual = createWorkspaceSnapshot(userId, scope, "MANUAL");
+    await started;
     try {
-      for (let i = 0; i < env.DATA_EXPORT_MAX_CONCURRENT; i++) {
-        let entered;
-        const started = new Promise((resolve) => { entered = resolve; });
-        const waiting = new Promise((resolve) => { release.push(resolve); });
-        mocks.prepare.mockImplementationOnce(async (...args) => { entered(); await waiting; return prepare(...args); });
-        pending.push(createWorkspaceSnapshot(`${userId}_slot${i}`, scope, "PRE_DELETE"));
-        await started;
-      }
-      await expect(createWorkspaceSnapshot(userId, scope, "PRE_DELETE"))
+      await expect(createWorkspaceSnapshot(`${userId}_other`, scope, "MANUAL"))
         .rejects.toMatchObject({ statusCode: 503, code: "DATA_EXPORT_BUSY" });
-      expect(mocks.prepare).toHaveBeenCalledTimes(env.DATA_EXPORT_MAX_CONCURRENT);
+      await expect(createWorkspaceSnapshot(`${userId}_recovery`, scope, "PRE_DELETE"))
+        .resolves.toMatchObject({ kind: "pre-delete" });
+      expect(mocks.prepare).toHaveBeenCalledTimes(2);
     } finally {
-      for (let i = 0; i < pending.length; i++) { release[i](); await pending[i]; }
+      release();
+      await manual;
     }
   });
 

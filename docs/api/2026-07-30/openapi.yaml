@@ -1355,10 +1355,18 @@ paths:
           description: Recovery or outer request-rate limit exceeded
   /api/auth/logout:
     post:
-      summary: Revoke all current account sessions and clear the browser session cookie
+      summary: Revoke the current session and clear its browser cookie
+      responses:
+        '204':
+          description: Current session revoked and cookie cleared
+  /api/auth/logout-all:
+    post:
+      summary: Revoke all account sessions and clear the browser cookie
       responses:
         '204':
           description: Authentication generation revoked and session cookie cleared
+        '403':
+          description: Sign-in within the previous 15 minutes required
   /api/auth/mfa/status:
     get:
       summary: Read the current user's TOTP and passkey configuration

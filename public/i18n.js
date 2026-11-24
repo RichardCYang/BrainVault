@@ -4159,7 +4159,7 @@ const pageCommentTranslationAdditions = {
     cancel: "Cancel",
     saving: "Saving…",
     deleting: "Deleting…",
-    deleteConfirm: "Delete this comment?",
+    deleteConfirm: "Delete this comment? An undo copy is kept for up to 30 days.",
     saved: "Comment updated.",
     deleted: "Comment deleted.",
     loadError: "Comments could not be loaded."
@@ -4185,7 +4185,7 @@ const pageCommentTranslationAdditions = {
     cancel: "キャンセル",
     saving: "保存中…",
     deleting: "削除中…",
-    deleteConfirm: "このコメントを削除しますか？",
+    deleteConfirm: "このコメントを削除しますか？ 復元用のコピーは最大30日間保存されます。",
     saved: "コメントを更新しました。",
     deleted: "コメントを削除しました。",
     loadError: "コメントを読み込めませんでした。"
@@ -4211,7 +4211,7 @@ const pageCommentTranslationAdditions = {
     cancel: "취소",
     saving: "저장 중…",
     deleting: "삭제 중…",
-    deleteConfirm: "이 댓글을 삭제할까요?",
+    deleteConfirm: "이 댓글을 삭제할까요? 실행 취소를 위한 복구본은 최대 30일 동안 보관됩니다.",
     saved: "댓글을 수정했습니다.",
     deleted: "댓글을 삭제했습니다.",
     loadError: "댓글을 불러오지 못했습니다."
@@ -4237,7 +4237,7 @@ const pageCommentTranslationAdditions = {
     cancel: "Annuler",
     saving: "Enregistrement…",
     deleting: "Suppression…",
-    deleteConfirm: "Supprimer ce commentaire ?",
+    deleteConfirm: "Supprimer ce commentaire ? Une copie de restauration est conservée pendant 30 jours au maximum.",
     saved: "Commentaire mis à jour.",
     deleted: "Commentaire supprimé.",
     loadError: "Impossible de charger les commentaires."
@@ -4263,7 +4263,7 @@ const pageCommentTranslationAdditions = {
     cancel: "Abbrechen",
     saving: "Wird gespeichert…",
     deleting: "Wird gelöscht…",
-    deleteConfirm: "Diesen Kommentar löschen?",
+    deleteConfirm: "Diesen Kommentar löschen? Eine Kopie zum Wiederherstellen bleibt bis zu 30 Tage gespeichert.",
     saved: "Kommentar aktualisiert.",
     deleted: "Kommentar gelöscht.",
     loadError: "Kommentare konnten nicht geladen werden."
@@ -4289,7 +4289,7 @@ const pageCommentTranslationAdditions = {
     cancel: "Cancelar",
     saving: "Guardando…",
     deleting: "Eliminando…",
-    deleteConfirm: "¿Eliminar este comentario?",
+    deleteConfirm: "¿Eliminar este comentario? Se conserva una copia para deshacer la acción durante un máximo de 30 días.",
     saved: "Comentario actualizado.",
     deleted: "Comentario eliminado.",
     loadError: "No se pudieron cargar los comentarios."
@@ -4315,7 +4315,7 @@ const pageCommentTranslationAdditions = {
     cancel: "Cancelar",
     saving: "Salvando…",
     deleting: "Excluindo…",
-    deleteConfirm: "Excluir este comentário?",
+    deleteConfirm: "Excluir este comentário? Uma cópia para desfazer a exclusão é mantida por até 30 dias.",
     saved: "Comentário atualizado.",
     deleted: "Comentário excluído.",
     loadError: "Não foi possível carregar os comentários."
@@ -11246,6 +11246,8 @@ const sessionExpiryTranslations = {
 
 const uxReviewTranslations = {
   "en": {
+    "sharing.archiveKeepsAccess": "Archive? People who already have access can still read the archived content.",
+    "account.signOutAllDevices": "Sign out all devices",
     "account.logoutRemoveDrafts": "Sign out and delete the unsaved recovery copies for this account on this browser, including drafts from other tabs? Cancel to keep them.",
     "account.logoutStorageUnavailable": "Sign out and delete this account’s verified drafts from all tabs in this browser? Older or unreadable copies may remain on this device.",
     "account.logoutDraftsRemain": "Signed out. Some recovery copies may remain on this device.",
@@ -11258,6 +11260,8 @@ const uxReviewTranslations = {
     "status.saveResuming": "Back online. Saving your changes…"
   },
   "ja": {
+    "sharing.archiveKeepsAccess": "アーカイブしますか？ すでにアクセス権を持つユーザーは、アーカイブ後も内容を閲覧できます。",
+    "account.signOutAllDevices": "すべての端末からログアウト",
     "account.logoutRemoveDrafts": "ログアウトして、このブラウザに残るこのアカウントの未保存の復元データを削除しますか？ 他のタブの下書きも含まれます。保持するにはキャンセルしてください。",
     "account.logoutStorageUnavailable": "ログアウトして、このブラウザの全タブで確認できたこのアカウントの下書きを削除しますか？ 古いコピーや読み取れないコピーは端末に残る場合があります。",
     "account.logoutDraftsRemain": "ログアウトしました。一部の下書きが端末に残っている可能性があります。",
@@ -11270,6 +11274,8 @@ const uxReviewTranslations = {
     "status.saveResuming": "オンラインに戻りました。変更を保存しています…"
   },
   "ko": {
+    "sharing.archiveKeepsAccess": "보관할까요? 기존에 접근 권한을 받은 사용자는 보관 후에도 내용을 읽을 수 있습니다.",
+    "account.signOutAllDevices": "모든 기기에서 로그아웃",
     "account.logoutRemoveDrafts": "로그아웃하고 이 브라우저에 남은 이 계정의 미저장 복구본을 삭제할까요? 다른 탭의 초안도 포함됩니다. 보관하려면 취소하세요.",
     "account.logoutStorageUnavailable": "로그아웃하고 이 브라우저의 모든 탭에서 확인된 이 계정의 초안을 삭제할까요? 이전 버전의 복사본이나 읽을 수 없는 초안은 기기에 남을 수 있습니다.",
     "account.logoutDraftsRemain": "로그아웃했습니다. 이 기기에 일부 복구본이 남아 있을 수 있습니다.",
@@ -11282,6 +11288,8 @@ const uxReviewTranslations = {
     "status.saveResuming": "다시 연결되었습니다. 변경 사항을 저장하는 중…"
   },
   "fr": {
+    "sharing.archiveKeepsAccess": "Archiver ? Les personnes qui y ont déjà accès pourront toujours lire le contenu archivé.",
+    "account.signOutAllDevices": "Déconnecter tous les appareils",
     "account.logoutRemoveDrafts": "Se déconnecter et supprimer les brouillons non enregistrés de ce compte dans ce navigateur, y compris ceux des autres onglets ? Annulez pour les conserver.",
     "account.logoutStorageUnavailable": "Se déconnecter et supprimer les brouillons vérifiés de ce compte dans tous les onglets de ce navigateur ? Des copies anciennes ou illisibles peuvent rester sur cet appareil.",
     "account.logoutDraftsRemain": "Déconnexion effectuée. Des brouillons peuvent rester sur cet appareil.",
@@ -11294,6 +11302,8 @@ const uxReviewTranslations = {
     "status.saveResuming": "De nouveau en ligne. Enregistrement de vos modifications…"
   },
   "de": {
+    "sharing.archiveKeepsAccess": "Archivieren? Personen mit bestehendem Zugriff können die archivierten Inhalte weiterhin lesen.",
+    "account.signOutAllDevices": "Auf allen Geräten abmelden",
     "account.logoutRemoveDrafts": "Abmelden und die ungesicherten Entwürfe dieses Kontos in diesem Browser löschen, einschließlich anderer Tabs? Zum Behalten abbrechen.",
     "account.logoutStorageUnavailable": "Abmelden und die bestätigten Entwürfe dieses Kontos in allen Tabs dieses Browsers löschen? Ältere oder unlesbare Kopien können auf diesem Gerät verbleiben.",
     "account.logoutDraftsRemain": "Abgemeldet. Einige Entwürfe können auf diesem Gerät verbleiben.",
@@ -11306,6 +11316,8 @@ const uxReviewTranslations = {
     "status.saveResuming": "Wieder online. Deine Änderungen werden gespeichert…"
   },
   "es": {
+    "sharing.archiveKeepsAccess": "¿Archivar? Las personas que ya tienen acceso pueden seguir leyendo el contenido archivado.",
+    "account.signOutAllDevices": "Cerrar sesión en todos los dispositivos",
     "account.logoutRemoveDrafts": "¿Cerrar sesión y borrar los borradores sin guardar de esta cuenta en este navegador, incluidos los de otras pestañas? Cancela para conservarlos.",
     "account.logoutStorageUnavailable": "¿Cerrar sesión y borrar los borradores verificados de esta cuenta en todas las pestañas de este navegador? Las copias antiguas o ilegibles pueden quedar en este dispositivo.",
     "account.logoutDraftsRemain": "Sesión cerrada. Pueden quedar borradores en este dispositivo.",
@@ -11318,6 +11330,8 @@ const uxReviewTranslations = {
     "status.saveResuming": "De nuevo en línea. Guardando tus cambios…"
   },
   "pt": {
+    "sharing.archiveKeepsAccess": "Arquivar? As pessoas que já têm acesso ainda poderão ler o conteúdo arquivado.",
+    "account.signOutAllDevices": "Sair em todos os dispositivos",
     "account.logoutRemoveDrafts": "Sair e excluir os rascunhos não salvos desta conta neste navegador, inclusive de outras abas? Cancele para mantê-los.",
     "account.logoutStorageUnavailable": "Sair e excluir os rascunhos verificados desta conta em todas as abas deste navegador? Cópias antigas ou ilegíveis podem permanecer neste dispositivo.",
     "account.logoutDraftsRemain": "Sessão encerrada. Alguns rascunhos podem permanecer neste dispositivo.",

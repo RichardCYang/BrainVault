@@ -376,6 +376,26 @@ async function deleteDelegatedCollectionGrantCascade(
   }
 }
 
+async function deleteDirectEditorsMaskedByCollectionRead(
+  collectionId: string,
+  removedReaders: string[],
+  client: DbClient
+) {
+  let removed = 0;
+  for (const userId of removedReaders) {
+    // A direct EDIT grant cannot become newly effective as a result of
+    // revocation. Preserve independent direct grants for WRITE and ADMIN.
+    const deletion = await client.execute<{ affectedRows: number }>(
+      `DELETE ps FROM page_shares ps
+       INNER JOIN page_collection_memberships pcm ON pcm.page_id = ps.page_id
+       WHERE pcm.collection_id = ? AND ps.user_id = ? AND ps.permission = 'EDIT'`,
+      [collectionId, userId]
+    );
+    removed += Number(deletion.affectedRows);
+  }
+  return removed;
+}
+
 async function deleteDelegatedDirectGrants(
   pages: PageRow[],
   grantorIds: string[],
@@ -829,6 +849,11 @@ collectionSharingRouter.patch(
         if (cascadedDirectGrants.length > 0) {
           await deleteDelegatedDirectGrants(pages, revokedGrantorIds, client);
         }
+        const removedMaskedDirectGrantCount = await deleteDirectEditorsMaskedByCollectionRead(
+          collectionId,
+          cascadedCollectionGrants.filter((grant) => grant.permission === "READ").map((grant) => grant.userId),
+          client
+        );
 
         const updated = (await getCollectionShareRows(collectionId, client))
           .find((row) => row.id === sharedUserId);
@@ -839,7 +864,8 @@ collectionSharingRouter.patch(
           oldGeneration: existing.generation,
           pages,
           cascadedCollectionGrants,
-          cascadedDirectGrants
+          cascadedDirectGrants,
+          removedMaskedDirectGrantCount
         };
       });
 
@@ -849,7 +875,7 @@ collectionSharingRouter.patch(
         previousPermission: result.oldPermission, permission: result.updated.permission,
         previousGeneration: result.oldGeneration, generation: result.updated.share_generation,
         revokedCollectionGrants: result.cascadedCollectionGrants.length,
-        revokedDirectGrants: result.cascadedDirectGrants.length
+        revokedDirectGrants: result.cascadedDirectGrants.length + result.removedMaskedDirectGrantCount
       });
       for (const page of result.pages) {
         disconnectSharedUserGrant(
@@ -963,6 +989,9 @@ collectionSharingRouter.delete(
           throw new ApiError(409, "COLLECTION_SHARE_GENERATION_CHANGED", "The collection grant changed in another session.");
         }
 
+        const removedReaders = cascadedCollectionGrants
+          .filter((grant) => grant.permission === "READ").map((grant) => grant.userId);
+        if (existing.permission === "READ") removedReaders.push(sharedUserId);
         await deleteDelegatedCollectionGrantCascade(collectionId, cascadedCollectionGrants, client);
 
         // Direct grants carry their creator in page_shares.shared_by. Remove any
@@ -971,6 +1000,7 @@ collectionSharingRouter.delete(
         if (cascadedDirectGrants.length > 0) {
           await deleteDelegatedDirectGrants(pages, revokedGrantorIds, client);
         }
+        const removedMaskedDirectGrantCount = await deleteDirectEditorsMaskedByCollectionRead(collectionId, removedReaders, client);
 
         const removedDocumentLineages: Array<{ pageId: string; documentEpoch: string }> = [];
         for (const page of pages) {
@@ -991,6 +1021,7 @@ collectionSharingRouter.delete(
           pages,
           cascadedCollectionGrants,
           cascadedDirectGrants,
+          removedMaskedDirectGrantCount,
           removedDocumentLineages
         };
       });
@@ -1001,7 +1032,7 @@ collectionSharingRouter.delete(
         previousPermission: result.oldPermission, permission: null,
         previousGeneration: result.oldGeneration, generation: null,
         revokedCollectionGrants: result.cascadedCollectionGrants.length,
-        revokedDirectGrants: result.cascadedDirectGrants.length
+        revokedDirectGrants: result.cascadedDirectGrants.length + result.removedMaskedDirectGrantCount
       });
       for (const page of result.pages) {
         // Match the revoked collection generation so stale sockets are closed

@@ -4,6 +4,7 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { env } from "../config/env.js";
 import { DataImportAdmissionGate, DataImportAdmissionLease } from "../lib/data-import-admission.js";
 import { ApiError } from "../lib/http.js";
+import { limitUploadIdleTime } from "../lib/stream-idle-timeout.js";
 
 function dataKey(scope: "export" | "import", req: Request) {
   const userId = typeof req.user?.id === "string" ? req.user.id : "";
@@ -51,7 +52,8 @@ export function dataExportConcurrencyLimit(req: Request, res: Response, next: Ne
     });
     return;
   }
-  if (activeDataExportCount >= env.DATA_EXPORT_MAX_CONCURRENT) {
+  // Leave one archive slot for snapshots so download delivery cannot consume it.
+  if (activeDataExportCount >= Math.max(1, env.DATA_EXPORT_MAX_CONCURRENT - 1)) {
     res.setHeader("Retry-After", "5");
     res.status(503).json({
       error: {
@@ -133,7 +135,8 @@ export function beginDataImportProcessing(res: Response) {
 
 export function dataImportConcurrencyLimit(req: Request, res: Response, next: NextFunction) {
   const principal = dataKey("import", req);
-  const admission = dataImportAdmissionGate.tryAcquire(principal, req.route?.path === "/import");
+  const needsUpload = req.route?.path === "/import";
+  const admission = dataImportAdmissionGate.tryAcquire(principal, needsUpload);
   if (!admission.accepted) {
     if (admission.reason === "server-capacity") {
       res.setHeader("Retry-After", "5");
@@ -157,5 +160,6 @@ export function dataImportConcurrencyLimit(req: Request, res: Response, next: Ne
   res.once("finish", releaseBeforeProcessing);
   res.once("close", releaseBeforeProcessing);
   req.once("aborted", releaseBeforeProcessing);
+  if (needsUpload) limitUploadIdleTime(req, res);
   next();
 }

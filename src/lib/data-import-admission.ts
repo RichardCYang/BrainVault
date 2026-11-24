@@ -36,6 +36,8 @@ export class DataImportAdmissionLease {
 export class DataImportAdmissionGate {
   private readonly activePrincipals = new Set<string>();
   private readonly processingPrincipals = new Set<string>();
+  private snapshotRestorePrincipal: string | null = null;
+  private snapshotRestoreProcessing = false;
   readonly maxConcurrent: number;
 
   constructor(maxConcurrent: number) {
@@ -53,10 +55,16 @@ export class DataImportAdmissionGate {
     if (this.activePrincipals.has(principal)) {
       return { accepted: false, reason: "principal-active" };
     }
-    if (needsUpload && this.activePrincipals.size - this.processingPrincipals.size >= this.maxConcurrent * 2) {
+    if (!needsUpload && this.snapshotRestorePrincipal !== null) {
+      return { accepted: false, reason: "server-capacity" };
+    }
+    const waitingUploads = this.activePrincipals.size - this.processingPrincipals.size
+      - Number(this.snapshotRestorePrincipal !== null);
+    if (needsUpload && waitingUploads >= this.maxConcurrent * 2) {
       return { accepted: false, reason: "server-capacity" };
     }
     this.activePrincipals.add(principal);
+    if (!needsUpload) this.snapshotRestorePrincipal = principal;
     return { accepted: true };
   }
 
@@ -64,8 +72,14 @@ export class DataImportAdmissionGate {
     if (!this.activePrincipals.has(principal)) {
       return { accepted: false, reason: "principal-inactive" };
     }
+    if (this.snapshotRestorePrincipal === principal) {
+      this.snapshotRestoreProcessing = true;
+      return { accepted: true };
+    }
     if (this.processingPrincipals.has(principal)) return { accepted: true };
-    if (this.processingPrincipals.size >= this.maxConcurrent) {
+    // Keep a worker for restoring an existing server snapshot even while all
+    // workers for uploaded archives are busy.
+    if (this.processingPrincipals.size >= Math.max(1, this.maxConcurrent - 1)) {
       return { accepted: false, reason: "server-capacity" };
     }
     this.processingPrincipals.add(principal);
@@ -74,6 +88,10 @@ export class DataImportAdmissionGate {
 
   release(principal: string) {
     this.processingPrincipals.delete(principal);
+    if (this.snapshotRestorePrincipal === principal) {
+      this.snapshotRestorePrincipal = null;
+      this.snapshotRestoreProcessing = false;
+    }
     this.activePrincipals.delete(principal);
   }
 
@@ -82,6 +100,6 @@ export class DataImportAdmissionGate {
   }
 
   get processingCount() {
-    return this.processingPrincipals.size;
+    return this.processingPrincipals.size + Number(this.snapshotRestoreProcessing);
   }
 }

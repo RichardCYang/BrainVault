@@ -36,7 +36,8 @@ function assertDurableSessionFence(source, routerName, method, routePath, durabl
 test("account-security mutations revalidate the exact device session at the durable boundary", async () => {
   const auth = await read("src/routes/auth.routes.ts");
   for (const [method, path, mutation] of [
-    ["post", "/logout", /UPDATE users SET auth_version/],
+    ["post", "/logout", /revokeAuthSession\(/],
+    ["post", "/logout-all", /UPDATE users SET auth_version/],
     ["delete", "/sessions/:sessionId", /revokeAuthSession\(/],
     ["put", "/totp-ip-block-policy", /UPDATE users[\s\S]*totp_ip_block_enabled/],
     ["delete", "/totp-ip-blocks/:ipAddress", /DELETE FROM user_totp_ip_blocks/],

@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import type { DbClient } from "./db.js";
 import { ApiError } from "./http.js";
 import { measureJsonUtf8BytesWithinLimit } from "./data-transfer-limits.js";
+import { abortOnIdleStream } from "./stream-idle-timeout.js";
 
 const MiB = 1024 * 1024;
 
@@ -158,51 +159,63 @@ export async function mapPageBlocks<T, R>(rows: readonly T[], project: (row: T) 
 // Retain admission through processing AND response delivery. An early socket
 // close must not admit more work while the abandoned request is still fetching
 // or rendering its page. All admitted routes finish with a JSON/error response.
-let activeProjections = 0;
-const projectingUsers = new Set<string>();
-export const admitPageProjection: RequestHandler = (req, res, next) => {
-  const principal = req.user?.id;
-  if (principal && projectingUsers.has(principal)) {
-    res.setHeader("Retry-After", "1");
-    next(new ApiError(429, "PAGE_PROJECTION_BUSY", "Another page request is active for this account. Retry shortly."));
-    return;
-  }
-  if (activeProjections >= pageResourceLimits.concurrentProjections) {
-    res.setHeader("Retry-After", "1");
-    next(new ApiError(503, "PAGE_PROJECTION_BUSY", "Page processing is busy. Retry shortly."));
-    return;
-  }
-  activeProjections++;
-  const deadline = setTimeout(() => res.destroy(), 120_000);
-  deadline.unref();
-  if (principal) projectingUsers.add(principal);
-  let released = false;
-  let processingComplete = false;
-  let responseComplete = false;
-  const release = () => {
-    if (released || !processingComplete || !responseComplete) return;
-    released = true;
-    clearTimeout(deadline);
-    activeProjections--;
-    if (principal) projectingUsers.delete(principal);
-    res.off("finish", finish);
-    res.off("close", close);
+function createPageProjectionAdmission(maxConcurrent: number): RequestHandler {
+  let activeProjections = 0;
+  const projectingUsers = new Set<string>();
+  return (req, res, next) => {
+    const principal = req.user?.id;
+    if (principal && projectingUsers.has(principal)) {
+      res.setHeader("Retry-After", "1");
+      next(new ApiError(429, "PAGE_PROJECTION_BUSY", "Another page request is active for this account. Retry shortly."));
+      return;
+    }
+    if (activeProjections >= maxConcurrent) {
+      res.setHeader("Retry-After", "1");
+      next(new ApiError(503, "PAGE_PROJECTION_BUSY", "Page processing is busy. Retry shortly."));
+      return;
+    }
+    activeProjections++;
+    const deadline = setTimeout(() => res.destroy(), 120_000);
+    deadline.unref();
+    if (principal) projectingUsers.add(principal);
+    let released = false;
+    let processingComplete = false;
+    let responseComplete = false;
+    let stopIdleTimeout: (() => void) | undefined;
+    const release = () => {
+      if (released || !processingComplete || !responseComplete) return;
+      released = true;
+      clearTimeout(deadline);
+      activeProjections--;
+      if (principal) projectingUsers.delete(principal);
+      res.off("finish", finish);
+      res.off("close", close);
+    };
+    const finish = () => {
+      stopIdleTimeout?.();
+      processingComplete = responseComplete = true;
+      release();
+    };
+    const close = () => {
+      stopIdleTimeout?.();
+      responseComplete = true;
+      release();
+    };
+    const originalEnd = res.end;
+    res.end = function (this: typeof res, ...args: unknown[]) {
+      processingComplete = true;
+      const socket = this.socket;
+      if (socket && !responseComplete && !stopIdleTimeout) {
+        stopIdleTimeout = abortOnIdleStream(() => socket.bytesWritten, () => this.destroy());
+      }
+      try { return Reflect.apply(originalEnd, this, args); }
+      finally { release(); }
+    } as typeof res.end;
+    res.once("finish", finish);
+    res.once("close", close);
+    next();
   };
-  const finish = () => {
-    processingComplete = responseComplete = true;
-    release();
-  };
-  const close = () => {
-    responseComplete = true;
-    release();
-  };
-  const originalEnd = res.end;
-  res.end = function (this: typeof res, ...args: unknown[]) {
-    processingComplete = true;
-    try { return Reflect.apply(originalEnd, this, args); }
-    finally { release(); }
-  } as typeof res.end;
-  res.once("finish", finish);
-  res.once("close", close);
-  next();
-};
+}
+
+export const admitPageProjection = createPageProjectionAdmission(pageResourceLimits.concurrentProjections);
+export const admitPageDeletionSnapshot = createPageProjectionAdmission(1);

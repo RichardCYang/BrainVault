@@ -8,7 +8,8 @@ export function workspaceDataBudgetBytes(env: typeof environment) {
   return computeBackupDataBudgetBytes({
     configuredBytes: env.DATA_TRANSFER_MAX_DATA_SIZE_MB * 1024 * 1024,
     heapLimitBytes: getHeapStatistics().heap_size_limit,
-    concurrentOperations: env.DATA_EXPORT_MAX_CONCURRENT + env.DATA_IMPORT_MAX_CONCURRENT + 1,
+    // At least one slot per transfer type, plus the owner safety snapshot slot.
+    concurrentOperations: Math.max(2, env.DATA_EXPORT_MAX_CONCURRENT) + Math.max(2, env.DATA_IMPORT_MAX_CONCURRENT) + 1,
     minimumBytes: env.DATA_TRANSFER_MAX_MANIFEST_SIZE_MB * 1024 * 1024
   });
 }

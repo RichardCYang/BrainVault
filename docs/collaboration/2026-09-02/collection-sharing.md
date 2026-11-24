@@ -59,7 +59,7 @@ This means:
 - collection `WRITE` + direct page `EDIT` => effective `EDITOR` from the collection grant;
 - collection `ADMIN` + direct page `EDIT` => effective `ADMIN` from the collection grant.
 
-An independent direct page grant created by the workspace owner can remain stored underneath the collection grant. BrainVault rotates its generation when collection sharing supersedes it so delayed socket cleanup cannot evict a later session. If the collection grant is removed and the owner-created direct grant is still valid, that direct page grant can become effective again. When a collection administrator is revoked, BrainVault also removes direct page grants on member pages whose `shared_by` provenance identifies that revoked administrator; this prevents administrator-planted grants from surviving the revocation.
+An independent direct page grant created by the workspace owner can remain stored underneath the collection grant. BrainVault rotates its generation when collection sharing supersedes it so delayed socket cleanup cannot evict a later session. Removing a `READ` grant also removes direct `EDIT` grants it was masking on member pages. An owner can explicitly grant edit access again. Removing a `WRITE` or `ADMIN` grant can leave an independently authorized direct `EDIT` grant effective. When a collection administrator is revoked, BrainVault also removes direct page grants on member pages whose `shared_by` identifies that revoked administrator.
 
 ## REST API
 

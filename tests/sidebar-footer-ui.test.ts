@@ -33,7 +33,7 @@ describe("Sidebar bottom actions", () => {
     expect(client).toContain('elements.addCollectionButton.addEventListener("click"');
     expect(client).toMatch(/elements\.logoutButton\.addEventListener\("click", \(\) => \{\s*requestLogout\(\)\.catch/);
     // Logging out asks first, and warns about unsaved settings instead of discarding them.
-    expect(client).toMatch(/async function requestLogout\(\) \{[\s\S]*?hasUnsavedAccountSettingsChanges\(\)[\s\S]*?showConfirmDialog\([\s\S]*?await logout\(\);/);
+    expect(client).toMatch(/async function requestLogout\(\) \{[\s\S]*?hasUnsavedAccountSettingsChanges\(\)[\s\S]*?showChoiceDialog\([\s\S]*?await logout\(\{ allDevices: choice === "alternate" \}\);/);
     expect(i18n).toContain('addCollection: "컬렉션 추가"');
     expect(i18n).toContain('signOut: "로그아웃"');
   });

@@ -64,6 +64,7 @@ import {
   requireAuth,
   requireAuthAllowTotpIpBlock,
   requireJsonRequestBody,
+  requireRecentAuthentication,
   requireRequestAuthScope,
   requireSameOriginBrowserRequest
 } from "../middleware/auth.js";
@@ -375,6 +376,22 @@ authRouter.post(
 
 authRouter.post("/logout", requireAuth, async (req, res, next) => {
   try {
+    const user = requireUser(req.user);
+    const authScope = requireRequestAuthScope(req);
+    await transaction(async (client) => {
+      await assertCurrentAuthSession(user.id, authScope, client);
+      await revokeAuthSession(user.id, authScope.sessionId, authScope.authVersion, client);
+    });
+    disconnectAuthSessionCollaborators(user.id, authScope.sessionId, "User logged out");
+    clearAuthSessionCookie(res);
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.post("/logout-all", requireAuth, requireRecentAuthentication, async (req, res, next) => {
+  try {
     const currentUser = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);
     const expectedAuthVersion = authScope.authVersion;
@@ -643,7 +660,7 @@ authRouter.patch(
 // and per-session revocation keep working), a fresh expiry, and a new cookie.
 // The browser calls it when the person is active near expiry or chooses to
 // stay signed in from the expiry warning.
-authRouter.post("/session/extend", requireAuth, async (req, res, next) => {
+authRouter.post("/session/extend", requireAuth, requireRecentAuthentication, async (req, res, next) => {
   try {
     const currentUser = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);
@@ -993,7 +1010,13 @@ authRouter.put(
   }
 );
 
-authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), async (req, res, next) => {
+authRouter.patch("/profile", requireAuth, validate({ body: profileSchema }), (req, res, next) => {
+  const body = req.body as z.infer<typeof profileSchema>;
+  if (body.name !== undefined || body.avatarData !== undefined) {
+    return requireRecentAuthentication(req, res, next);
+  }
+  next();
+}, async (req, res, next) => {
   try {
     const currentUser = requireUser(req.user);
     const authScope = requireRequestAuthScope(req);

@@ -27,7 +27,7 @@ vi.mock("../src/middleware/auth.js", async (original) => ({
   ...await original(),
   requireAuth: (req, _res, next) => {
     req.user = { id: "usr_viewer" };
-    req.auth = { authVersion: 1, workspaceGeneration: 1, sessionId: "ses_test" };
+    req.auth = { authVersion: 1, workspaceGeneration: 1, sessionId: "ses_test", authenticatedAt: Math.floor(Date.now() / 1000) };
     next();
   }
 }));

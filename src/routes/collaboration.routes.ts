@@ -988,8 +988,8 @@ collaborationRouter.delete(
 );
 
 // Undo of a comment deletion: puts the original comment back (same author,
-// text and time) from the copy kept when it was deleted. Allowed for the
-// person who deleted it and for the page's owner or admins.
+// text and time) from the copy kept when it was deleted. Author deletions
+// can only be undone by the author. The owner can also undo moderation.
 collaborationRouter.post(
   "/pages/:pageId/comments/:commentId/restore",
   validate({ params: pageCommentParamsSchema }),
@@ -1031,7 +1031,8 @@ collaborationRouter.post(
           throw new ApiError(404, "PAGE_COMMENT_RESTORE_UNAVAILABLE", "This deleted comment can no longer be restored");
         }
         const isAdministrator = access.role === "OWNER" || access.role === "ADMIN";
-        if (deleted.deleted_by !== user.id && access.role !== "OWNER") {
+        const isModerationUndo = deleted.deleted_by !== deleted.user_id && access.role === "OWNER";
+        if (deleted.deleted_by !== user.id && !isModerationUndo) {
           throw new ApiError(403, "PAGE_COMMENT_RESTORE_FORBIDDEN", "You cannot restore this comment");
         }
         const existing = await client.queryOne<{ id: string }>(

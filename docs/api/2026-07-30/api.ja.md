@@ -10,7 +10,8 @@
 | `POST` | `/api/auth/login` | サインインします。Cookie認証済みユーザー応答または一時MFAセッションを返します。 |
 | `POST` | `/api/auth/passkey/options` | ユーザー名なしdiscoverable-passkeyオプションと、ブラウザにバインドされたワンタイムチャレンジトークンを作成します。 |
 | `POST` | `/api/auth/passkey/verify` | discoverable passkeyを検証し、通常の`HttpOnly`セッションCookieを作成します。 |
-| `POST` | `/api/auth/logout` | アカウント認証generationを失効させ、ブラウザセッションCookieを消去します。 |
+| `POST` | `/api/auth/logout` | 現在のセッションを失効させ、ブラウザセッションCookieを消去します。 |
+| `POST` | `/api/auth/logout-all` | 直近にログインした場合にアカウントの全セッションを失効させます。 |
 | `GET` | `/api/auth/mfa/status` | 設定済みTOTPおよびpasskey方式を取得します。 |
 | `POST` | `/api/auth/mfa/totp/setup` | 現在のパスワードで保護されたTOTP登録を開始します。 |
 | `POST` | `/api/auth/mfa/totp/verify` | 保留中のTOTP登録を確認して有効化します。 |

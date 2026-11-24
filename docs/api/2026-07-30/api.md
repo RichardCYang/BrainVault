@@ -10,7 +10,8 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `POST` | `/api/auth/login` | Sign in; returns either a cookie-authenticated user response or a temporary MFA session |
 | `POST` | `/api/auth/passkey/options` | Create username-less discoverable-passkey options and a browser-bound one-time challenge token |
 | `POST` | `/api/auth/passkey/verify` | Verify the discoverable passkey and create the normal `HttpOnly` session cookie |
-| `POST` | `/api/auth/logout` | Revoke the account authentication generation and clear the browser session cookie |
+| `POST` | `/api/auth/logout` | Revoke the current session and clear its browser cookie |
+| `POST` | `/api/auth/logout-all` | Revoke the account authentication generation after a recent sign-in |
 | `GET` | `/api/auth/mfa/status` | Read configured TOTP and passkey methods |
 | `POST` | `/api/auth/mfa/totp/setup` | Begin current-password-protected TOTP enrollment |
 | `POST` | `/api/auth/mfa/totp/verify` | Confirm and enable a pending TOTP enrollment |
@@ -24,7 +25,8 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `POST` | `/api/auth/mfa/login/passkey/verify` | Verify a passkey and complete login |
 | `GET` | `/api/auth/me` | Read the current user |
 | `GET` | `/api/auth/login-history?months=3` | Read the current user’s successful and failed login attempts, newest first; accepts 1–12 months |
-| `PATCH` | `/api/auth/profile` | Update display name, profile image, or preferred language |
+| `PATCH` | `/api/auth/profile` | Update profile or preferences. Display name and profile image changes require a recent sign-in |
+| `POST` | `/api/auth/session/extend` | Extend a browser session after a recent sign-in |
 | `POST` | `/api/auth/password` | Change the password after verifying the current password |
 | `GET` | `/api/pages` | List pages |
 | `POST` | `/api/pages` | Create a page; clients can provide `mutationId` and reuse it only for an exact retry after an ambiguous outcome |
@@ -51,8 +53,8 @@ Most API routes use the `HttpOnly`, `SameSite=Strict` `brainvault_session` cooki
 | `POST` | `/api/data/import` | Validate and restore a BrainVault backup ZIP; ID-bound page/collection grants are recreated; compatible legacy grants are preserved only through verified current identities |
 | `POST` | `/api/pages/:pageId/blocks/reorder` | Move or reorder blocks |
 | `GET` | `/api/pages/:pageId/render` | Render sanitized page HTML |
-| `GET` | `/api/pages/:pageId/versions` | List owner-only page version history; historical entries may contain deleted content |
-| `GET` | `/api/pages/:pageId/versions/:versionId` | Read one owner-only page version entry |
+| `GET` | `/api/pages/:pageId/versions` | List owner-only page version history after a recent sign-in |
+| `GET` | `/api/pages/:pageId/versions/:versionId` | Read one owner-only page version entry after a recent sign-in |
 | `DELETE` | `/api/pages/:pageId/versions` | Reset owner-only page version history once using an idempotency key plus the exact viewed page/content/history versions |
 | `GET` | `/api/search?q=...` | Search titles and block Markdown |
 
@@ -104,6 +106,8 @@ If the transaction commits but the HTTP response is lost, an exact retry is ackn
 Only a matching fresh snapshot proceeds to delete the prior history, write the revision-1 baseline, and complete the receipt with `revision` and `deletedCount` in the same transaction. Exact retries return the stored result with `replayed: true` before the stale-state comparison, so a reset that committed but lost its HTTP response remains acknowledgeable and cannot delete history created afterward. Reusing the ID for another request is rejected with `409 MUTATION_ID_REUSED`. The browser keeps the viewed snapshot with the mutation task, retries ambiguous outcomes with the same body, and refreshes the history list after a stale-snapshot conflict before the owner can confirm another reset.
 
 ## Backup sharing integrity
+
+Creating, comparing, deleting or restoring a snapshot requires a sign-in within the previous 15 minutes. The snapshot list returns metadata and workspace capacity to the active session.
 
 Both `POST /api/data/import` and `POST /api/snapshots/:snapshotId/restore` require `X-Restore-Operation-Id`: 1–64 ASCII letters, digits, underscores, or hyphens. Generate an ID for each intentional restore and reuse it after any timeout, network failure, or unknown commit outcome. Completed receipts survive later workspace restores and are retained until account deletion. The same ID with a different source or uploaded archive SHA-256 returns `409 RESTORE_OPERATION_ID_REUSED`; a missing/invalid ID returns `400 RESTORE_OPERATION_ID_REQUIRED`. Successful replay returns original counts with the current account profile and does not modify workspace data. Login/session revocation still rejects a replay.
 

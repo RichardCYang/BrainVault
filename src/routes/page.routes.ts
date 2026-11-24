@@ -12,7 +12,7 @@ import { createId } from "../lib/id.js";
 import { lockUserAttachmentGeneration, removeDeletedAttachmentFiles } from "../lib/attachments.js";
 import { renderBlockHtml, sanitizeRenderedBlockHtml } from "../lib/markdown.js";
 import { isCurrentAiChatHtmlCache } from "../lib/ai-chat-cache.js";
-import { mapPageBlocks, admitPageProjection, assertPagesFitSharedDocument, assertStoredPageResourceBudget, assertPageResponseBudget, assertPageRenderBudget } from "../lib/page-resource-limits.js";
+import { mapPageBlocks, admitPageDeletionSnapshot, admitPageProjection, assertPagesFitSharedDocument, assertStoredPageResourceBudget, assertPageResponseBudget, assertPageRenderBudget } from "../lib/page-resource-limits.js";
 import { createMutationRequestHash, isMatchingMutationReplay } from "../lib/mutation.js";
 import { assessPageCreateMutationReceipt, type PageCreateMutationReceipt } from "../lib/page-create-mutation.js";
 import { assessPageDeleteMutationReceipt, type PageDeleteMutationReceipt } from "../lib/page-delete-mutation.js";
@@ -1781,6 +1781,7 @@ pageRouter.get("/:pageId", admitPageProjection, validate({ params: idParamSchema
 
 pageRouter.get(
   "/:pageId/versions",
+  requireRecentAuthentication,
   validate({ params: idParamSchema, query: pageVersionListQuerySchema }),
   async (req, res, next) => {
     try {
@@ -1980,6 +1981,7 @@ pageRouter.delete(
 
 pageRouter.get(
   "/:pageId/versions/:versionId",
+  requireRecentAuthentication,
   validate({ params: pageVersionParamsSchema }),
   async (req, res, next) => {
     try {
@@ -2010,7 +2012,8 @@ pageRouter.get(
 
 pageRouter.get(
   "/:pageId/deletion-snapshot",
-  admitPageProjection,
+  requireRecentAuthentication,
+  admitPageDeletionSnapshot,
   validate({ params: idParamSchema }),
   async (req, res, next) => {
     try {

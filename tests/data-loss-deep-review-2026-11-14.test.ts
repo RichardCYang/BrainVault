@@ -146,7 +146,8 @@ describe("a deleted comment can be brought back", () => {
     expect(copy).toBeLessThan(removal);
     const restoreRoute = routes.slice(routes.indexOf('"/pages/:pageId/comments/:commentId/restore"'));
     expect(restoreRoute).toMatch(/INSERT INTO page_comments \(id, page_id, user_id, body, edit_version, created_at, updated_at\)/);
-    expect(restoreRoute).toMatch(/deleted\.deleted_by !== user\.id && access\.role !== "OWNER"/);
+    expect(restoreRoute).toMatch(/deleted\.deleted_by !== deleted\.user_id && access\.role === "OWNER"/);
+    expect(restoreRoute).toMatch(/deleted\.deleted_by !== user\.id && !isModerationUndo/);
     expect(restoreRoute).toMatch(/Number\(deleted\.edit_version\) \+ 1/);
   });
 });

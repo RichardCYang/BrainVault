@@ -2255,6 +2255,10 @@ function extendAuthenticatedSession({ quiet = false } = {}) {
       }
     } catch (error) {
       if (!state.authenticated) return;
+      if (error?.code === "RECENT_LOGIN_REQUIRED") {
+        showSessionLifetimeLimitNotice();
+        return;
+      }
       sessionExtendRetryAt = Date.now() + 30_000;
       // A quiet attempt falls back to asking; an explicit one reports why.
       if (quiet) showSessionExpiryWarning();
@@ -5918,14 +5922,20 @@ async function finishExplicitLogout(cleanup) {
   }
 }
 
-async function logout() {
+async function logout({ allDevices = false } = {}) {
   const scope = captureAuthenticatedSessionScope();
   return withPageEditLock(async () => {
     if (!isCurrentAuthenticatedSessionScope(scope)) return;
     const cleanup = await confirmLogoutRecovery(scope);
     if (!cleanup || !isCurrentAuthenticatedSessionScope(scope)) return;
-    const response = await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-    if (!response.ok && response.status !== 401) throw new Error(t("account.logoutFailed"));
+    const response = await fetch(allDevices ? "/api/auth/logout-all" : "/api/auth/logout", {
+      method: "POST", credentials: "include"
+    });
+    if (!response.ok && response.status !== 401) {
+      const result = await response.json().catch(() => null);
+      if (result?.error?.code === "RECENT_LOGIN_REQUIRED") throw new Error(t("errors.RECENT_LOGIN_REQUIRED"));
+      throw new Error(t("account.logoutFailed"));
+    }
     if (isCurrentAuthenticatedSessionScope(scope)) await finishExplicitLogout(cleanup);
   });
 }
@@ -24462,21 +24472,22 @@ async function requestLogout() {
   const hasUnsentComment = !hasUnsavedSettings && hasUnsentPageCommentDraft();
   const discardsWork = hasUnsavedSettings || hasUnsentComment;
   logoutConfirming = true;
-  let confirmed = false;
+  let choice;
   try {
-    confirmed = await showConfirmDialog({
+    choice = await showChoiceDialog({
       title: discardsWork ? t("dialog.discardChangesTitle") : t("account.signOutConfirmTitle"),
       message: hasUnsavedSettings
         ? t("account.signOutUnsavedConfirm")
         : hasUnsentComment ? t("account.signOutUnsentCommentConfirm") : t("account.signOutConfirm"),
       confirmLabel: t("dialog.signOut"),
+      alternateLabel: t("account.signOutAllDevices"),
       danger: discardsWork
     });
   } finally {
     logoutConfirming = false;
   }
-  if (!confirmed || !isCurrentAuthenticatedSessionScope(scope)) return;
-  await logout();
+  if (choice === "cancel" || !isCurrentAuthenticatedSessionScope(scope)) return;
+  await logout({ allDevices: choice === "alternate" });
 }
 
 elements.logoutButton.addEventListener("click", () => {
@@ -25805,11 +25816,14 @@ elements.archivePageButton.addEventListener("click", async () => {
     return;
   }
   closePageActionsMenu({ restoreFocus: true });
-  // Archiving is reversible and offers Undo afterwards, so it does not ask first.
   const pageIdAtPrompt = state.selectedPage?.id;
   const navigationGenerationAtPrompt = workspaceNavigationGeneration;
+  const authenticationScope = captureAuthenticatedSessionScope();
+  if ((state.selectedPage?.isCollection || state.selectedPage?.collaboration?.enabled)
+    && !await showConfirmDialog({ message: t("sharing.archiveKeepsAccess") })) return;
   if (
     !pageIdAtPrompt
+    || !isCurrentAuthenticatedSessionScope(authenticationScope)
     || state.selectedPage?.id !== pageIdAtPrompt
     || !isCurrentWorkspaceNavigation(navigationGenerationAtPrompt)
   ) return;
@@ -25819,7 +25833,6 @@ elements.archivePageButton.addEventListener("click", async () => {
   // the pending save flush, and only while this same page generation is current.
   const pageId = state.selectedPage.id;
   const parentCollectionId = getCollectionRootId(pageId) ?? defaultCollectionKey;
-  const authenticationScope = captureAuthenticatedSessionScope();
   const navigationGeneration = workspaceNavigationGeneration;
   const isArchiveIntentCurrent = () => (
     isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -25834,8 +25847,8 @@ elements.archivePageButton.addEventListener("click", async () => {
 
       const archiveResult = await withPagePersistenceTransition(pageId, "page-archive", async () => {
         if (!isArchiveIntentCurrent()) return skippedApiRequest;
-        // Archiving disconnects every collaborator and makes the page unavailable
-        // to them. Do not create an orphaned local Yjs state in another tab.
+        // Archiving stops live collaboration. Flush the document before the
+        // page becomes read-only for collaborators.
         await flushPendingPageEdits({ allowLocked: true, collaborationCompact: false });
         if (!isArchiveIntentCurrent()) return skippedApiRequest;
         assertNoPendingLocalPageDrafts(pageId, "status.destructiveLocalDraftsPending");

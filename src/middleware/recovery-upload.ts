@@ -7,6 +7,7 @@ import {
 } from "../lib/attachment-upload-admission.js";
 import { ApiError } from "../lib/http.js";
 import { maxRecoveryCandidateBytes } from "../lib/recovery-candidates.js";
+import { limitUploadIdleTime } from "../lib/stream-idle-timeout.js";
 import { requireUser } from "../utils/schemas.js";
 
 export const recoveryCandidateUploadRateLimit = rateLimit({
@@ -58,6 +59,7 @@ export function admitRecoveryUpload(req: Request, res: Response, next: NextFunct
   res.once("finish", releaseBeforeProcessing);
   res.once("close", releaseBeforeProcessing);
   req.once("aborted", releaseBeforeProcessing);
+  limitUploadIdleTime(req, res);
   next();
 }
 

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { DataImportAdmissionGate, DataImportAdmissionLease } from "../src/lib/data-import-admission.ts";
+import { cancelActiveBackupExports, registerActiveBackupExport } from "../src/lib/active-backup-exports.ts";
 import { dataTransferResourceLimits, measureJsonUtf8BytesWithinLimit } from "../src/lib/data-transfer-limits.ts";
 import { crc32, readZipDirectory, readZipEntryBuffer, ZipWriter } from "../src/lib/zip.ts";
 
@@ -27,7 +28,7 @@ test("backup manifest byte measurement rejects oversized JSON before aggregate s
   assert.throws(() => measureJsonUtf8BytesWithinLimit(sample, -1), /non-negative safe integer/);
 });
 
-test("data-import admission caps processing without letting slow uploads consume global slots", () => {
+test("data-import admission preserves a stored snapshot restore slot while uploads are active", () => {
   const gate = new DataImportAdmissionGate(2);
   assert.deepEqual(gate.tryAcquire("user-a"), { accepted: true });
   assert.deepEqual(gate.tryAcquire("user-a"), { accepted: false, reason: "principal-active" });
@@ -37,8 +38,11 @@ test("data-import admission caps processing without letting slow uploads consume
   assert.equal(gate.processingCount, 0);
 
   assert.deepEqual(gate.tryBeginProcessing("user-a"), { accepted: true });
-  assert.deepEqual(gate.tryBeginProcessing("user-b"), { accepted: true });
+  assert.deepEqual(gate.tryBeginProcessing("user-b"), { accepted: false, reason: "server-capacity" });
   assert.deepEqual(gate.tryBeginProcessing("user-c"), { accepted: false, reason: "server-capacity" });
+  assert.deepEqual(gate.tryAcquire("snapshot-user", false), { accepted: true });
+  assert.deepEqual(gate.tryAcquire("other-snapshot-user", false), { accepted: false, reason: "server-capacity" });
+  assert.deepEqual(gate.tryBeginProcessing("snapshot-user"), { accepted: true });
   assert.equal(gate.processingCount, 2);
 
   gate.release("user-a");
@@ -46,6 +50,7 @@ test("data-import admission caps processing without letting slow uploads consume
   assert.equal(gate.processingCount, 2);
   gate.release("user-b");
   gate.release("user-c");
+  gate.release("snapshot-user");
 });
 
 test("data-import admission remains held after disconnect once restore processing begins", () => {
@@ -66,6 +71,24 @@ test("data-import admission remains held after disconnect once restore processin
   assert.equal(waitingLease.releaseBeforeProcessing(), true);
   assert.deepEqual(gate.tryAcquire("user-b"), { accepted: true });
   gate.release("user-b");
+});
+
+test("revocation cancels backup streams for only the affected session or account", () => {
+  const canceled = [];
+  const finishA = registerActiveBackupExport("owner", "session-a", () => canceled.push("a"));
+  const finishB = registerActiveBackupExport("owner", "session-b", () => canceled.push("b"));
+  const finishOther = registerActiveBackupExport("another-owner", "session-b", () => canceled.push("other"));
+  try {
+    cancelActiveBackupExports("owner", "session-a");
+    assert.deepEqual(canceled, ["a"]);
+    finishA();
+    cancelActiveBackupExports("owner");
+    assert.deepEqual(canceled, ["a", "b"]);
+  } finally {
+    finishA();
+    finishB();
+    finishOther();
+  }
 });
 
 test("backup ZIP parsing honors caller-specific entry and central-directory ceilings", async () => {

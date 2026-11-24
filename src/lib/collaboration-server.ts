@@ -4,6 +4,7 @@ import type { Server as HttpsServer } from "node:https";
 import type { Socket } from "node:net";
 import { createHash } from "node:crypto";
 import { assertStoredPageResourceBudget } from "./page-resource-limits.js";
+import { cancelActiveBackupExports } from "./active-backup-exports.js";
 import { z } from "zod";
 import { createId } from "./id.js";
 import { CollaborationMemoryBudget, type CollaborationMemoryReservation } from "./collaboration-memory-budget.js";
@@ -2080,10 +2081,12 @@ export function disconnectPageCollaboratorsForDocumentEpoch(
 }
 
 export function disconnectUserCollaborators(userId: string, reason?: string) {
+  cancelActiveBackupExports(userId);
   for (const hub of activeHubs) hub.disconnectUserEverywhere(userId, reason);
 }
 
 export function disconnectAuthSessionCollaborators(userId: string, sessionId: string, reason?: string) {
+  cancelActiveBackupExports(userId, sessionId);
   for (const hub of activeHubs) hub.disconnectAuthSessionEverywhere(userId, sessionId, reason);
 }
 

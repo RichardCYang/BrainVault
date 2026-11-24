@@ -3,6 +3,8 @@ import { rm } from "node:fs/promises";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { env } from "../config/env.js";
+import { registerActiveBackupExport } from "../lib/active-backup-exports.js";
+import { abortOnIdleStream } from "../lib/stream-idle-timeout.js";
 import {
   admitDataRestore,
   backupTransferBudgetBytes,
@@ -107,58 +109,72 @@ dataRouter.get(
   dataExportRateLimit,
   dataExportConcurrencyLimit,
   async (req, res, next) => {
-  const exportDeadline = setTimeout(() => {
-    res.destroy(new Error("Data export response deadline exceeded"));
-  }, env.DATA_EXPORT_TIMEOUT_MS);
-  exportDeadline.unref?.();
-  try {
-    const user = requireUser(req.user);
-    const authScope = requireRequestAuthScope(req);
-    const plan = await prepareUserDataBackup(user.id);
-    if (res.destroyed) {
-      await rm(plan.operationRoot, { recursive: true, force: true });
-      return;
-    }
-    const date = new Date().toISOString().slice(0, 10);
-    const safeUsername = plan.account.username.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const filename = `BrainVault-${safeUsername}-${date}.zip`;
-
-    let nextCheck = 0;
-    let remainingBytes = 0;
-    await writeUserDataBackup(plan, res, async (bytes) => {
-      if (res.destroyed) throw new Error("Export connection closed");
-      if (remainingBytes < bytes || performance.now() >= nextCheck) {
-        await transaction((client) => assertCurrentAuthSessionBoundary(user.id, authScope, client));
-        if (!res.headersSent && nextCheck === 0) {
-          res.status(200);
-          res.setHeader("Content-Type", "application/zip");
-          res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-          res.setHeader("Content-Length", plan.archiveSize.toString());
-          res.setHeader("Cache-Control", "private, no-store, no-transform");
-          res.setHeader("X-Content-Type-Options", "nosniff");
-          // Oldest version history entries left out so the backup fits its limits
-          // (current content is always complete); the browser tells the person.
-          if (plan.historyEntriesOmitted > 0) {
-            res.setHeader("X-Backup-History-Entries-Omitted", String(plan.historyEntriesOmitted));
-          }
-          res.strictContentLength = true;
-        }
-        nextCheck = performance.now() + 1000;
-        remainingBytes = 1024 * 1024;
+    const exportDeadline = setTimeout(() => {
+      res.destroy(new Error("Data export response deadline exceeded"));
+    }, env.DATA_EXPORT_TIMEOUT_MS);
+    exportDeadline.unref?.();
+    let unregisterExport: (() => void) | undefined;
+    let stopIdleTimeout: (() => void) | undefined;
+    const socket = res.socket;
+    const finishDelivery = () => {
+      clearTimeout(exportDeadline);
+      unregisterExport?.();
+      stopIdleTimeout?.();
+      res.off("finish", finishDelivery);
+      res.off("close", finishDelivery);
+    };
+    res.once("finish", finishDelivery);
+    res.once("close", finishDelivery);
+    try {
+      const user = requireUser(req.user);
+      const authScope = requireRequestAuthScope(req);
+      unregisterExport = registerActiveBackupExport(user.id, authScope.sessionId, () => res.destroy());
+      const plan = await prepareUserDataBackup(user.id);
+      if (res.destroyed) {
+        await rm(plan.operationRoot, { recursive: true, force: true });
+        return;
       }
-      remainingBytes -= bytes;
-    });
-    res.end();
-  } catch (error) {
-    if (res.headersSent) {
-      res.destroy(error instanceof Error ? error : undefined);
-      return;
+      const date = new Date().toISOString().slice(0, 10);
+      const safeUsername = plan.account.username.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const filename = `BrainVault-${safeUsername}-${date}.zip`;
+
+      let nextCheck = 0;
+      let remainingBytes = 0;
+      await writeUserDataBackup(plan, res, async (bytes) => {
+        if (res.destroyed) throw new Error("Export connection closed");
+        if (remainingBytes < bytes || performance.now() >= nextCheck) {
+          await transaction((client) => assertCurrentAuthSessionBoundary(user.id, authScope, client));
+          if (res.destroyed) throw new Error("Export connection closed");
+          if (!res.headersSent && nextCheck === 0) {
+            if (socket) stopIdleTimeout = abortOnIdleStream(() => socket.bytesWritten, () => res.destroy());
+            res.status(200);
+            res.setHeader("Content-Type", "application/zip");
+            res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+            res.setHeader("Content-Length", plan.archiveSize.toString());
+            res.setHeader("Cache-Control", "private, no-store, no-transform");
+            res.setHeader("X-Content-Type-Options", "nosniff");
+            // Oldest version history entries left out so the backup fits its limits
+            // (current content is always complete); the browser tells the person.
+            if (plan.historyEntriesOmitted > 0) {
+              res.setHeader("X-Backup-History-Entries-Omitted", String(plan.historyEntriesOmitted));
+            }
+            res.strictContentLength = true;
+          }
+          nextCheck = performance.now() + 1000;
+          remainingBytes = 1024 * 1024;
+        }
+        remainingBytes -= bytes;
+      });
+      res.end();
+    } catch (error) {
+      if (res.headersSent) {
+        res.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
+      next(error);
+    } finally {
+      finishDataExportProcessing(res);
     }
-    next(error);
-  } finally {
-    clearTimeout(exportDeadline);
-    finishDataExportProcessing(res);
-  }
   }
 );
 

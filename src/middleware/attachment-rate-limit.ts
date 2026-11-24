@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { env } from "../config/env.js";
+import { limitUploadIdleTime } from "../lib/stream-idle-timeout.js";
 import {
   AttachmentUploadAdmissionGate,
   AttachmentUploadAdmissionLease
@@ -100,5 +101,6 @@ export function attachmentUploadConcurrencyLimit(req: Request, res: Response, ne
   res.once("finish", releaseBeforeProcessing);
   res.once("close", releaseBeforeProcessing);
   req.once("aborted", releaseBeforeProcessing);
+  limitUploadIdleTime(req, res);
   next();
 }

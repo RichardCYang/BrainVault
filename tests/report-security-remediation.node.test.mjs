@@ -19,7 +19,7 @@ test("BV-32 snapshot diff uses the export concurrency gate", () => {
   const source = read("src/routes/snapshot.routes.ts");
   assert.match(
     source,
-    /snapshotRouter\.get<SnapshotRouteParams>\("\/:snapshotId\/diff", dataExportRateLimit, dataExportConcurrencyLimit,/
+    /snapshotRouter\.get<SnapshotRouteParams>\("\/:snapshotId\/diff", requireRecentAuthentication, dataExportRateLimit, dataExportConcurrencyLimit,/
   );
 });
 

@@ -10,7 +10,8 @@
 | `POST` | `/api/auth/login` | 로그인합니다. 쿠키로 인증된 사용자 응답 또는 임시 MFA 세션을 반환합니다. |
 | `POST` | `/api/auth/passkey/options` | 사용자 이름 없는 검색 가능 passkey 옵션과 브라우저에 바인딩된 일회용 챌린지 토큰을 생성합니다. |
 | `POST` | `/api/auth/passkey/verify` | 검색 가능 passkey를 검증하고 일반 `HttpOnly` 세션 쿠키를 생성합니다. |
-| `POST` | `/api/auth/logout` | 계정 인증 generation을 폐기하고 브라우저 세션 쿠키를 지웁니다. |
+| `POST` | `/api/auth/logout` | 현재 세션을 폐기하고 브라우저 세션 쿠키를 지웁니다. |
+| `POST` | `/api/auth/logout-all` | 최근 로그인한 경우 계정의 모든 세션을 폐기합니다. |
 | `GET` | `/api/auth/mfa/status` | 설정된 TOTP 및 passkey 방식을 조회합니다. |
 | `POST` | `/api/auth/mfa/totp/setup` | 현재 비밀번호로 보호되는 TOTP 등록을 시작합니다. |
 | `POST` | `/api/auth/mfa/totp/verify` | 대기 중인 TOTP 등록을 확인하고 활성화합니다. |

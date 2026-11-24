@@ -20,6 +20,7 @@ import { hashPassword, signAuthToken, verifyPassword } from "../src/lib/auth.js"
 
 let user: Record<string, unknown>;
 let token: string;
+let revokedSessionIds: Set<string>;
 
 beforeEach(async () => {
   user = {
@@ -36,17 +37,20 @@ beforeEach(async () => {
     updated_at: "2026-07-16T00:00:00.000Z"
   };
   token = signAuthToken({ sub: String(user.id), username: String(user.username), authVersion: Number(user.auth_version) });
+  revokedSessionIds = new Set();
   database.queryOne.mockReset();
   database.execute.mockReset();
 
   database.queryOne.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
-    if (sql.includes("FROM user_auth_sessions")) return { id: params[0] };
+    if (sql.includes("FROM user_auth_sessions")) return revokedSessionIds.has(String(params[0])) ? undefined : { id: params[0] };
     if (sql.includes("FROM users WHERE id = ?") || sql.includes("SELECT * FROM users WHERE id = ?")) return { ...user };
     return undefined;
   });
 
   database.execute.mockImplementation(async (sql: string, params: readonly unknown[] = []) => {
-    if (sql.startsWith("UPDATE users SET password_hash = ?, auth_version = ?")) {
+    if (sql.includes("SET revoked_at = CURRENT_TIMESTAMP(3)")) {
+      revokedSessionIds.add(String(params[0]));
+    } else if (sql.startsWith("UPDATE users SET password_hash = ?, auth_version = ?")) {
       user.password_hash = params[0];
       user.auth_version = params[1];
     } else if (sql.startsWith("UPDATE users SET ")) {
@@ -169,6 +173,7 @@ describe("Account settings routes", () => {
   });
 
   it("revokes the current token on logout", async () => {
+    const otherToken = signAuthToken({ sub: String(user.id), username: String(user.username), authVersion: 1, sessionId: "ses_other_device" });
     await request(createApp())
       .post("/api/auth/logout")
       .set("Authorization", `Bearer ${token}`)
@@ -179,5 +184,19 @@ describe("Account settings routes", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(401);
     expect(revoked.body.error.code).toBe("SESSION_REVOKED");
+    await request(createApp()).get("/api/auth/me").set("Authorization", `Bearer ${otherToken}`).expect(200);
+  });
+
+  it("requires recent sign-in for global logout and display name changes", async () => {
+    const staleToken = signAuthToken({
+      sub: String(user.id), username: String(user.username), authVersion: 1,
+      sessionId: "ses_older_device", authenticatedAt: Math.floor(Date.now() / 1000) - 901
+    });
+    const app = request(createApp());
+    await app.post("/api/auth/logout-all").set("Authorization", `Bearer ${staleToken}`).expect(403);
+    await app.patch("/api/auth/profile").set("Authorization", `Bearer ${staleToken}`).send({ name: "Changed" }).expect(403);
+    await app.patch("/api/auth/profile").set("Authorization", `Bearer ${staleToken}`).send({ theme: "dark" }).expect(200);
+    await app.post("/api/auth/logout-all").set("Authorization", `Bearer ${token}`).expect(204);
+    await app.get("/api/auth/me").set("Authorization", `Bearer ${staleToken}`).expect(401);
   });
 });

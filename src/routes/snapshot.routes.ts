@@ -36,18 +36,14 @@ snapshotRouter.get("/", async (req, res) => {
   res.json({ snapshots, capacity });
 });
 
-snapshotRouter.post("/", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res) => {
-  try {
-    const user = requireUser(req.user);
-    const authScope = requireRequestAuthScope(req);
-    const snapshot = await createWorkspaceSnapshot(user.id, authScope);
-    res.status(201).json({ snapshot });
-  } finally {
-    finishDataExportProcessing(res);
-  }
+snapshotRouter.post("/", requireRecentAuthentication, dataExportRateLimit, async (req, res) => {
+  const user = requireUser(req.user);
+  const authScope = requireRequestAuthScope(req);
+  const snapshot = await createWorkspaceSnapshot(user.id, authScope);
+  res.status(201).json({ snapshot });
 });
 
-snapshotRouter.get<SnapshotRouteParams>("/:snapshotId/diff", dataExportRateLimit, dataExportConcurrencyLimit, async (req, res) => {
+snapshotRouter.get<SnapshotRouteParams>("/:snapshotId/diff", requireRecentAuthentication, dataExportRateLimit, dataExportConcurrencyLimit, async (req, res) => {
   try {
     const user = requireUser(req.user);
     const diff = await diffWorkspaceSnapshot(user.id, req.params.snapshotId);
@@ -84,7 +80,7 @@ snapshotRouter.post<SnapshotRouteParams>(
   }
 );
 
-snapshotRouter.delete<SnapshotRouteParams>("/:snapshotId", async (req, res) => {
+snapshotRouter.delete<SnapshotRouteParams>("/:snapshotId", requireRecentAuthentication, async (req, res) => {
   const user = requireUser(req.user);
   const authScope = requireRequestAuthScope(req);
   await deleteWorkspaceSnapshot(user.id, req.params.snapshotId, authScope);
