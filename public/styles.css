@@ -19473,9 +19473,30 @@ body.auth-mode {
   font-weight: var(--weight-semibold);
 }
 
-.auth-passkey-login[aria-disabled="true"]:not(:disabled) {
+.auth-passkey-login[aria-disabled="true"]:not(:disabled),
+#auth-submit[aria-disabled="true"]:not(:disabled) {
   cursor: progress;
   opacity: 0.5;
+}
+
+/* Sign-in errors sit in the form, above the button that produced them. */
+.auth-form-error {
+  margin: 0;
+  border-left: 3px solid var(--danger);
+  padding-left: 0.6rem;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.auth-card input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.auth-card input[aria-invalid="true"]:focus,
+.auth-card input[aria-invalid="true"]:focus-visible {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent);
 }
 
 .auth-passkey-login-section {
@@ -19518,6 +19539,14 @@ body.auth-mode {
 
 .password-input-wrap input {
   padding-right: 4.6rem;
+}
+
+/* Edge adds its own reveal (eye) button to password fields. This field has
+   the app's Show/Hide toggle, so a second control would duplicate it, and the
+   two get out of step (the native one does not update aria-pressed). */
+.password-input-wrap input::-ms-reveal,
+.password-input-wrap input::-ms-clear {
+  display: none;
 }
 
 .password-input-wrap .password-visibility-toggle {

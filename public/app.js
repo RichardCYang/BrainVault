@@ -403,6 +403,7 @@ const state = {
   authMode: window.location.hash === "#signup" ? "register" : "login",
   authOperationBusy: false,
   accountDataOperationBusy: false,
+  accountDataOperationKind: null,
   snapshots: { items: [], loaded: false, loading: false, diffById: new Map(), diffLoadingId: null },
   workspaceCreateBusy: false,
   activeSlashBlockId: null,
@@ -1448,6 +1449,7 @@ const elements = {
   password: $("#password"),
   passwordHint: $("#password-hint"),
   passwordVisibilityToggle: $("#password-visibility-toggle"),
+  authFormError: $("#auth-form-error"),
   name: $("#name"),
   userLabel: $("#user-label"),
   addCollectionButton: $("#add-collection-button"),
@@ -1869,7 +1871,10 @@ function setWorkspaceCreateBusy(busy) {
 function syncAuthOperationControls() {
   const busy = state.authOperationBusy;
   const webAuthnSupported = isWebAuthnSupported();
-  elements.authSubmit.disabled = busy;
+  // aria-disabled, not disabled: a disabled button that has focus (the person
+  // clicked it) drops focus to <body>. The submit handler rejects re-entry
+  // while authOperationBusy is true, as it does for the passkey buttons.
+  elements.authSubmit.setAttribute("aria-disabled", String(busy));
   // Progress lives on the button that started it rather than in a toast.
   const isRegister = state.authMode === "register";
   elements.authSubmit.setAttribute("aria-busy", String(busy));
@@ -1887,15 +1892,35 @@ function syncAuthOperationControls() {
     "aria-disabled",
     String(busy || state.authMode !== "login" || !webAuthnSupported)
   );
-  elements.username.disabled = busy;
-  elements.password.disabled = busy;
-  elements.name.disabled = busy;
+  // Read-only rather than disabled: disabling the focused field moves focus to
+  // <body>, so after a failed attempt the person would have to find the form
+  // again. Read-only keeps the caret where it was while the request is out.
+  elements.username.readOnly = busy;
+  elements.password.readOnly = busy;
+  elements.name.readOnly = busy;
+  elements.authForm.setAttribute("aria-busy", String(busy));
   elements.authSwitchLink.setAttribute("aria-disabled", String(busy));
   elements.authSwitchLink.tabIndex = busy ? -1 : 0;
   elements.mfaLoginTotpSubmit.disabled = busy;
   elements.mfaLoginPasskey.disabled = !webAuthnSupported;
   elements.mfaLoginPasskey.setAttribute("aria-disabled", String(busy || !webAuthnSupported));
   elements.mfaLoginCancel.disabled = busy;
+}
+
+// Errors from the sign-in form are shown inside the form, next to the fields
+// they concern, instead of in the toast at the bottom of the screen.
+function setAuthFormError(message = "", { invalidFields = [] } = {}) {
+  const text = String(message ?? "").trim();
+  elements.authFormError.textContent = text;
+  elements.authFormError.classList.toggle("hidden", !text);
+  for (const field of [elements.username, elements.password, elements.name]) {
+    toggleAttribute(field, "aria-invalid", text && invalidFields.includes(field) ? "true" : null);
+    const describedBy = (field.getAttribute("aria-describedby") ?? "")
+      .split(/\s+/)
+      .filter((id) => id && id !== "auth-form-error");
+    if (text && invalidFields.includes(field)) describedBy.push("auth-form-error");
+    toggleAttribute(field, "aria-describedby", describedBy.length ? describedBy.join(" ") : null);
+  }
 }
 
 function setAuthOperationBusy(busy) {
@@ -1914,19 +1939,35 @@ function syncAccountDataOperationControls() {
   elements.accountDataImport.disabled = busy || !(elements.accountDataInput.files?.length);
   elements.accountSnapshotCreate.disabled = busy;
   elements.accountSnapshotRefresh.disabled = busy || state.snapshots.loading;
-  elements.accountSettingsClose.disabled = busy;
+  elements.accountSettingsClose.disabled = isAccountSettingsCloseLocked();
   renderWorkspaceSnapshots();
 }
 
-function setAccountDataOperationBusy(busy) {
+// Import and restore replace the workspace, so settings stay open until they
+// finish. An export only reads, so the person may close settings and keep
+// working while it runs; its outcome then arrives as a toast.
+function isAccountSettingsCloseLocked() {
+  return state.accountDataOperationBusy && state.accountDataOperationKind !== "export";
+}
+
+function setAccountDataOperationBusy(busy, kind = null) {
   state.accountDataOperationBusy = Boolean(busy);
+  state.accountDataOperationKind = busy ? kind : null;
   syncAccountDataOperationControls();
+}
+
+// Shows an account data result where the person is looking: in settings if
+// they are still open, otherwise as a toast.
+function reportAccountDataResult(message, isError = false) {
+  if (state.accountSettingsOpen) setAccountMessage(message, isError);
+  else setStatus(message, isError);
 }
 
 function setAuthMode(mode, updateHash = true) {
   state.authMode = mode === "register" ? "register" : "login";
   const isRegister = state.authMode === "register";
   if (isRegister) clearDirectPasskeyOptionsWarmup();
+  setAuthFormError();
 
   elements.authTitle.textContent = t(isRegister ? "auth.registerTitle" : "auth.loginTitle");
   elements.authDescription.textContent = isRegister
@@ -3945,6 +3986,7 @@ function resetAuthenticationSessionState({ render = true, clearCommentDrafts = f
   state.pageEditLockDepth = 0;
   state.authOperationBusy = false;
   state.accountDataOperationBusy = false;
+  state.accountDataOperationKind = null;
   state.snapshots = { items: [], loaded: false, loading: false, diffById: new Map(), diffLoadingId: null };
   state.workspaceCreateBusy = false;
   state.workspaceView = "home";
@@ -5648,6 +5690,8 @@ function openAccountSettings(panel = "profile") {
   closeMobileSidebar();
   state.accountSettingsOpen = true;
   fillAccountSettings();
+  // Reopened while an export is still running: say why its buttons are off.
+  if (state.accountDataOperationKind === "export") setAccountMessage(t("account.exportingData"));
   setAccountAvatarPreparing(false);
   setAccountPanel(panel);
   elements.accountSettingsLayer.classList.remove("hidden");
@@ -5661,7 +5705,7 @@ function openAccountSettings(panel = "profile") {
 }
 
 function closeAccountSettings({ restoreFocus = true, force = false } = {}) {
-  if (!state.accountSettingsOpen || (state.accountDataOperationBusy && !force)) return;
+  if (!state.accountSettingsOpen || (isAccountSettingsCloseLocked() && !force)) return;
   accountAvatarOperationGuard.invalidate();
   resetAccountSecurityOperationState({ clearSensitiveState: true });
   setAccountAvatarPreparing(false);
@@ -5694,7 +5738,7 @@ function hasUnsavedAccountSettingsChanges() {
 let accountSettingsCloseConfirming = false;
 
 async function requestCloseAccountSettings() {
-  if (!state.accountSettingsOpen || accountSettingsCloseConfirming || state.accountDataOperationBusy) return;
+  if (!state.accountSettingsOpen || accountSettingsCloseConfirming || isAccountSettingsCloseLocked()) return;
   if (hasUnsavedAccountSettingsChanges()) {
     accountSettingsCloseConfirming = true;
     let discard = false;
@@ -11357,8 +11401,22 @@ async function submitPageDeleteTask(task, authenticationScope, { requestGuard = 
 // Archive from the sidebar reuses the page-level archive flow (confirmation,
 // pending-edit flush, cross-tab persistence fence and Undo) rather than a
 // second code path: open the page ready for changes, then archive it there.
-async function archiveNavigationPage() {
-  const target = state.activeNavigationMenuTarget;
+// Resolves true once the page is editable, false if the person navigates away,
+// the writer lock fails, or the wait runs out (the caller then reports why).
+async function waitForSelectedPageEditable(pageId, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (state.workspaceView !== "page" || state.selectedPage?.id !== pageId) return false;
+    if (canEditSelectedPage()) return true;
+    if (activePageWriterSession?.failed) return false;
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+  return canEditSelectedPage();
+}
+
+// The delete dialog passes its own target: the menu that set
+// activeNavigationMenuTarget may already be closed by then.
+async function archiveNavigationPage(target = state.activeNavigationMenuTarget) {
   if (!target || target.kind !== "page") return;
   closeNavigationContextMenu();
   closeMobileSidebar({ restoreFocus: false });
@@ -11367,6 +11425,11 @@ async function archiveNavigationPage() {
   } else if (isPageReadOnly()) {
     await setPageMode(pageModes.WRITE, { announce: false });
   }
+  if (state.workspaceView !== "page" || state.selectedPage?.id !== target.id) return;
+  // Opening the page starts its writer session, whose Web Lock is acquired
+  // asynchronously. Archiving before it is held fails with "still saving", so
+  // wait (briefly) until the page can actually be edited.
+  await waitForSelectedPageEditable(target.id);
   if (state.workspaceView !== "page" || state.selectedPage?.id !== target.id) return;
   if (elements.archivePageButton.disabled || elements.archivePageButton.classList.contains("hidden")) {
     reportReadOnlyBlocked();
@@ -11412,6 +11475,7 @@ async function deleteNavigationTarget() {
     return;
   }
 
+  let archiveInstead = false;
   return withPageEditLock(async () => {
     if (
       !isCurrentAuthenticatedSessionScope(authenticationScope)
@@ -11495,17 +11559,27 @@ async function deleteNavigationTarget() {
     const deletesOthersPages = Boolean(deletionOwnerId && deletionOwnerId !== state.user?.id);
     const deleteMessage = t(deleteMessageKey, { title: target.title, count: formatNumber(nestedPageCount) });
     const snapshotNote = deletesOthersPages ? "confirm.deleteOwnerSafetySnapshotNote" : "confirm.deleteSafetySnapshotNote";
-    const ok = await showConfirmDialog({
+    // The page messages recommend archiving instead, so the dialog offers it
+    // as a button rather than sending the person back through the menu.
+    const offersArchive = !isCollection && canManagePage(getPageSummaryById(target.id));
+    const deleteDialog = {
       title: t("dialog.deleteTitle"),
       message: savesSafetySnapshot ? `${deleteMessage} ${t(snapshotNote)}` : deleteMessage,
       confirmLabel: t("dialog.delete"),
       danger: true
-    }) && isCurrentAuthenticatedSessionScope(authenticationScope)
+    };
+    const choice = offersArchive
+      ? await showChoiceDialog({ ...deleteDialog, alternateLabel: t("navigationMenu.archivePage") })
+      : (await showConfirmDialog(deleteDialog) ? "confirm" : "cancel");
+    const intentCurrent = isCurrentAuthenticatedSessionScope(authenticationScope)
       && isCurrentWorkspaceNavigation(navigationGeneration);
-    if (!ok) {
+    if (choice !== "confirm" || !intentCurrent) {
       if (!task.attempted && pendingPageDeleteTasks.get(task.taskKey) === task) {
         pendingPageDeleteTasks.delete(task.taskKey);
       }
+      // Archiving opens the page and takes the edit lock itself, so it runs
+      // after this lock is released.
+      if (choice === "alternate" && intentCurrent) archiveInstead = true;
       return;
     }
 
@@ -11590,6 +11664,10 @@ async function deleteNavigationTarget() {
     } else {
       setStatus(deletedMessage);
     }
+  }).then(async (outcome) => {
+    // Runs once the edit lock is released, because archiving takes it too.
+    if (archiveInstead) await archiveNavigationPage(target);
+    return outcome;
   });
 }
 
@@ -23579,17 +23657,17 @@ elements.accountDataExport.addEventListener("click", async () => {
   const targetKey = getAccountAvatarTargetKey(state.user);
   if (!targetKey) return;
   const operation = accountDataOperationGuard.begin(targetKey);
-  setAccountDataOperationBusy(true);
+  setAccountDataOperationBusy(true, "export");
   try {
     setAccountMessage(t("account.exportingData"));
     const result = await downloadUserDataBackup({ operation });
     if (result?.applied && isCurrentAccountDataOperation(operation)) {
-      setAccountMessage(result.historyEntriesOmitted > 0
+      reportAccountDataResult(result.historyEntriesOmitted > 0
         ? `${t("account.exportReady")} ${t("account.exportHistoryOmitted", { count: formatNumber(result.historyEntriesOmitted) })}`
         : t("account.exportReady"));
     }
   } catch (error) {
-    if (isCurrentAccountDataOperation(operation)) setAccountMessage(error.message, true);
+    if (isCurrentAccountDataOperation(operation)) reportAccountDataResult(error.message, true);
   } finally {
     if (isCurrentAccountDataOperation(operation)) setAccountDataOperationBusy(false);
   }
@@ -24420,6 +24498,7 @@ elements.authForm.addEventListener("submit", async (event) => {
   try {
     // The submit button shows progress; just clear a stale error from a retry.
     setStatus("");
+    setAuthFormError();
     const data = await api(`/api/auth/${mode}`, { method: "POST", body });
     if (!isCurrentAuthFlowOperation(operation)) return;
     if (mode === "register") {
@@ -24438,11 +24517,29 @@ elements.authForm.addEventListener("submit", async (event) => {
     }
     await completeAuthenticatedLogin(data);
   } catch (error) {
-    if (isCurrentAuthFlowOperation(operation)) setStatus(error.message, true);
+    if (isCurrentAuthFlowOperation(operation)) {
+      // Wrong credentials: the server does not say which field is wrong, so
+      // both are marked, and the password is selected for retyping.
+      const credentialsRejected = error?.code === "INVALID_CREDENTIALS";
+      setAuthFormError(error.message, {
+        invalidFields: credentialsRejected ? [elements.username, elements.password] : []
+      });
+      if (credentialsRejected) {
+        elements.password.focus();
+        elements.password.select();
+      }
+    }
   } finally {
     if (isCurrentAuthFlowOperation(operation)) setAuthOperationBusy(false);
   }
 });
+
+for (const field of [elements.username, elements.password, elements.name]) {
+  // Editing a marked field means the person is acting on the error.
+  field.addEventListener("input", () => {
+    if (field.getAttribute("aria-invalid") === "true") setAuthFormError();
+  });
+}
 
 elements.collectionRenameButton.addEventListener("click", async () => {
   if (!state.activeCollectionId) return;

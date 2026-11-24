@@ -20,7 +20,10 @@ test("authentication requests and authenticated shell initialization are generat
   assert.match(app, /authOperationBusy: false/);
 
   const controls = section(app, "function syncAuthOperationControls", "function isCurrentAccountDataOperation");
-  assert.match(controls, /elements\.authSubmit\.disabled = busy;/);
+  // The submit button stays focusable (aria-disabled) so a failed attempt does
+  // not drop focus; re-entry is rejected by the submit handler's busy check.
+  assert.match(controls, /elements\.authSubmit\.setAttribute\("aria-disabled", String\(busy\)\);/);
+  assert.match(controls, /elements\.(username|password)\.readOnly = busy;/);
   assert.match(controls, /elements\.mfaLoginCancel\.disabled = busy;/);
   assert.match(controls, /elements\.authSwitchLink\.setAttribute\("aria-disabled", String\(busy\)\);/);
 
