@@ -91,7 +91,9 @@ const mfaStepUpActionSchema = z.enum([
   "totp-disable",
   "passkey-register",
   "passkey-rename",
-  "passkey-delete"
+  "passkey-delete",
+  "encrypted-collection-create",
+  "encrypted-collection-open"
 ]);
 type MfaStepUpAction = z.infer<typeof mfaStepUpActionSchema>;
 const mfaStepUpResourceSchema = z.string().trim().min(1).max(128).optional();

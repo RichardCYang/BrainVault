@@ -94,6 +94,8 @@ import { createAccountProfileMutationQueue } from "./account-profile-mutation-qu
 import { createMutationId, submitWithFreshMutationIdOnReuse } from "./mutation-id.js";
 import { createRestoreOperationStore } from "./restore-operation.js";
 import { showChoiceDialog, showConfirmDialog, showPromptDialog } from "./app-dialog.js";
+import { bindEncryptedCollections } from "./encrypted-collections.js";
+import { encryptedCollectionMaxBytes, encryptedCollectionMaxNotes } from "./encrypted-collection-crypto.js";
 import { rebaseCommittedBlockContent, rebaseCommittedPageTitle } from "./save-rebase.js";
 import {
   createPageCollaboration,
@@ -1487,6 +1489,7 @@ const elements = {
   collectionAddPageButton: $("#collection-add-page-button"),
   shareCollectionButton: $("#share-collection-button"),
   collectionRenameButton: $("#collection-rename-button"),
+  collectionEncryptCopyButton: $("#collection-encrypt-copy-button"),
   pageViewHeader: $("#page-view-header"),
   pagePath: $("#page-path"),
   pageActionsButton: $("#page-actions-button"),
@@ -2551,6 +2554,7 @@ function prepareRegistrationOptions(options) {
     ...options,
     challenge: base64UrlToArrayBuffer(options.challenge),
     user: { ...options.user, id: base64UrlToArrayBuffer(options.user.id) },
+    extensions: { ...options.extensions, prf: {} },
     excludeCredentials: (options.excludeCredentials ?? []).map((credential) => ({
       ...credential,
       id: base64UrlToArrayBuffer(credential.id)
@@ -2597,13 +2601,13 @@ function serializeRegistrationCredential(credential) {
   return serialized;
 }
 
-function serializeAuthenticationCredential(credential) {
+function serializeAuthenticationCredential(credential, clientExtensionResults = credential.getClientExtensionResults()) {
   const response = credential.response;
   const serialized = {
     id: credential.id,
     rawId: arrayBufferToBase64Url(credential.rawId),
     type: credential.type,
-    clientExtensionResults: credential.getClientExtensionResults(),
+    clientExtensionResults,
     response: {
       clientDataJSON: arrayBufferToBase64Url(response.clientDataJSON),
       authenticatorData: arrayBufferToBase64Url(response.authenticatorData),
@@ -2652,6 +2656,33 @@ async function getWebAuthnCredential(options, { trigger = null } = {}) {
   const credential = await navigator.credentials.get({ publicKey: prepareAuthenticationOptions(options) });
   if (!credential) throw new Error(t("mfa.passkeyOperationCancelled"));
   return serializeAuthenticationCredential(credential);
+}
+
+async function getEncryptedCollectionPasskey(options, prf, signal, trigger) {
+  if (!isWebAuthnSupported()) throw new Error(t("mfa.passkeyUnsupported"));
+  const publicKey = prepareAuthenticationOptions(options);
+  if (prf) {
+    if (prf.credentialId) {
+      publicKey.allowCredentials = publicKey.allowCredentials.filter(
+        (credential) => arrayBufferToBase64Url(credential.id) === prf.credentialId
+      );
+      if (!publicKey.allowCredentials.length) throw new Error(t("encryptedCollections.passkeyMissing"));
+    }
+    publicKey.extensions = { prf: { eval: { first: base64UrlToArrayBuffer(prf.salt) } } };
+  }
+  assertWebAuthnForeground(trigger);
+  let credential;
+  try {
+    credential = await navigator.credentials.get({ publicKey, signal });
+  } catch (error) {
+    throw normalizeWebAuthnError(error);
+  }
+  if (!credential) throw new Error(t("mfa.passkeyOperationCancelled"));
+  const first = prf && credential.getClientExtensionResults().prf?.results?.first;
+  // The original assertion can be verified without any client extension
+  // results. The PRF bytes remain exclusively in the local crypto path.
+  const response = serializeAuthenticationCredential(credential, {});
+  return { response, output: first?.byteLength === 32 ? new Uint8Array(first) : null };
 }
 
 function normalizeWebAuthnError(error) {
@@ -2979,6 +3010,15 @@ async function api(path, options = {}) {
   onResponse?.(response);
   return data;
 }
+
+const encryptedCollections = bindEncryptedCollections({
+  api,
+  captureScope: captureAuthenticatedSessionScope,
+  isCurrentScope: isCurrentAuthenticatedSessionScope,
+  getPasskey: getEncryptedCollectionPasskey,
+  closeSidebar: closeMobileSidebar,
+  copyNotes: copyCollectionTextNotes
+});
 
 async function fetchDatabaseUrlPreview(url) {
   const response = await api("/api/bookmarks/preview", {
@@ -3929,6 +3969,7 @@ function renderShell() {
 // `clearCommentDrafts` is for a person signing out on purpose. Every other
 // reset (a 401, a revoked session) keeps unsent comment text for that account.
 function resetAuthenticationSessionState({ render = true, clearCommentDrafts = false } = {}) {
+  encryptedCollections.reset();
   workspaceNavigationGeneration += 1;
   cancelPendingPageRead();
   authenticationSessionGeneration += 1;
@@ -11671,6 +11712,44 @@ async function deleteNavigationTarget() {
   });
 }
 
+async function copyCollectionTextNotes(collectionId, signal) {
+  const collection = getPageSummaryById(collectionId);
+  if (!isCollectionPage(collection) || !isPageOwner(collection)) {
+    throw new Error(t("encryptedCollections.copyChanged"));
+  }
+  const pages = getCollectionPages(collectionId);
+  if (pages.length > encryptedCollectionMaxNotes) throw new Error(t("encryptedCollections.copyLimit"));
+  assertNoPendingLocalPageDraftsForPages([collectionId, ...pages.map((page) => page.id)]);
+  const notes = [];
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  for (const summary of [collection, ...pages]) {
+    const { page } = await api(`/api/pages/${encodeURIComponent(summary.id)}`, { signal });
+    signal.throwIfAborted();
+    if (!isPageOwner(page) || page.isArchived || page.parentPageId !== summary.parentPageId) {
+      throw new Error(t("encryptedCollections.copyChanged"));
+    }
+    const blocks = page.blocks;
+    if (blocks.some((block) => !/^(?:MARKDOWN|HEADING_[1-5])$/.test(block.type) || block.children?.length)) {
+      throw new Error(t("encryptedCollections.copyUnsupported", { title: page.title }));
+    }
+    if (page.id === collectionId && !blocks.length) continue;
+    const body = blocks.map((block) => block.type === "MARKDOWN" ? block.markdown
+      : `${"#".repeat(Number(block.type.at(-1)))} ${block.markdown}`).join("\n\n");
+    const note = { id: crypto.randomUUID(), title: page.title, body };
+    bytes += encoder.encode(JSON.stringify(note)).byteLength;
+    if (notes.length >= encryptedCollectionMaxNotes) throw new Error(t("encryptedCollections.copyLimit"));
+    if (bytes > encryptedCollectionMaxBytes) throw new Error(t("encryptedCollections.tooLarge"));
+    notes.push(note);
+  }
+  return notes;
+}
+
+elements.collectionEncryptCopyButton.addEventListener("click", () => {
+  const collection = getPageSummaryById(state.activeCollectionId);
+  if (isCollectionPage(collection) && isPageOwner(collection)) void encryptedCollections.openCopy(collection);
+});
+
 function renderCollectionView() {
   if (state.workspaceView !== "collection") return;
 
@@ -11686,6 +11765,7 @@ function renderCollectionView() {
   );
   elements.collectionViewTitle.textContent = collection ? collection.title : getDefaultCollectionName();
   const canManageCollection = collection ? canManagePage(collection) : true;
+  elements.collectionEncryptCopyButton.classList.toggle("hidden", !collection || !isPageOwner(collection));
   elements.collectionIconButton.disabled = collection ? !canManageCollection : false;
   elements.collectionAddPageButton.classList.toggle("hidden", collection ? !canManageCollection : false);
   elements.collectionAddPageButton.disabled = state.workspaceCreateBusy || (collection ? !canManageCollection : false);

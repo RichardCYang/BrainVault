@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS encrypted_collections (
+  owner_id VARCHAR(64) NOT NULL,
+  id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  key_slots VARCHAR(4096) CHARACTER SET ascii NOT NULL,
+  document_iv BINARY(12) NOT NULL,
+  document_ciphertext MEDIUMBLOB NOT NULL,
+  revision INT UNSIGNED NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (owner_id, id),
+  CONSTRAINT fk_encrypted_collections_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

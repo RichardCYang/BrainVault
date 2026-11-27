@@ -31,6 +31,10 @@ const tableScope = new Map([
   // Rebuilt from the restored page hierarchy rather than serialized verbatim.
   ["page_collection_memberships", "derived"],
 
+  // The collection editor exports and restores its own authenticated ciphertext.
+  // Regular workspace restores leave encrypted collections in place.
+  ["encrypted_collections", "separately-backed-up"],
+
   // Backup archives are themselves snapshots of workspace state; nesting the
   // snapshot catalog and its archives recursively is deliberately out of scope.
   ["page_storage_usage", "operational"],

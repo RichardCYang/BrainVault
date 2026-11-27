@@ -82,6 +82,16 @@ npm run verify:security
 
 Database- or browser-dependent behavior should also be checked in the target deployment environment.
 
+## Encrypted collections
+
+Use **Encrypted collections** in the sidebar to create private text notes. The browser encrypts collection names, note titles, and note bodies. The server stores ciphertext, collection IDs, and timestamps. Accounts with two-step verification must verify a registered factor when creating or unlocking an encrypted collection.
+
+- **Collection passphrase** unlocks the collection on any supported browser. Use a registered second factor when enabled.
+- **Passkey unlock** can be enabled at creation with a browser and passkey that support WebAuthn PRF. Subsequent unlocks can use that passkey alone.
+- **TOTP unlock** starts with the collection passphrase. Choose **Remember this browser** to keep the decryption key in that browser profile, then unlock there with a fresh authenticator code. Remove the saved key from the editor at any time.
+
+Existing collections can make an encrypted copy of their active Markdown pages. The source collection stays in the workspace. Encrypted collections support text only, with 32 collections per account and up to 256 notes and 512 KiB per collection. Download a separate encrypted backup from each collection and keep the passphrase for restoration. The regular workspace ZIP and snapshots cover regular pages.
+
 ## Storage
 
 Attachments are stored outside the public web root. The default attachment directory is `uploads/`; keep it on persistent storage in production.

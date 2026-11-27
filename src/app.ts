@@ -18,6 +18,7 @@ import { searchRouter } from "./routes/search.routes.js";
 import { dataRouter } from "./routes/data.routes.js";
 import { collaborationRouter } from "./routes/collaboration.routes.js";
 import { collectionSharingRouter } from "./routes/collection-sharing.routes.js";
+import { encryptedCollectionRouter } from "./routes/encrypted-collection.routes.js";
 import { customIconRouter } from "./routes/custom-icon.routes.js";
 import { snapshotRouter } from "./routes/snapshot.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
@@ -201,9 +202,8 @@ export function createApp() {
   });
   const applicationJsonParser = express.json({ limit: "5mb" });
   app.use((req, res, next) => {
-    // Recovery has an authenticated, admitted raw parser. A forged JSON content
-    // type must not allocate a buffer through the global parser before admission.
-    if (req.path.toLowerCase().startsWith("/api/recovery/")) return next();
+    // These routes admit authenticated callers before buffering their bodies.
+    if (/^\/api\/(?:recovery\/|encrypted-collections(?:\/|$))/i.test(req.path)) return next();
     applicationJsonParser(req, res, next);
   });
   app.use(express.urlencoded({ extended: false }));
@@ -339,6 +339,7 @@ export function createApp() {
   });
 
   app.use("/api/auth", authRouter);
+  app.use("/api/encrypted-collections", encryptedCollectionRouter);
   app.use("/api", collaborationRouter);
   app.use("/api", collectionSharingRouter);
   app.use("/api/pages", pageRouter);
